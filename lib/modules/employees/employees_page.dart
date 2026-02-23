@@ -9,7 +9,7 @@ extension EmployeStatutExt on EmployeStatut {
       case EmployeStatut.enService: return 'En service';
       case EmployeStatut.quitte: return 'Quitté';
       case EmployeStatut.enConge: return 'En congé';
-      case EmployeStatut.enMaladie: return 'En maladie';
+      case EmployeStatut.enMaladie: return 'En maladi';
     }
   }
 
