@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/auth_provider.dart';
+<<<<<<< HEAD
 import '../core/locale/app_locale.dart';
 import '../core/utils/responsive.dart';
 import '../modules/Paramètres/paramètres.dart';
 import '../modules/Demandes/demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
+=======
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
 import '../modules/magasin/gestion_magasin.dart';
@@ -43,6 +46,7 @@ class _MainLayoutState extends State<MainLayout> {
     ];
   }
 
+<<<<<<< HEAD
   Widget _buildSidebar(
       BuildContext context,
       AuthProvider auth,
@@ -55,11 +59,20 @@ class _MainLayoutState extends State<MainLayout> {
       width: 250,
       color: const Color(0xFF1565C0),
       child: Column(
+=======
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+
+    return Scaffold(
+      body: Row(
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
         children: [
           // ── Logo (compact) ────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 20),
             child: Column(
+<<<<<<< HEAD
               mainAxisSize: MainAxisSize.min,
               children: const [
                 Icon(Icons.business, color: Colors.white, size: 40),
@@ -92,6 +105,34 @@ class _MainLayoutState extends State<MainLayout> {
                     mainAxisSize: MainAxisSize.min,
                     children: List.generate(items.length, (index) {
                       final item       = items[index];
+=======
+              children: [
+                // LOGO
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: const Column(
+                    children: [
+                      Icon(Icons.business, color: Colors.white, size: 44),
+                      SizedBox(height: 8),
+                      Text('DIPS',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold)),
+                      Text('Système de Gestion',
+                          style: TextStyle(color: Colors.white70, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                const Divider(color: Colors.white24),
+
+                // NAV ITEMS
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _navItems.length,
+                    itemBuilder: (context, index) {
+                      final item = _navItems[index];
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
                       final isSelected = _selectedIndex == index;
                       return Container(
                         margin: const EdgeInsets.symmetric(
@@ -102,6 +143,7 @@ class _MainLayoutState extends State<MainLayout> {
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(9),
                         ),
+<<<<<<< HEAD
                         child: InkWell(
                           borderRadius: BorderRadius.circular(9),
                           splashColor: Colors.white.withOpacity(0.1),
@@ -148,10 +190,29 @@ class _MainLayoutState extends State<MainLayout> {
                               ],
                             ),
                           ),
+=======
+                        child: ListTile(
+                          leading: Icon(item.icon,
+                              color: isSelected
+                                  ? Colors.white
+                                  : Colors.white70),
+                          title: Text(item.label,
+                              style: TextStyle(
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.white70,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              )),
+                          onTap: () =>
+                              setState(() => _selectedIndex = index),
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
                         ),
                       );
                     }),
                   ),
+<<<<<<< HEAD
                 );
               },
             ),
@@ -286,6 +347,131 @@ class _MainLayoutState extends State<MainLayout> {
                         color: Colors.white38, fontSize: 11)),
               ],
             ),
+=======
+                ),
+
+                const Divider(color: Colors.white24),
+
+                // ===== USER INFO + LOGOUT =====
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(children: [
+                          // Avatar
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor:
+                            Colors.white.withOpacity(0.2),
+                            child: Text(
+                              auth.currentUser?.nom[0] ?? 'U',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Nom + Role
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  auth.currentUser?.nom ?? '',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                Container(
+                                  margin: const EdgeInsets.only(top: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: auth.isDirecteur
+                                        ? Colors.amber.withOpacity(0.3)
+                                        : Colors.green.withOpacity(0.3),
+                                    borderRadius:
+                                    BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    auth.isDirecteur
+                                        ? 'Directeur'
+                                        : 'Chef Équipe',
+                                    style: TextStyle(
+                                      color: auth.isDirecteur
+                                          ? Colors.amber[200]
+                                          : Colors.green[200],
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // Logout button
+                          IconButton(
+                            icon: const Icon(Icons.logout,
+                                color: Colors.white70, size: 18),
+                            tooltip: 'Déconnexion',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => _confirmLogout(context),
+                          ),
+                        ]),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text('v1.0.0',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ===== CONTENT =====
+          Expanded(child: _buildPage(_selectedIndex)),
+        ],
+      ),
+    );
+  }
+
+  // Confirmation avant logout
+  void _confirmLogout(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('Déconnexion'),
+        content: const Text('Voulez-vous vraiment vous déconnecter ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.read<AuthProvider>().logout();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Déconnecter'),
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
           ),
         ],
       ),
@@ -407,6 +593,7 @@ class _NavItem {
   _NavItem({required this.icon, required this.label});
 }
 
+<<<<<<< HEAD
 class _PlaceholderPage extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -449,12 +636,15 @@ class _PlaceholderPage extends StatelessWidget {
   }
 }
 
+=======
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
 // ===== DASHBOARD =====
 class _DashboardPage extends StatelessWidget {
   const _DashboardPage();
 
   @override
   Widget build(BuildContext context) {
+<<<<<<< HEAD
     final auth          = context.watch<AuthProvider>();
     final emp           = context.watch<EmployeesProvider>();
     final mobile        = isMobile(context);
@@ -480,6 +670,33 @@ class _DashboardPage extends StatelessWidget {
             'Bienvenue dans le système de gestion DIPS',
             style: TextStyle(
                 fontSize: mobile ? 12 : 14, color: Colors.grey[600]),
+=======
+    final auth = context.watch<AuthProvider>();
+
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header avec nom utilisateur
+          Row(
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bonjour, ${auth.currentUser?.nom ?? ''} 👋',
+                    style: const TextStyle(
+                        fontSize: 26, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Bienvenue dans le système de gestion DIPS',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ],
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
           ),
           const SizedBox(height: 20),
           if (mobile)
@@ -543,6 +760,7 @@ class _StatCard extends StatelessWidget {
               color: color.withOpacity(0.2),
               borderRadius: BorderRadius.circular(10),
             ),
+<<<<<<< HEAD
             child: Icon(icon, color: color, size: 24),
           ),
           const SizedBox(width: 12),
@@ -566,6 +784,30 @@ class _StatCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1),
               ],
+=======
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(value,
+                        style: TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            color: color)),
+                  ),
+                  Text(title,
+                      style: const TextStyle(
+                          color: Colors.grey, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1),
+                ],
+              ),
+>>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
             ),
           ),
         ],
