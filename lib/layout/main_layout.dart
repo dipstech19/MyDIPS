@@ -17,7 +17,7 @@ class _MainLayoutState extends State<MainLayout> {
     _NavItem(icon: Icons.dashboard, label: 'Tableau de bord'),
     _NavItem(icon: Icons.people, label: 'Employés'),
     _NavItem(icon: Icons.access_time, label: 'Pointage'),
-    _NavItem(icon: Icons.inventory_2, label: 'Stock'),
+    _NavItem(icon: Icons.inventory_2, label: 'Gestion Magasin'),
     _NavItem(icon: Icons.bar_chart, label: 'Rapports'),
     _NavItem(icon: Icons.settings, label: 'Paramètres'),
   ];
