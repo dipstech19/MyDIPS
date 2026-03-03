@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/auth_provider.dart';
 import '../modules/employees/employees_page.dart';
+import '../modules/magasin/gestion_magasin.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -17,7 +18,7 @@ class _MainLayoutState extends State<MainLayout> {
     _NavItem(icon: Icons.dashboard, label: 'Tableau de bord'),
     _NavItem(icon: Icons.people, label: 'Employés'),
     _NavItem(icon: Icons.access_time, label: 'Pointage'),
-    _NavItem(icon: Icons.inventory_2, label: 'Stock'),
+    _NavItem(icon: Icons.inventory_2, label: 'Gestion Magasin'),
     _NavItem(icon: Icons.bar_chart, label: 'Rapports'),
     _NavItem(icon: Icons.settings, label: 'Paramètres'),
   ];
@@ -32,7 +33,7 @@ class _MainLayoutState extends State<MainLayout> {
           // ===== SIDEBAR =====
           Container(
             width: 220,
-            color: const Color(0xFF1565C0),
+            color: const Color(0xFF328EEE),
             child: Column(
               children: [
                 // LOGO
@@ -228,7 +229,7 @@ class _MainLayoutState extends State<MainLayout> {
       case 2:
         return const Center(child: Text('Pointage - Bientôt'));
       case 3:
-        return const Center(child: Text('Gestion du Stock - Bientôt'));
+        return const GestionMagasin();
       case 4:
         return const Center(child: Text('Rapports - Bientôt'));
       default:
