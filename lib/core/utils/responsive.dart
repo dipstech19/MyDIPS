@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 
-bool isMobile(BuildContext context) => MediaQuery.of(context).size.width < 850;
+/// عتبة الهاتف: أقل من 600px = هاتف
+bool isMobile(BuildContext context) {
+  return MediaQuery.sizeOf(context).width < 600;
+}
 
-bool isTablet(BuildContext context) =>
-    MediaQuery.of(context).size.width >= 850 &&
-    MediaQuery.of(context).size.width < 1100;
+bool isDesktopOrTablet(BuildContext context) {
+  return !isMobile(context);
+}
 
-bool isDesktop(BuildContext context) =>
-    MediaQuery.of(context).size.width >= 1100;
-
+/// هامش مناسب حسب العرض
 double pagePadding(BuildContext context) {
-  if (isMobile(context)) return 16.0;
-  if (isTablet(context)) return 24.0;
-  return 32.0;
+  return isMobile(context) ? 12 : 24;
 }

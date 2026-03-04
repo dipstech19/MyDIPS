@@ -1,28 +1,30 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-<<<<<<< HEAD
-=======
 import 'core/auth/auth_provider.dart';
 import 'core/auth/login_page.dart';
->>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
-import 'layout/main_layout.dart';
-import 'core/auth/auth_provider.dart';
 import 'core/locale/app_locale.dart';
+import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
+import 'modules/employees/postes_provider.dart';
+import 'modules/Paramètres/admins_provider.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Firebase non configuré (ex: web/Windows) — l'app affichera le bandeau "Connectez Firebase"
+  }
   runApp(
-<<<<<<< HEAD
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => EmployeesProvider()),
+        ChangeNotifierProvider(create: (_) => PostesProvider()),
+        ChangeNotifierProvider(create: (_) => AdminsProvider()),
       ],
-=======
-    ChangeNotifierProvider(
-      create: (_) => AuthProvider(),
->>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
       child: const MyApp(),
     ),
   );
@@ -34,22 +36,14 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-<<<<<<< HEAD
-      title: 'Système de gestion DIPS',
-=======
       title: 'DIPS - Système de Gestion',
->>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF1565C0)),
         useMaterial3: true,
       ),
-<<<<<<< HEAD
-      home: const MainLayout(), // ← ligne manquante → écran noir sans elle
-=======
       home: const _AppRoot(),
->>>>>>> d4f0996 (Add auth module, employees module with models and widgets)
     );
   }
 }

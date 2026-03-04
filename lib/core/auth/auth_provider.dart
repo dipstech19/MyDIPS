@@ -24,6 +24,7 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   bool get isDirecteur => _currentUser?.role == UserRole.directeur;
   bool get isChefEquipe => _currentUser?.role == UserRole.chefEquipe;
+  bool get isChauffeur => _currentUser?.role == UserRole.chauffeur;
   String? get equipeId => _currentUser?.equipeId;
 
   bool login(String username, String password) {
