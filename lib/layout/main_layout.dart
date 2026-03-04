@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/auth_provider.dart';
+import '../modules/Paramètres/paramètres.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/magasin/gestion_magasin.dart';
 
@@ -233,7 +234,7 @@ class _MainLayoutState extends State<MainLayout> {
       case 4:
         return const Center(child: Text('Rapports - Bientôt'));
       default:
-        return const Center(child: Text('Paramètres - Bientôt'));
+        return const ParametresPage();
     }
   }
 }

@@ -86,7 +86,7 @@ class _EmployeesPageState extends State<EmployeesPage>
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -127,6 +127,47 @@ class _EmployeesPageState extends State<EmployeesPage>
                         horizontal: 20, vertical: 14),
                   ),
                 ),
+<<<<<<< HEAD
+=======
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 20),
+
+          // ===== SEARCH + FILTER =====
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Rechercher : Nom, CIN, Téléphone, Poste, Magasin...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  onChanged: (v) => setState(() => _search = v),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Filter par statut
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ([null, ...EmployeStatut.values]).map((s) {
+                  final isSelected = _filterStatut == s;
+                  final label = s == null ? 'Tous' : s.label;
+                  final color = s == null ? Colors.grey : s.color;
+                  return FilterChip(
+                    label: Text(label, style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : color)),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() => _filterStatut = s),
+                    backgroundColor: Colors.white,
+                    selectedColor: color,
+                    side: BorderSide(color: color),
+                  );
+                }).toList(),
+              ),
+>>>>>>> origin/dev-marouane
             ],
           ),
           const SizedBox(height: 16),
@@ -184,6 +225,7 @@ class _EmployeesPageState extends State<EmployeesPage>
     );
   }
 
+<<<<<<< HEAD
   Widget _buildEmployesTab() {
     return Column(
       children: [
@@ -415,6 +457,89 @@ class _EmployeesPageState extends State<EmployeesPage>
                       );
                     },
                   ),
+=======
+  // ===== DETAIL DIALOG =====
+  void _showDetailDialog(BuildContext context, Employe e) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: const Color(0xFF1565C0).withOpacity(0.15),
+                      child: Text(e.nom[0],
+                          style: const TextStyle(fontSize: 22, color: Color(0xFF1565C0), fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.nom, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        Text('${e.poste} - ${e.magasin}', style: TextStyle(color: Colors.grey[600])),
+                      ],
+                    )),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: e.statut.color.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(e.statut.label,
+                          style: TextStyle(color: e.statut.color, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const Divider(height: 28),
+                // Sections
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sectionTitle('🪪 Identité'),
+                        _infoRow('CIN', e.cin),
+                        _infoRow('Tél', e.telephone),
+                        if (e.telephone2.isNotEmpty) _infoRow('Tél 2', e.telephone2),
+                        _infoRow('Naissance', e.dateNaissance),
+                        _infoRow('Email', e.email),
+                        _infoRow('Adresse', e.adresse),
+                      ],
+                    )),
+                    const SizedBox(width: 24),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sectionTitle('💼 Travail'),
+                        _infoRow('Département', e.departement),
+                        _infoRow('Contrat', e.typeContrat),
+                        _infoRow('Début', e.dateDebut),
+                        if (e.finContrat.isNotEmpty) _infoRow('Fin contrat', e.finContrat),
+                        _infoRow('Salaire', '${e.salaireBase.toInt()} DH'),
+                        _infoRow('Chef direct', _getChefNom(e.chefDirectId)),
+                        const SizedBox(height: 12),
+                        _sectionTitle('📋 CNSS'),
+                        _infoRow('N° CNSS', e.cnss),
+                        _infoRow('Date inscription', e.dateCnss),
+                      ],
+                    )),
+                  ],
+>>>>>>> origin/dev-marouane
                 ),
               ],
             ),
