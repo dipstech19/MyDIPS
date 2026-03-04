@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import 'models/employe_model.dart';
 import 'models/equipe_model.dart';
-import 'data/dummy_data.dart';
+import 'employees_provider.dart';
 import 'widgets/employee_detail_dialog.dart';
 import 'widgets/employee_form_dialog.dart';
 import 'widgets/equipes_tab.dart';
@@ -18,9 +18,6 @@ class EmployeesPage extends StatefulWidget {
 class _EmployeesPageState extends State<EmployeesPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late List<Employe> _employes;
-  late List<Equipe> _equipes;
-  late bool _isDirecteur;
   String _search = '';
   EmployeStatut? _filterStatut;
 
@@ -28,34 +25,6 @@ class _EmployeesPageState extends State<EmployeesPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initData();
-  }
-
-  void _initData() {
-    final auth = context.read<AuthProvider>();
-    _isDirecteur = auth.isDirecteur;
-
-    if (_isDirecteur) {
-      // ✅ Directeur → كل شي
-      _employes = List.from(dummyEmployes);
-      _equipes = List.from(dummyEquipes);
-    } else {
-      // ✅ Chef Équipe → فريقه فقط
-      final monEquipe = dummyEquipes
-          .where((eq) => eq.id == auth.equipeId)
-          .toList();
-      _equipes = monEquipe;
-
-      if (monEquipe.isNotEmpty) {
-        final eq = monEquipe.first;
-        final ids = [...eq.membreIds, eq.chefId];
-        _employes = dummyEmployes
-            .where((e) => ids.contains(e.id))
-            .toList();
-      } else {
-        _employes = [];
-      }
-    }
   }
 
   @override
@@ -64,7 +33,24 @@ class _EmployeesPageState extends State<EmployeesPage>
     super.dispose();
   }
 
-  List<Employe> get _filtered => _employes.where((e) {
+  List<Employe> _employes(EmployeesProvider prov, AuthProvider auth) {
+    if (auth.isDirecteur) return prov.employes;
+    final eqId = auth.equipeId;
+    if (eqId == null || eqId.isEmpty) return [];
+    final eq = prov.equipes.where((e) => e.id == eqId).toList();
+    if (eq.isEmpty) return [];
+    final ids = [...eq.first.membreIds, eq.first.chefId];
+    return prov.employes.where((e) => ids.contains(e.id)).toList();
+  }
+
+  List<Equipe> _equipes(EmployeesProvider prov, AuthProvider auth) {
+    if (auth.isDirecteur) return prov.equipes;
+    final eqId = auth.equipeId;
+    if (eqId == null || eqId.isEmpty) return [];
+    return prov.equipes.where((e) => e.id == eqId).toList();
+  }
+
+  List<Employe> _filtered(List<Employe> employes) => employes.where((e) {
     final q = _search.toLowerCase();
     final matchSearch = q.isEmpty ||
         e.nom.toLowerCase().contains(q) ||
@@ -77,19 +63,50 @@ class _EmployeesPageState extends State<EmployeesPage>
     return matchSearch && matchStatut;
   }).toList();
 
-  String _getChefNom(String chefId) {
+  String _getChefNom(String chefId, List<Employe> employes) {
     if (chefId.isEmpty) return '—';
-    final chef = dummyEmployes.where((e) => e.id == chefId).toList();
+    final chef = employes.where((e) => e.id == chefId).toList();
     return chef.isNotEmpty ? chef.first.nom : '—';
+  }
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        border: Border(bottom: BorderSide(color: Colors.orange.shade200)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off, size: 22, color: Colors.orange.shade800),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Données en ligne indisponibles. Connectez Firebase (ex: Android) pour enregistrer et synchroniser.',
+              style: TextStyle(fontSize: 13, color: Colors.orange.shade900),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final prov = context.watch<EmployeesProvider>();
+    final employes = _employes(prov, auth);
+    final equipes = _equipes(prov, auth);
+    final filtered = _filtered(employes);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (!prov.firebaseAvailable) _buildOfflineBanner(),
+          if (!prov.firebaseAvailable) const SizedBox(height: 12),
           // ===== HEADER =====
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -101,21 +118,22 @@ class _EmployeesPageState extends State<EmployeesPage>
                       style: TextStyle(
                           fontSize: 26, fontWeight: FontWeight.bold)),
                   Text(
-                    _isDirecteur
-                        ? 'Vue complète - ${_employes.length} employés'
-                        : 'Mon équipe - ${_employes.length} membre(s)',
+                    auth.isDirecteur
+                        ? 'Vue complète - ${employes.length} employés'
+                        : 'Mon équipe - ${employes.length} membre(s)',
                     style: TextStyle(color: Colors.grey[600], fontSize: 13),
                   ),
                 ],
               ),
-              // زر إضافة فقط للـ Directeur
-              if (_isDirecteur)
+              if (auth.isDirecteur)
                 ElevatedButton.icon(
                   onPressed: () => showDialog(
                     context: context,
                     builder: (_) => EmployeeFormDialog(
-                      employes: _employes,
-                      onSave: (e) => setState(() => _employes.add(e)),
+                      employes: employes,
+                      onSave: (e) async {
+                        await prov.addEmploye(e);
+                      },
                     ),
                   ),
                   icon: const Icon(Icons.person_add),
@@ -127,10 +145,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                         horizontal: 20, vertical: 14),
                   ),
                 ),
-<<<<<<< HEAD
-=======
-              );
-            }).toList(),
+            ],
           ),
           const SizedBox(height: 20),
 
@@ -149,7 +164,6 @@ class _EmployeesPageState extends State<EmployeesPage>
                 ),
               ),
               const SizedBox(width: 12),
-              // Filter par statut
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -167,7 +181,6 @@ class _EmployeesPageState extends State<EmployeesPage>
                   );
                 }).toList(),
               ),
->>>>>>> origin/dev-marouane
             ],
           ),
           const SizedBox(height: 16),
@@ -183,14 +196,14 @@ class _EmployeesPageState extends State<EmployeesPage>
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.people, size: 18),
                   const SizedBox(width: 8),
-                  Text('Employés (${_employes.length})'),
+                  Text('Employés (${employes.length})'),
                 ]),
               ),
               Tab(
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.groups, size: 18),
                   const SizedBox(width: 8),
-                  Text('Équipes (${_equipes.length})'),
+                  Text('Équipes (${equipes.length})'),
                 ]),
               ),
             ],
@@ -201,21 +214,17 @@ class _EmployeesPageState extends State<EmployeesPage>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildEmployesTab(),
+                _buildEmployesTab(employes, equipes, filtered, auth.isDirecteur, prov),
                 EquipesTab(
-                  equipes: _equipes,
-                  employes: _employes,
-                  isDirecteur: _isDirecteur,
-                  onAddEquipe: (eq) => setState(() {
-                    final idx = _equipes.indexWhere((e) => e.id == eq.id);
-                    if (idx >= 0) {
-                      _equipes[idx] = eq;
-                    } else {
-                      _equipes.add(eq);
-                    }
-                  }),
-                  onDeleteEquipe: (eq) =>
-                      setState(() => _equipes.remove(eq)),
+                  equipes: equipes,
+                  employes: employes,
+                  isDirecteur: auth.isDirecteur,
+                  onAddEquipe: (eq) async {
+                    await prov.addEquipe(eq);
+                  },
+                  onDeleteEquipe: (eq) async {
+                    await prov.deleteEquipe(eq.id);
+                  },
                 ),
               ],
             ),
@@ -225,14 +234,13 @@ class _EmployeesPageState extends State<EmployeesPage>
     );
   }
 
-<<<<<<< HEAD
-  Widget _buildEmployesTab() {
+  Widget _buildEmployesTab(List<Employe> employes, List<Equipe> equipes, List<Employe> filtered, bool isDirecteur, EmployeesProvider prov) {
     return Column(
       children: [
         // STATS
         Row(
           children: EmployeStatut.values.map((s) {
-            final count = _employes.where((e) => e.statut == s).length;
+            final count = employes.where((e) => e.statut == s).length;
             return Expanded(
               child: Container(
                 margin: const EdgeInsets.only(right: 12),
@@ -264,47 +272,6 @@ class _EmployeesPageState extends State<EmployeesPage>
         ),
         const SizedBox(height: 16),
 
-        // SEARCH + FILTER
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                decoration: InputDecoration(
-                  hintText: 'Rechercher : Nom, CIN, Téléphone, Poste...',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                  contentPadding:
-                  const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onChanged: (v) => setState(() => _search = v),
-              ),
-            ),
-            const SizedBox(width: 12),
-            ...([null, ...EmployeStatut.values]).map((s) {
-              final isSelected = _filterStatut == s;
-              final label = s == null ? 'Tous' : s.label;
-              final color = s == null ? Colors.grey : s.color;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: FilterChip(
-                  label: Text(label,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: isSelected ? Colors.white : color)),
-                  selected: isSelected,
-                  onSelected: (_) =>
-                      setState(() => _filterStatut = s),
-                  backgroundColor: Colors.white,
-                  selectedColor: color,
-                  side: BorderSide(color: color),
-                ),
-              );
-            }),
-          ],
-        ),
-        const SizedBox(height: 12),
-
         // TABLE
         Expanded(
           child: Container(
@@ -330,7 +297,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     const Expanded(flex: 2, child: Text('Contrat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
                     const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
                     // الراتب - فقط للـ Directeur
-                    if (_isDirecteur)
+                    if (isDirecteur)
                       const Expanded(flex: 1, child: Text('Salaire', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
                     const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
                     const SizedBox(width: 80, child: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
@@ -338,23 +305,23 @@ class _EmployeesPageState extends State<EmployeesPage>
                 ),
                 const Divider(height: 1),
                 Expanded(
-                  child: _filtered.isEmpty
+                  child: filtered.isEmpty
                       ? const Center(
                       child: Text('Aucun employé trouvé',
                           style: TextStyle(color: Colors.grey)))
                       : ListView.separated(
-                    itemCount: _filtered.length,
+                    itemCount: filtered.length,
                     separatorBuilder: (_, __) =>
                     const Divider(height: 1),
                     itemBuilder: (context, i) {
-                      final e = _filtered[i];
+                      final e = filtered[i];
                       return InkWell(
                         onTap: () => showDialog(
                           context: context,
                           builder: (_) => EmployeeDetailDialog(
                               employe: e,
-                              allEmployes: _employes,
-                              isDirecteur: _isDirecteur),
+                              allEmployes: employes,
+                              isDirecteur: isDirecteur),
                         ),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
@@ -406,10 +373,10 @@ class _EmployeesPageState extends State<EmployeesPage>
                                 ])),
                             // CHEF
                             Expanded(flex: 2, child: Text(
-                                _getChefNom(e.chefDirectId),
+                                _getChefNom(e.chefDirectId, employes),
                                 style: const TextStyle(fontSize: 13))),
                             // SALAIRE - فقط Directeur
-                            if (_isDirecteur)
+                            if (isDirecteur)
                               Expanded(flex: 1, child: Text(
                                   '${e.salaireBase.toInt()} DH',
                                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
@@ -439,17 +406,16 @@ class _EmployeesPageState extends State<EmployeesPage>
                                   context: context,
                                   builder: (_) => EmployeeDetailDialog(
                                       employe: e,
-                                      allEmployes: _employes,
-                                      isDirecteur: _isDirecteur),
+                                      allEmployes: employes,
+                                      isDirecteur: isDirecteur),
                                 ),
                               ),
-                              // تعديل الـ Statut للـ Chef Équipe
                               IconButton(
                                 icon: const Icon(Icons.edit, size: 18),
                                 color: Colors.orange,
-                                onPressed: () => _isDirecteur
-                                    ? null // غنزيدو edit كامل بعدها
-                                    : _showChangeStatutDialog(context, e),
+                                onPressed: () => isDirecteur
+                                    ? null
+                                    : _showChangeStatutDialog(context, e, prov),
                               ),
                             ])),
                           ]),
@@ -457,89 +423,6 @@ class _EmployeesPageState extends State<EmployeesPage>
                       );
                     },
                   ),
-=======
-  // ===== DETAIL DIALOG =====
-  void _showDetailDialog(BuildContext context, Employe e) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.9,
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 28,
-                      backgroundColor: const Color(0xFF1565C0).withOpacity(0.15),
-                      child: Text(e.nom[0],
-                          style: const TextStyle(fontSize: 22, color: Color(0xFF1565C0), fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(e.nom, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                        Text('${e.poste} - ${e.magasin}', style: TextStyle(color: Colors.grey[600])),
-                      ],
-                    )),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: e.statut.color.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(e.statut.label,
-                          style: TextStyle(color: e.statut.color, fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-                  ],
-                ),
-                const Divider(height: 28),
-                // Sections
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _sectionTitle('🪪 Identité'),
-                        _infoRow('CIN', e.cin),
-                        _infoRow('Tél', e.telephone),
-                        if (e.telephone2.isNotEmpty) _infoRow('Tél 2', e.telephone2),
-                        _infoRow('Naissance', e.dateNaissance),
-                        _infoRow('Email', e.email),
-                        _infoRow('Adresse', e.adresse),
-                      ],
-                    )),
-                    const SizedBox(width: 24),
-                    Expanded(child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _sectionTitle('💼 Travail'),
-                        _infoRow('Département', e.departement),
-                        _infoRow('Contrat', e.typeContrat),
-                        _infoRow('Début', e.dateDebut),
-                        if (e.finContrat.isNotEmpty) _infoRow('Fin contrat', e.finContrat),
-                        _infoRow('Salaire', '${e.salaireBase.toInt()} DH'),
-                        _infoRow('Chef direct', _getChefNom(e.chefDirectId)),
-                        const SizedBox(height: 12),
-                        _sectionTitle('📋 CNSS'),
-                        _infoRow('N° CNSS', e.cnss),
-                        _infoRow('Date inscription', e.dateCnss),
-                      ],
-                    )),
-                  ],
->>>>>>> origin/dev-marouane
                 ),
               ],
             ),
@@ -549,8 +432,7 @@ class _EmployeesPageState extends State<EmployeesPage>
     );
   }
 
-  // Chef Équipe يقدر يبدل Statut فقط
-  void _showChangeStatutDialog(BuildContext context, Employe employe) {
+  void _showChangeStatutDialog(BuildContext context, Employe employe, EmployeesProvider prov) {
     EmployeStatut selected = employe.statut;
     showDialog(
       context: context,
@@ -610,27 +492,9 @@ class _EmployeesPageState extends State<EmployeesPage>
               child: const Text('Annuler'),
             ),
             ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  final idx = _employes.indexWhere((e) => e.id == employe.id);
-                  if (idx >= 0) {
-                    // نبنيو employe جديد بالـ statut الجديد
-                    final old = _employes[idx];
-                    _employes[idx] = Employe(
-                      id: old.id, nom: old.nom, cin: old.cin,
-                      telephone: old.telephone, telephone2: old.telephone2,
-                      dateNaissance: old.dateNaissance, adresse: old.adresse,
-                      email: old.email, poste: old.poste, magasin: old.magasin,
-                      departement: old.departement, salaireBase: old.salaireBase,
-                      typeContrat: old.typeContrat, dateDebut: old.dateDebut,
-                      finContrat: old.finContrat, chefDirectId: old.chefDirectId,
-                      cnss: old.cnss, dateCnss: old.dateCnss,
-                      statut: selected,
-                      documents: old.documents,
-                    );
-                  }
-                });
-                Navigator.pop(context);
+              onPressed: () async {
+                await prov.updateEmployeStatut(employe.id, selected);
+                if (context.mounted) Navigator.pop(context);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF1565C0),

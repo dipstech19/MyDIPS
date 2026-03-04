@@ -1,80 +1,54 @@
 import 'dart:io' as dart_io;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../employees/data/postes_repository.dart';
+import '../employees/postes_provider.dart';
+import '../employees/employees_provider.dart';
+import '../employees/models/employe_model.dart' as emp;
+import '../employees/models/equipe_model.dart';
+import 'data/admins_repository.dart';
+import 'admins_provider.dart';
 
-// ─────────────────────────────────────────────
-//  MODEL CLASSES
-// ─────────────────────────────────────────────
-
-class AdminUser {
-  final String id;
-  String nom;
-  String prenom;
-  String email;
-  String telephone;
-  String role;
-  bool actif;
-  List<String> permissions;
-  DateTime dateCreation;
-
-  AdminUser({
-    required this.id,
-    required this.nom,
-    required this.prenom,
-    required this.email,
-    required this.telephone,
-    required this.role,
-    required this.actif,
-    required this.permissions,
-    required this.dateCreation,
-  });
+// Modèles locaux pour l'UI Chefs (affichage dérivé de Equipe + Employe)
+class _ChefEquipeView {
+  final Equipe equipe;
+  final emp.Employe? chefEmploye;
+  _ChefEquipeView(this.equipe, this.chefEmploye);
+  String get chefNom => chefEmploye?.nom ?? equipe.chefId;
 }
 
-// ─────────────────────────────────────────────
-//  EMPLOYE MODEL
-// ─────────────────────────────────────────────
-
-class Employe {
-  final String id;
-  String nom;
-  String prenom;
-  String poste;
-  String telephone;
-  bool actif;
-
-  Employe({
-    required this.id,
-    required this.nom,
-    required this.prenom,
-    required this.poste,
-    required this.telephone,
-    required this.actif,
-  });
+// Classes conservées pour _ChefDetailsDialog / _ChefDrawer (dialogs dépréciés, à migrer si réutilisés)
+class _ParamEmploye {
+  final String id; String nom; String prenom; String poste; String telephone; bool actif;
+  _ParamEmploye({required this.id, required this.nom, required this.prenom, required this.poste, required this.telephone, required this.actif});
+}
+class _ParamChefEquipe {
+  final String id; String nom; String prenom; String email; String telephone; String departement;
+  int nbEmployes; bool actif; DateTime dateCreation; List<_ParamEmploye> employes;
+  _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
 }
 
-class ChefEquipe {
-  final String id;
-  String nom;
-  String prenom;
-  String email;
-  String telephone;
-  String departement;
-  int nbEmployes;
-  bool actif;
-  DateTime dateCreation;
-  List<Employe> employes;
-
-  ChefEquipe({
-    required this.id,
-    required this.nom,
-    required this.prenom,
-    required this.email,
-    required this.telephone,
-    required this.departement,
-    required this.nbEmployes,
-    required this.actif,
-    required this.dateCreation,
-    List<Employe>? employes,
-  }) : employes = employes ?? [];
+Widget _offlineBanner() {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    decoration: BoxDecoration(
+      color: Colors.orange.shade50,
+      border: Border(bottom: BorderSide(color: Colors.orange.shade200)),
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.cloud_off, size: 22, color: Colors.orange.shade800),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Données en ligne indisponibles. Connectez Firebase (ex: Android) pour enregistrer et synchroniser.',
+            style: TextStyle(fontSize: 13, color: Colors.orange.shade900),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ─────────────────────────────────────────────
@@ -94,6 +68,7 @@ class _ParametresPageState extends State<ParametresPage> {
   final List<_SettingsSection> _sections = [
     _SettingsSection(icon: Icons.admin_panel_settings, label: 'Administrateurs'),
     _SettingsSection(icon: Icons.groups, label: 'Chefs d\'équipe'),
+    _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
     _SettingsSection(icon: Icons.security, label: 'Sécurité'),
@@ -283,11 +258,12 @@ class _ParametresPageState extends State<ParametresPage> {
     switch (index) {
       case 0:  return const _AdminsSection();
       case 1:  return const _ChefsEquipeSection();
-      case 2:  return const _GeneralSection();
-      case 3:  return const _NotificationsSection();
-      case 4:  return const _SecuriteSection();
-      case 5:  return const _DatabaseSection();
-      case 6:  return const _AboutSection();
+      case 2:  return const _PostesSection();
+      case 3:  return const _GeneralSection();
+      case 4:  return const _NotificationsSection();
+      case 5:  return const _SecuriteSection();
+      case 6:  return const _DatabaseSection();
+      case 7:  return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -616,68 +592,31 @@ class _AdminsSection extends StatefulWidget {
 }
 
 class _AdminsSectionState extends State<_AdminsSection> {
-  final List<AdminUser> _admins = [
-    AdminUser(
-      id: 'ADM001',
-      nom: 'El Amrani',
-      prenom: 'Karim',
-      email: 'k.elamrani@dips.ma',
-      telephone: '0661 23 45 67',
-      role: 'Admin RH',
-      actif: true,
-      permissions: ['Employés', 'Pointage', 'Rapports'],
-      dateCreation: DateTime(2024, 1, 15),
-    ),
-    AdminUser(
-      id: 'ADM002',
-      nom: 'Bensouda',
-      prenom: 'Sara',
-      email: 's.bensouda@dips.ma',
-      telephone: '0662 98 76 54',
-      role: 'Admin Magasin',
-      actif: true,
-      permissions: ['Gestion Magasin', 'Rapports'],
-      dateCreation: DateTime(2024, 3, 8),
-    ),
-    AdminUser(
-      id: 'ADM003',
-      nom: 'Tazi',
-      prenom: 'Omar',
-      email: 'o.tazi@dips.ma',
-      telephone: '0663 11 22 33',
-      role: 'Admin Général',
-      actif: false,
-      permissions: ['Employés', 'Pointage', 'Gestion Magasin', 'Rapports'],
-      dateCreation: DateTime(2023, 11, 20),
-    ),
-  ];
-
   String _searchQuery = '';
 
-  List<AdminUser> get _filtered => _admins
+  List<AdminUser> _filtered(AdminsProvider prov) => prov.admins
       .where((a) => '${a.nom} ${a.prenom} ${a.email} ${a.role}'
       .toLowerCase()
       .contains(_searchQuery.toLowerCase()))
       .toList();
 
-  void _openAdminDrawer([AdminUser? existing]) {
+  void _openAdminDrawer(BuildContext context, AdminsProvider prov, [AdminUser? existing]) {
     _openDrawer(
       context,
       _AdminDrawer(
         existing: existing,
-        onSave: (admin) => setState(() {
+        onSave: (admin) async {
           if (existing != null) {
-            final i = _admins.indexWhere((a) => a.id == existing.id);
-            if (i != -1) _admins[i] = admin;
+            await prov.updateAdmin(admin);
           } else {
-            _admins.add(admin);
+            await prov.addAdmin(admin);
           }
-        }),
+        },
       ),
     );
   }
 
-  void _confirmDelete(AdminUser admin) {
+  void _confirmDelete(BuildContext context, AdminsProvider prov, AdminUser admin) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -704,9 +643,9 @@ class _AdminsSectionState extends State<_AdminsSection> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red, foregroundColor: Colors.white, elevation: 0),
-            onPressed: () {
-              setState(() => _admins.removeWhere((a) => a.id == admin.id));
-              Navigator.pop(context);
+            onPressed: () async {
+              await prov.deleteAdmin(admin.id);
+              if (context.mounted) Navigator.pop(context);
             },
             child: const Text('Supprimer'),
           ),
@@ -717,9 +656,11 @@ class _AdminsSectionState extends State<_AdminsSection> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered;
+    final prov = context.watch<AdminsProvider>();
+    final filtered = _filtered(prov);
     return Column(
       children: [
+        if (!prov.firebaseAvailable) _offlineBanner(),
         // ── Top bar ──
         Container(
           color: Colors.white,
@@ -729,7 +670,7 @@ class _AdminsSectionState extends State<_AdminsSection> {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('Administrateurs',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
-                Text('${_admins.length} compte(s) enregistré(s)',
+                Text('${prov.admins.length} compte(s) enregistré(s)',
                     style: TextStyle(fontSize: 11, color: Colors.grey[500])),
               ]),
               const Spacer(),
@@ -770,7 +711,7 @@ class _AdminsSectionState extends State<_AdminsSection> {
                 ),
                 icon: const Icon(Icons.add, size: 15),
                 label: const Text('Ajouter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                onPressed: () => _openAdminDrawer(),
+                onPressed: () => _openAdminDrawer(context, prov),
               ),
             ],
           ),
@@ -800,9 +741,12 @@ class _AdminsSectionState extends State<_AdminsSection> {
               return _AdminTableRow(
                 admin: admin,
                 isEven: i.isEven,
-                onEdit: () => _openAdminDrawer(admin),
-                onDelete: () => _confirmDelete(admin),
-                onToggle: () => setState(() => admin.actif = !admin.actif),
+                onEdit: () => _openAdminDrawer(context, prov, admin),
+                onDelete: () => _confirmDelete(context, prov, admin),
+                onToggle: () async {
+                  admin.actif = !admin.actif;
+                  await prov.updateAdmin(admin);
+                },
               );
             },
           ),
@@ -812,9 +756,10 @@ class _AdminsSectionState extends State<_AdminsSection> {
   }
 
   void _exportAdminsCsv(BuildContext context) async {
+    final prov = context.read<AdminsProvider>();
     final csv = StringBuffer();
     csv.writeln('ID,Nom,Prénom,Email,Téléphone,Rôle,Statut,Permissions,Date Création');
-    for (final a in _admins) {
+    for (final a in prov.admins) {
       csv.writeln(
         '"${a.id}","${a.nom}","${a.prenom}","${a.email}","${a.telephone}",'
             '"${a.role}","${a.actif ? 'Actif' : 'Inactif'}","${a.permissions.join(' | ')}",'
@@ -1093,9 +1038,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     if (!_formKey.currentState!.validate()) return;
     final isNew = widget.existing == null;
     widget.onSave(AdminUser(
-      id: isNew
-          ? 'ADM${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'
-          : widget.existing!.id,
+      id: isNew ? '' : widget.existing!.id,
       nom: _nomCtrl.text.trim(),
       prenom: _prenomCtrl.text.trim(),
       email: _emailCtrl.text.trim(),
@@ -1290,118 +1233,31 @@ class _ChefsEquipeSection extends StatefulWidget {
 }
 
 class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
-  final List<ChefEquipe> _chefs = [
-    ChefEquipe(
-      id: 'CE001',
-      nom: 'Benhaddou',
-      prenom: 'Farid',
-      email: 'f.benhaddou@dips.ma',
-      telephone: '0661 44 33 22',
-      departement: 'Production',
-      nbEmployes: 3,
-      actif: true,
-      dateCreation: DateTime(2024, 2, 10),
-      employes: [
-        Employe(id: 'EMP001', nom: 'Alami', prenom: 'Youssef', poste: 'Opérateur', telephone: '0661 11 22 33', actif: true),
-        Employe(id: 'EMP002', nom: 'Haddad', prenom: 'Imane', poste: 'Technicienne', telephone: '0662 44 55 66', actif: true),
-        Employe(id: 'EMP003', nom: 'Berrada', prenom: 'Amine', poste: 'Contrôleur', telephone: '0663 77 88 99', actif: false),
-      ],
-    ),
-    ChefEquipe(
-      id: 'CE002',
-      nom: 'Rachidi',
-      prenom: 'Nadia',
-      email: 'n.rachidi@dips.ma',
-      telephone: '0662 55 44 33',
-      departement: 'Logistique',
-      nbEmployes: 2,
-      actif: true,
-      dateCreation: DateTime(2024, 4, 1),
-      employes: [
-        Employe(id: 'EMP004', nom: 'Benali', prenom: 'Soufiane', poste: 'Magasinier', telephone: '0664 12 34 56', actif: true),
-        Employe(id: 'EMP005', nom: 'Tahiri', prenom: 'Loubna', poste: 'Gestionnaire', telephone: '0665 98 76 54', actif: true),
-      ],
-    ),
-    ChefEquipe(
-      id: 'CE003',
-      nom: 'Ouali',
-      prenom: 'Bilal',
-      email: 'b.ouali@dips.ma',
-      telephone: '0663 66 55 44',
-      departement: 'Maintenance',
-      nbEmployes: 2,
-      actif: false,
-      dateCreation: DateTime(2023, 12, 5),
-      employes: [
-        Employe(id: 'EMP006', nom: 'Ziani', prenom: 'Khalid', poste: 'Électricien', telephone: '0666 11 22 33', actif: true),
-        Employe(id: 'EMP007', nom: 'Moussaoui', prenom: 'Fatima', poste: 'Mécanicienne', telephone: '0667 44 55 66', actif: false),
-      ],
-    ),
-  ];
-
   String _searchQuery = '';
 
-  static const _deptColors = {
-    'Production':    Color(0xFF3B82F6),
-    'Logistique':    Color(0xFFF59E0B),
-    'Maintenance':   Color(0xFF10B981),
-    'Informatique':  Color(0xFF8B5CF6),
-    'Administration':Color(0xFFEF4444),
-  };
-
-  List<ChefEquipe> get _filtered => _chefs
-      .where((c) => '${c.nom} ${c.prenom} ${c.email} ${c.departement}'
-      .toLowerCase()
-      .contains(_searchQuery.toLowerCase()))
-      .toList();
-
-  void _openChefDrawer([ChefEquipe? existing]) {
-    _openDrawer(
-      context,
-      _ChefDrawer(
-        existing: existing,
-        onSave: (chef) => setState(() {
-          if (existing != null) {
-            final i = _chefs.indexWhere((c) => c.id == existing.id);
-            if (i != -1) _chefs[i] = chef;
-          } else {
-            _chefs.add(chef);
-          }
-        }),
-      ),
-    );
+  List<_ChefEquipeView> _views(EmployeesProvider prov) {
+    final eqs = prov.equipes;
+    final emps = prov.employes;
+    return eqs.map((e) {
+      final list = emps.where((x) => x.id == e.chefId).toList();
+      final chef = list.isEmpty ? null : list.first;
+      return _ChefEquipeView(e, chef);
+    }).where((v) => '${v.equipe.nom} ${v.chefNom} ${v.equipe.magasin}'.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
   }
 
-  void _confirmDelete(ChefEquipe chef) {
+  void _confirmDeleteEquipe(BuildContext context, EmployeesProvider prov, Equipe eq) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 22),
-          const SizedBox(width: 8),
-          const Text('Supprimer le chef', style: TextStyle(fontSize: 16)),
-        ]),
-        content: RichText(
-          text: TextSpan(
-            style: const TextStyle(fontSize: 13, color: Colors.black87),
-            children: [
-              const TextSpan(text: 'Supprimer '),
-              TextSpan(
-                  text: '${chef.prenom} ${chef.nom}',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              const TextSpan(text: ' de la liste ?'),
-            ],
-          ),
-        ),
+        title: const Text('Supprimer l\'équipe'),
+        content: Text('Supprimer l\'équipe « ${eq.nom} » ? Les membres ne seront pas supprimés.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red, foregroundColor: Colors.white, elevation: 0),
-            onPressed: () {
-              setState(() => _chefs.removeWhere((c) => c.id == chef.id));
-              Navigator.pop(context);
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              await prov.deleteEquipe(eq.id);
+              if (context.mounted) Navigator.pop(context);
             },
             child: const Text('Supprimer'),
           ),
@@ -1412,20 +1268,20 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered;
-
+    final prov = context.watch<EmployeesProvider>();
+    final views = _views(prov);
     return Column(
       children: [
-        // ── Top bar ──
+        if (!prov.firebaseAvailable) _offlineBanner(),
         Container(
           color: Colors.white,
           padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
           child: Row(
             children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Chefs d\'équipe',
+                const Text('Chefs d\'équipe (données réelles)',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
-                Text('${_chefs.length} chef(s) enregistré(s)',
+                Text('${prov.equipes.length} équipe(s) — Firestore',
                     style: TextStyle(fontSize: 11, color: Colors.grey[500])),
               ]),
               const Spacer(),
@@ -1446,17 +1302,6 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: _kBorder),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                ),
-                icon: const Icon(Icons.file_download_outlined, size: 15, color: _kDark),
-                label: const Text('Exporter CSV', style: TextStyle(fontSize: 12, color: _kDark)),
-                onPressed: () => _exportChefsCsv(context),
-              ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
@@ -1465,84 +1310,150 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
                 ),
                 icon: const Icon(Icons.group_add, size: 15),
-                label: const Text('Ajouter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                onPressed: () => _openChefDrawer(),
+                label: const Text('Ajouter équipe', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                onPressed: () => _showAddEquipeDialog(context, prov),
               ),
             ],
           ),
         ),
         const Divider(height: 1, color: _kBorder),
-        // ── Table header ──
         Container(
           color: const Color(0xFFF0F4FA),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
           child: const Row(children: [
-            Expanded(flex: 3, child: _TH('NOM COMPLET')),
-            Expanded(flex: 2, child: _TH('TÉLÉPHONE')),
-            Expanded(flex: 2, child: _TH('RÔLE / DEPT.')),
-            Expanded(flex: 2, child: _TH('STATUT')),
+            Expanded(flex: 3, child: _TH('ÉQUIPE')),
+            Expanded(flex: 2, child: _TH('CHEF')),
+            Expanded(flex: 2, child: _TH('MAGASIN')),
+            Expanded(flex: 1, child: _TH('MEMBRES')),
             SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
           ]),
         ),
         const Divider(height: 1, color: _kBorder),
-        // ── Rows ──
         Expanded(
-          child: filtered.isEmpty
+          child: views.isEmpty
               ? const _EmptyState()
               : ListView.builder(
-            itemCount: filtered.length,
-            itemBuilder: (context, i) {
-              final chef = filtered[i];
-              final color = _deptColors[chef.departement] ?? Colors.grey;
-              return _ChefTableRow(
-                chef: chef,
-                deptColor: color,
-                isEven: i.isEven,
-                onEdit: () => _openChefDrawer(chef),
-                onDelete: () => _confirmDelete(chef),
-                onToggle: () => setState(() => chef.actif = !chef.actif),
-              );
-            },
-          ),
+                  itemCount: views.length,
+                  itemBuilder: (context, i) {
+                    final v = views[i];
+                    return _ChefEquipeRow(
+                      view: v,
+                      isEven: i.isEven,
+                      onEdit: () => _showEditEquipeDialog(context, prov, v.equipe),
+                      onDelete: () => _confirmDeleteEquipe(context, prov, v.equipe),
+                    );
+                  },
+                ),
         ),
       ],
     );
   }
 
-  void _exportChefsCsv(BuildContext context) async {
-    final csv = StringBuffer();
-    csv.writeln('ID,Nom,Prénom,Email,Téléphone,Département,Nb Employés,Statut,Date Création');
-    for (final c in _chefs) {
-      csv.writeln(
-        '"${c.id}","${c.nom}","${c.prenom}","${c.email}","${c.telephone}",'
-            '"${c.departement}","${c.nbEmployes}","${c.actif ? 'Actif' : 'Inactif'}",'
-            '"${c.dateCreation.toIso8601String().substring(0, 10)}"',
-      );
-    }
-    await _saveAndOpenFile('chefs_equipe_export.csv', csv.toString(), context);
+  void _showAddEquipeDialog(BuildContext context, EmployeesProvider prov) {
+    final nomCtrl = TextEditingController();
+    final magasinCtrl = TextEditingController(text: 'A');
+    String? chefId;
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Nouvelle équipe'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nomCtrl, decoration: const InputDecoration(labelText: 'Nom équipe')),
+                const SizedBox(height: 12),
+                TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: chefId,
+                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
+                  items: prov.employes.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))).toList(),
+                  onChanged: (v) => setDialogState(() => chefId = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () async {
+                final nom = nomCtrl.text.trim();
+                if (nom.isEmpty) return;
+                final id = 'eq_${DateTime.now().millisecondsSinceEpoch}';
+                await prov.addEquipe(Equipe(id: id, nom: nom, magasin: magasinCtrl.text.trim().isEmpty ? 'A' : magasinCtrl.text.trim(), chefId: chefId ?? '', membreIds: []));
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Créer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEditEquipeDialog(BuildContext context, EmployeesProvider prov, Equipe eq) {
+    final nomCtrl = TextEditingController(text: eq.nom);
+    final magasinCtrl = TextEditingController(text: eq.magasin);
+    String? chefId = eq.chefId.isEmpty ? null : eq.chefId;
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Modifier l\'équipe'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nomCtrl, decoration: const InputDecoration(labelText: 'Nom équipe')),
+                const SizedBox(height: 12),
+                TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: chefId,
+                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
+                  items: [const DropdownMenuItem(value: '', child: Text('— Aucun —')), ...prov.employes.map((e) => DropdownMenuItem<String>(value: e.id, child: Text('${e.nom} — ${e.poste}')))],
+                  onChanged: (v) => setDialogState(() => chefId = v ?? ''),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () async {
+                final updated = eq.copyWith(nom: nomCtrl.text.trim(), magasin: magasinCtrl.text.trim(), chefId: chefId ?? '');
+                await prov.updateEquipe(updated);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
-// ── Simplified chef row: name / phone / dept / status + 3 icons ──
-class _ChefTableRow extends StatefulWidget {
-  final ChefEquipe chef;
-  final Color deptColor;
+// ── Row pour équipe + chef (données réelles)
+class _ChefEquipeRow extends StatefulWidget {
+  final _ChefEquipeView view;
   final bool isEven;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
-  final VoidCallback onToggle;
-  const _ChefTableRow({required this.chef, required this.deptColor, required this.isEven, required this.onEdit, required this.onDelete, required this.onToggle});
+  const _ChefEquipeRow({required this.view, required this.isEven, required this.onEdit, required this.onDelete});
   @override
-  State<_ChefTableRow> createState() => _ChefTableRowState();
+  State<_ChefEquipeRow> createState() => _ChefEquipeRowState();
 }
 
-class _ChefTableRowState extends State<_ChefTableRow> {
+class _ChefEquipeRowState extends State<_ChefEquipeRow> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    final c = widget.chef;
-    final dc = widget.deptColor;
+    final v = widget.view;
+    final eq = v.equipe;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit:  (_) => setState(() => _hovered = false),
@@ -1553,68 +1464,13 @@ class _ChefTableRowState extends State<_ChefTableRow> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             child: Row(children: [
-              // NOM COMPLET (no avatar)
-              Expanded(
-                flex: 3,
-                child: Text('${c.prenom} ${c.nom}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _kDark),
-                    overflow: TextOverflow.ellipsis),
-              ),
-              // TÉLÉPHONE
-              Expanded(
-                flex: 2,
-                child: Text(c.telephone, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-              ),
-              // DÉPARTEMENT
-              Expanded(
-                flex: 2,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: dc.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: dc.withOpacity(0.25)),
-                    ),
-                    child: Text(c.departement,
-                        style: TextStyle(fontSize: 11, color: dc, fontWeight: FontWeight.w700),
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ),
-              // STATUT
-              Expanded(
-                flex: 2,
-                child: GestureDetector(
-                  onTap: widget.onToggle,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Container(
-                      width: 7, height: 7,
-                      decoration: BoxDecoration(
-                        color: c.actif ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(c.actif ? 'Actif' : 'Inactif',
-                        style: TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600,
-                            color: c.actif ? Colors.green.shade700 : Colors.red.shade600)),
-                  ]),
-                ),
-              ),
-              // ACTIONS
+              Expanded(flex: 3, child: Text(eq.nom, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _kDark), overflow: TextOverflow.ellipsis)),
+              Expanded(flex: 2, child: Text(v.chefNom, style: TextStyle(fontSize: 12, color: Colors.grey[700]), overflow: TextOverflow.ellipsis)),
+              Expanded(flex: 2, child: Text(eq.magasin, style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+              Expanded(flex: 1, child: Text('${eq.membreIds.length}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
               SizedBox(
                 width: 110,
                 child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  _TableBtn(
-                    icon: Icons.info_outline,
-                    tooltip: 'Détails',
-                    color: Colors.purple,
-                    onTap: () => _showChefDetails(context, c, dc),
-                  ),
-                  const SizedBox(width: 5),
                   _TableBtn(icon: Icons.edit_outlined, tooltip: 'Modifier', color: _kAccent, onTap: widget.onEdit),
                   const SizedBox(width: 5),
                   _TableBtn(icon: Icons.delete_outline, tooltip: 'Supprimer', color: Colors.red, onTap: widget.onDelete),
@@ -1627,19 +1483,11 @@ class _ChefTableRowState extends State<_ChefTableRow> {
       ),
     );
   }
-
-  void _showChefDetails(BuildContext context, ChefEquipe c, Color dc) {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black45,
-      builder: (_) => _ChefDetailsDialog(chef: c, deptColor: dc),
-    );
-  }
 }
 
 // ── Chef details dialog with employee CRUD ──
 class _ChefDetailsDialog extends StatefulWidget {
-  final ChefEquipe chef;
+  final _ParamChefEquipe chef;
   final Color deptColor;
   const _ChefDetailsDialog({required this.chef, required this.deptColor});
   @override
@@ -1647,7 +1495,7 @@ class _ChefDetailsDialog extends StatefulWidget {
 }
 
 class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
-  late List<Employe> _employes;
+  late List<_ParamEmploye> _employes;
 
   @override
   void initState() {
@@ -1662,7 +1510,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
     widget.chef.nbEmployes = _employes.length;
   }
 
-  void _addOrEditEmployee([Employe? existing]) {
+  void _addOrEditEmployee([_ParamEmploye? existing]) {
     final nomCtrl    = TextEditingController(text: existing?.nom ?? '');
     final prenomCtrl = TextEditingController(text: existing?.prenom ?? '');
     final posteCtrl  = TextEditingController(text: existing?.poste ?? '');
@@ -1746,7 +1594,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                         ),
                         onPressed: () {
                           if (prenomCtrl.text.isEmpty || nomCtrl.text.isEmpty) return;
-                          final emp = Employe(
+                          final emp = _ParamEmploye(
                             id: existing?.id ?? 'EMP${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}',
                             nom: nomCtrl.text.trim(),
                             prenom: prenomCtrl.text.trim(),
@@ -1779,7 +1627,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
     );
   }
 
-  void _confirmDeleteEmployee(Employe emp) {
+  void _confirmDeleteEmployee(_ParamEmploye emp) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -2038,8 +1886,8 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
 
 // ── Chef sliding drawer ──
 class _ChefDrawer extends StatefulWidget {
-  final ChefEquipe? existing;
-  final Function(ChefEquipe) onSave;
+  final _ParamChefEquipe? existing;
+  final Function(_ParamChefEquipe) onSave;
   const _ChefDrawer({this.existing, required this.onSave});
   @override
   State<_ChefDrawer> createState() => _ChefDrawerState();
@@ -2078,7 +1926,7 @@ class _ChefDrawerState extends State<_ChefDrawer> {
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     final isNew = widget.existing == null;
-    widget.onSave(ChefEquipe(
+    widget.onSave(_ParamChefEquipe(
       id: isNew
           ? 'CE${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'
           : widget.existing!.id,
@@ -2266,6 +2114,174 @@ class _DrawerSection extends StatelessWidget {
       ],
     );
   }
+}
+
+// ─────────────────────────────────────────────
+//  SECTION: POSTES (مناصب — من Firestore)
+// ─────────────────────────────────────────────
+
+class _PostesSection extends StatelessWidget {
+  const _PostesSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<PostesProvider>();
+    if (prov.loading && prov.firebaseAvailable) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final list = prov.postes;
+    return Column(
+      children: [
+        if (!prov.firebaseAvailable) _offlineBanner(),
+        if (prov.error != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: Colors.red.shade50,
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, size: 20, color: Colors.red.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    prov.error!,
+                    style: TextStyle(fontSize: 12, color: Colors.red.shade900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
+          child: Row(
+            children: [
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Postes (fonctions)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                Text('${list.length} poste(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              ]),
+              const Spacer(),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                ),
+                icon: const Icon(Icons.add, size: 15),
+                label: const Text('Ajouter un poste', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                onPressed: () => _showPosteDialog(context, prov, null),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: _kBorder),
+        Expanded(
+          child: list.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.work_outline, size: 56, color: Colors.grey[400]),
+                      const SizedBox(height: 12),
+                      Text('Aucun poste. Ajoutez depuis le bouton ci‑dessus.', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final p = list[i];
+                    return ListTile(
+                      leading: CircleAvatar(radius: 20, backgroundColor: _kAccent.withOpacity(0.12), child: Icon(Icons.work_outline, color: _kAccent, size: 20)),
+                      title: Text(p.nom, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(icon: const Icon(Icons.edit_outlined, size: 18), onPressed: () => _showPosteDialog(context, prov, p)),
+                        IconButton(icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[400]), onPressed: () => _confirmDeletePoste(context, prov, p)),
+                      ]),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing) {
+  final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+  final navigator = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(existing == null ? 'Nouveau poste' : 'Modifier le poste'),
+      content: TextField(
+        controller: nomCtrl,
+        decoration: const InputDecoration(labelText: 'Nom du poste', hintText: 'Ex: Chauffeur, Vendeur'),
+        autofocus: true,
+      ),
+      actions: [
+        TextButton(onPressed: () => navigator.pop(), child: const Text('Annuler')),
+        ElevatedButton(
+          onPressed: () async {
+            final nom = nomCtrl.text.trim();
+            if (nom.isEmpty) {
+              messenger.showSnackBar(const SnackBar(content: Text('Entrez un nom de poste')));
+              return;
+            }
+            if (!prov.firebaseAvailable) {
+              messenger.showSnackBar(const SnackBar(
+                content: Text('Données hors ligne. Connectez Firebase (ex: Android) pour enregistrer.'),
+                backgroundColor: Colors.orange,
+              ));
+              if (dialogContext.mounted) navigator.pop();
+              return;
+            }
+            try {
+              if (existing == null) {
+                await prov.addPoste(Poste(id: '', nom: nom));
+              } else {
+                await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre));
+              }
+              if (dialogContext.mounted) navigator.pop();
+              if (context.mounted) {
+                messenger.showSnackBar(SnackBar(content: Text(existing == null ? 'Poste « $nom » enregistré.' : 'Poste mis à jour.')));
+              }
+            } catch (e) {
+              if (context.mounted) {
+                messenger.showSnackBar(SnackBar(
+                  content: Text('Erreur: ${e.toString().replaceFirst(RegExp(r'^\[[\w-]+/\w+\]\s*'), '')}'),
+                  backgroundColor: Colors.red,
+                ));
+              }
+            }
+          },
+          child: const Text('Enregistrer'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _confirmDeletePoste(BuildContext context, PostesProvider prov, Poste p) {
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Supprimer le poste'),
+      content: Text('Supprimer « ${p.nom} » ?'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+          onPressed: () async {
+            await prov.deletePoste(p.id);
+            if (context.mounted) Navigator.pop(context);
+          },
+          child: const Text('Supprimer'),
+        ),
+      ],
+    ),
+  );
 }
 
 // ─────────────────────────────────────────────

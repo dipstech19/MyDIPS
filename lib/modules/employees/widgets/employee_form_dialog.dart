@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/employe_model.dart';
+import '../employees_provider.dart';
+import '../postes_provider.dart';
 
 class EmployeeFormDialog extends StatefulWidget {
   final List<Employe> employes;
@@ -31,20 +34,22 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _cnssCtrl = TextEditingController();
   final _dateCnssCtrl = TextEditingController();
 
-  String _poste = 'Vendeur';
-  String _magasin = 'El Jadida #1';
-  String _dept = 'Ventes';
+  String _poste = '';
+  String _magasin = '';
+  String _dept = '';
   String _contrat = 'CDI';
   String _chefId = '';
   EmployeStatut _statut = EmployeStatut.enService;
 
-  final _postes = ['Vendeur', 'Caissier', 'Manager', 'Chauffeur', 'Technicien'];
-  final _magasins = ['El Jadida #1', 'El Jadida #2', 'Entrepôt'];
-  final _depts = ['Ventes', 'Logistique', 'Administration', 'Technique'];
-  final _contrats = ['CDI', 'CDD', 'Stage'];
+  static const _contrats = ['CDI', 'CDD', 'Stage'];
 
   @override
   Widget build(BuildContext context) {
+    final postesProv = context.watch<PostesProvider>();
+    final empProv = context.watch<EmployeesProvider>();
+    final posteNames = postesProv.postes.map((p) => p.nom).toList();
+    final magasins = _uniqueMagasins(empProv);
+    final depts = _uniqueDepartements(empProv);
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
@@ -97,12 +102,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       _sectionTitle('💼 Travail'),
                       const SizedBox(height: 12),
                       _row2(
-                        _dropdown('Poste *', _poste, _postes, (v) => setState(() => _poste = v!)),
-                        _dropdown('Magasin *', _magasin, _magasins, (v) => setState(() => _magasin = v!)),
+                        _dropdownPoste(posteNames),
+                        _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
                       ),
                       const SizedBox(height: 12),
                       _row2(
-                        _dropdown('Département *', _dept, _depts, (v) => setState(() => _dept = v!)),
+                        _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
                         _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
                       ),
                       const SizedBox(height: 12),
@@ -190,6 +195,13 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
   void _save() {
     if (_formKey.currentState!.validate()) {
+      final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
+      final empProv = context.read<EmployeesProvider>();
+      final magasins = _uniqueMagasins(empProv);
+      final depts = _uniqueDepartements(empProv);
+      final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
+      final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
+      final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       widget.onSave(Employe(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         nom: _nomCtrl.text,
@@ -199,9 +211,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         dateNaissance: _naissanceCtrl.text,
         adresse: _adresseCtrl.text,
         email: _emailCtrl.text,
-        poste: _poste,
-        magasin: _magasin,
-        departement: _dept,
+        poste: poste,
+        magasin: magasin,
+        departement: dept,
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
         dateDebut: _dateDebutCtrl.text,
@@ -267,9 +279,43 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         },
       );
 
+  List<String> _uniqueMagasins(EmployeesProvider prov) {
+    final set = <String>{};
+    for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
+    for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
+    final list = set.toList()..sort();
+    return list.isEmpty ? ['—'] : list;
+  }
+
+  List<String> _uniqueDepartements(EmployeesProvider prov) {
+    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
+    final list = set.toList()..sort();
+    return list.isEmpty ? ['—'] : list;
+  }
+
+  Widget _dropdownPoste(List<String> posteNames) {
+    final items = posteNames.isEmpty
+        ? <String>['(Ajoutez des postes dans Paramètres > Postes)']
+        : posteNames;
+    final value = items.contains(_poste)
+        ? _poste
+        : (posteNames.isNotEmpty ? posteNames.first : items.first);
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: const InputDecoration(
+        labelText: 'Poste *',
+        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: items.map((i) => DropdownMenuItem(value: i, child: Text(i))).toList(),
+      onChanged: (v) => setState(() => _poste = v ?? ''),
+    );
+  }
+
   Widget _dropdown(String label, String value, List<String> items, void Function(String?) onChanged) =>
       DropdownButtonFormField<String>(
-        value: value,
+        value: value.isEmpty && items.isNotEmpty ? items.first : value,
         decoration: InputDecoration(
           labelText: label,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -280,18 +326,30 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         onChanged: onChanged,
       );
 
-  Widget _dropdownEmploye() => DropdownButtonFormField<String>(
-    value: _chefId.isEmpty ? null : _chefId,
-    decoration: InputDecoration(
-      labelText: 'Chef direct',
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      isDense: true,
-    ),
-    items: [
-      const DropdownMenuItem(value: '', child: Text('— Aucun —')),
-      ...widget.employes.map((e) => DropdownMenuItem(value: e.id, child: Text(e.nom))),
-    ],
-    onChanged: (v) => setState(() => _chefId = v ?? ''),
-  );
+  /// الموظفون الذين منصبهم "Chef" أو يحتوي على "chef" (مثلاً Chef d'équipe) — يظهرون فقط في قائمة Chef direct
+  static bool _isChefPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef') || p == 'shef';
+  }
+
+  Widget _dropdownEmploye() {
+    final chefCandidates = widget.employes.where((e) => _isChefPoste(e.poste)).toList();
+    final value = _chefId.isEmpty || !chefCandidates.any((e) => e.id == _chefId)
+        ? ''
+        : _chefId;
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: const InputDecoration(
+        labelText: 'Chef direct',
+        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: [
+        const DropdownMenuItem(value: '', child: Text('— Aucun —')),
+        ...chefCandidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
+      ],
+      onChanged: (v) => setState(() => _chefId = v ?? ''),
+    );
+  }
 }

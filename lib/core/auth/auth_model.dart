@@ -1,4 +1,4 @@
-enum UserRole { directeur, chefEquipe }
+enum UserRole { directeur, chefEquipe, chauffeur }
 
 class AppUser {
   final String id;

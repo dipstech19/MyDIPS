@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart';
-
 class Equipe {
   final String id;
   final String nom;
@@ -27,6 +25,28 @@ class Equipe {
       magasin: magasin ?? this.magasin,
       chefId: chefId ?? this.chefId,
       membreIds: membreIds ?? this.membreIds,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'nom': nom,
+      'magasin': magasin,
+      'chefId': chefId,
+      'membreIds': membreIds,
+    };
+  }
+
+  static Equipe fromMap(Map<String, dynamic> map) {
+    final membreIds = map['membreIds'];
+    return Equipe(
+      id: map['id'] as String? ?? '',
+      nom: map['nom'] as String? ?? '',
+      magasin: map['magasin'] as String? ?? '',
+      chefId: map['chefId'] as String? ?? '',
+      membreIds: membreIds is List<dynamic>
+          ? membreIds.map((e) => e.toString()).toList()
+          : const [],
     );
   }
 }

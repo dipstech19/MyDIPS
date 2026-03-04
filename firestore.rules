@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // وضع اختبار: القراءة والكتابة متاحة (قيّد لاحقاً بـ Firebase Auth)
+    match /employes/{docId} {
+      allow read, write: if true;
+    }
+    match /equipes/{docId} {
+      allow read, write: if true;
+    }
+    match /postes/{docId} {
+      allow read, write: if true;
+    }
+    match /admins/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
