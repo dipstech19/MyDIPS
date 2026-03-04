@@ -1,6 +1,7 @@
 import 'dart:io' as dart_io;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/utils/responsive.dart';
 import '../employees/data/postes_repository.dart';
 import '../employees/postes_provider.dart';
 import '../employees/employees_provider.dart';
@@ -26,6 +27,36 @@ class _ParamChefEquipe {
   final String id; String nom; String prenom; String email; String telephone; String departement;
   int nbEmployes; bool actif; DateTime dateCreation; List<_ParamEmploye> employes;
   _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
+}
+
+/// فقط الموظفون الذين منصبهم Chef/Shef — لاستخدامهم في قوائم "Chef (employé)"
+bool _isChefPoste(String poste) {
+  final p = poste.trim().toLowerCase();
+  return p.contains('chef') || p == 'shef';
+}
+
+/// قائمة Chef (employé) — تظهر فقط من عندهم منصب Chef/Shef
+class _ChefEquipeDropdown extends StatelessWidget {
+  final EmployeesProvider prov;
+  final String? chefId;
+  final void Function(String?) onChanged;
+
+  const _ChefEquipeDropdown({required this.prov, required this.chefId, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = prov.employes.where((e) => _isChefPoste(e.poste)).toList();
+    final value = (chefId != null && chefId!.isNotEmpty && candidates.any((e) => e.id == chefId)) ? chefId! : '';
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: const InputDecoration(labelText: 'Chef (employé)'),
+      items: [
+        const DropdownMenuItem(value: '', child: Text('— Aucun —')),
+        ...candidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
+      ],
+      onChanged: (v) => onChanged(v?.isEmpty == true ? null : v),
+    );
+  }
 }
 
 Widget _offlineBanner() {
@@ -78,6 +109,8 @@ class _ParametresPageState extends State<ParametresPage> {
 
   @override
   Widget build(BuildContext context) {
+    final padding = pagePadding(context);
+    final mobile = isMobile(context);
     return Column(
       children: [
         // ══════════════════════════════════════════
@@ -103,54 +136,54 @@ class _ParametresPageState extends State<ParametresPage> {
             children: [
               // ── Title row ──
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
+                padding: EdgeInsets.fromLTRB(padding, mobile ? 10 : 14, padding, 0),
                 child: Row(
                   children: [
-                    // Icon with blue bg
                     Container(
-                      padding: const EdgeInsets.all(7),
+                      padding: EdgeInsets.all(mobile ? 5 : 7),
                       decoration: BoxDecoration(
                         color: const Color(0xFF328EEE).withOpacity(0.10),
                         borderRadius: BorderRadius.circular(9),
                       ),
-                      child: const Icon(Icons.settings_rounded,
-                          color: Color(0xFF328EEE), size: 18),
+                      child: Icon(Icons.settings_rounded, color: const Color(0xFF328EEE), size: mobile ? 16 : 18),
                     ),
-                    const SizedBox(width: 10),
-                    // Title
-                    const Text(
-                      'Paramètres',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1A2340),
-                        letterSpacing: 0.1,
+                    SizedBox(width: mobile ? 8 : 10),
+                    Flexible(
+                      child: Text(
+                        'Paramètres',
+                        style: TextStyle(
+                          fontSize: mobile ? 15 : 17,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF1A2340),
+                          letterSpacing: 0.1,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    // Thin vertical separator
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 14),
-                      width: 1,
-                      height: 18,
-                      color: const Color(0xFFDDE3EE),
-                    ),
-                    // Subtitle
-                    Text(
-                      'Administration & Configuration',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[450] ?? Colors.grey,
-                        fontWeight: FontWeight.w400,
+                    if (!mobile) ...[
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 14),
+                        width: 1,
+                        height: 18,
+                        color: const Color(0xFFDDE3EE),
                       ),
-                    ),
+                      Text(
+                        'Administration & Configuration',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[450] ?? Colors.grey,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     _SuperAdminBadge(),
                   ],
                 ),
               ),
-              // ── Tab row ──
+              // ── Tab row (scrollable on mobile) ──
               Padding(
-                padding: const EdgeInsets.only(left: 8, right: 8, top: 4),
+                padding: EdgeInsets.only(left: mobile ? 4 : 8, right: mobile ? 4 : 8, top: 4),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -1366,12 +1399,7 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                 const SizedBox(height: 12),
                 TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: chefId,
-                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
-                  items: prov.employes.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))).toList(),
-                  onChanged: (v) => setDialogState(() => chefId = v),
-                ),
+                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
               ],
             ),
           ),
@@ -1410,12 +1438,7 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                 const SizedBox(height: 12),
                 TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: chefId,
-                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
-                  items: [const DropdownMenuItem(value: '', child: Text('— Aucun —')), ...prov.employes.map((e) => DropdownMenuItem<String>(value: e.id, child: Text('${e.nom} — ${e.poste}')))],
-                  onChanged: (v) => setDialogState(() => chefId = v ?? ''),
-                ),
+                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
               ],
             ),
           ),

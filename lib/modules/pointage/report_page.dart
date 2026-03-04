@@ -56,23 +56,31 @@ class _ReportPageState extends State<ReportPage> {
     final chefs = getChefsForReport(emp.equipes, emp.employes);
     final isRtl = locale.isArabic;
 
+    final mobile = isMobile(context);
+    final maxW = maxContentWidth(context);
     return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
       child: Padding(
         padding: EdgeInsets.all(pagePadding(context)),
         child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                tr(context, 'report_page_title'),
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 24),
-              Card(
-                elevation: 1,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxW < double.infinity ? maxW : 600),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    tr(context, 'report_page_title'),
+                    style: TextStyle(
+                      fontSize: titleFontSize(context),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Card(
+                    elevation: 1,
+                    child: Padding(
+                      padding: EdgeInsets.all(mobile ? 16 : 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -134,7 +142,9 @@ class _ReportPageState extends State<ReportPage> {
                   ),
                 ),
               ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),

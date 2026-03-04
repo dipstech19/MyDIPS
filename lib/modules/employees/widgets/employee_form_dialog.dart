@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../employees_provider.dart';
 import '../postes_provider.dart';
@@ -50,27 +51,42 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final posteNames = postesProv.postes.map((p) => p.nom).toList();
     final magasins = _uniqueMagasins(empProv);
     final depts = _uniqueDepartements(empProv);
+    final mobile = isMobile(context);
+    final maxW = dialogMaxWidth(context);
+    final maxH = dialogMaxHeight(context);
+    final padding = mobile ? 16.0 : 28.0;
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 750,
-        height: 640,
-        padding: const EdgeInsets.all(28),
-        child: Form(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: dialogMargin(context),
+        vertical: dialogMargin(context),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+        ),
+        child: Container(
+          padding: EdgeInsets.all(padding),
+          child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // HEADER
               Row(children: [
-                const Icon(Icons.person_add, color: Color(0xFF1565C0), size: 26),
-                const SizedBox(width: 12),
-                const Text('Nouvel Employé',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                const Spacer(),
+                Icon(Icons.person_add, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
+                SizedBox(width: mobile ? 8 : 12),
+                Expanded(
+                  child: Text('Nouvel Employé',
+                      style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis),
+                ),
                 IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close)),
+                    icon: const Icon(Icons.close),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40)),
               ]),
               const Divider(height: 24),
 
@@ -169,25 +185,34 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
               ),
 
               const Divider(height: 24),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Annuler'),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  onPressed: _save,
-                  icon: const Icon(Icons.save),
-                  label: const Text('Enregistrer'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1565C0),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Annuler'),
                   ),
-                ),
-              ]),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: ElevatedButton.icon(
+                      onPressed: _save,
+                      icon: Icon(Icons.save, size: mobile ? 18 : 24),
+                      label: const Text('Enregistrer'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: mobile ? 16 : 24,
+                          vertical: mobile ? 12 : 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -237,9 +262,19 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1565C0))),
   );
 
-  Widget _row2(Widget a, Widget b) => Row(children: [
-    Expanded(child: a), const SizedBox(width: 16), Expanded(child: b),
-  ]);
+  Widget _row2(Widget a, Widget b) {
+    if (isMobile(context)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [a, const SizedBox(height: 12), b],
+      );
+    }
+    return Row(children: [
+      Expanded(child: a),
+      const SizedBox(width: 16),
+      Expanded(child: b),
+    ]);
+  }
 
   Widget _field(TextEditingController ctrl, String label, {bool required = false, bool isNumber = false}) =>
       TextFormField(

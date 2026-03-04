@@ -141,7 +141,7 @@ class _MainLayoutState extends State<MainLayout> {
       return Scaffold(
         key: _scaffoldKey,
         appBar: AppBar(
-          title: Text(items[_selectedIndex.clamp(0, items.length - 1)].label),
+          title: Text(items[_selectedIndex.clamp(0, items.length - 1)].label, style: const TextStyle(fontSize: 18)),
           backgroundColor: const Color(0xFF1565C0),
           foregroundColor: Colors.white,
           leading: IconButton(
@@ -155,6 +155,14 @@ class _MainLayoutState extends State<MainLayout> {
           ),
         ),
         body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur)),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _selectedIndex.clamp(0, items.length - 1),
+          onTap: (i) => setState(() => _selectedIndex = i),
+          selectedItemColor: const Color(0xFF1565C0),
+          unselectedItemColor: Colors.grey,
+          type: BottomNavigationBarType.fixed,
+          items: items.map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label)).toList(),
+        ),
       );
     }
 
@@ -162,7 +170,14 @@ class _MainLayoutState extends State<MainLayout> {
       body: Row(
         children: [
           _buildSidebar(context, auth, items),
-          Expanded(child: _buildPage(context, _selectedIndex, isChauffeur)),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: 1200),
+                child: _buildPage(context, _selectedIndex, isChauffeur),
+              ),
+            ),
+          ),
         ],
       ),
     );

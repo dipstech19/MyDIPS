@@ -310,9 +310,10 @@ class DriverStatusChips extends StatelessWidget {
         onTap: () => onSelect(AttendanceState.unmarked),
       );
     }
-    // غير محدد: عرض الثلاثة خيارات
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    // غير محدد: عرض الثلاثة خيارات (Wrap لتجنب overflow على الشاشات الضيقة)
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         _StatusChip(
           label: presentLabel,
@@ -321,7 +322,6 @@ class DriverStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.present),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: absentLabel,
           icon: Icons.close,
@@ -329,7 +329,6 @@ class DriverStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.absent),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: notInVehicleLabel,
           icon: Icons.directions_car,
@@ -377,8 +376,9 @@ class ChefStatusChips extends StatelessWidget {
         onTap: () => onSelect(AttendanceState.unmarked),
       );
     }
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         _StatusChip(
           label: presentLabel,
@@ -387,7 +387,6 @@ class ChefStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.present),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: absentLabel,
           icon: Icons.close,
