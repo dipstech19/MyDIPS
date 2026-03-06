@@ -421,19 +421,19 @@ class _VehiculeFormState extends State<_VehiculeForm> {
             const _SecLabel(label: 'DOCUMENTS & EXPIRATIONS'),
             const SizedBox(height: 12),
             _Row3(
-              _DateField(label: 'Carte grise (exp.)',    value: _exCG,      onPicked: (d) => setState(() => _exCG = d)),
-              _DateField(label: 'Assurance (exp.)',      value: _exAss,     onPicked: (d) => setState(() => _exAss = d)),
-              _DateField(label: 'Visite technique (exp.)', value: _exVis,   onPicked: (d) => setState(() => _exVis = d)),
+              _LDateField(label: 'Carte grise (exp.)',    value: _exCG,      onPicked: (d) => setState(() => _exCG = d)),
+              _LDateField(label: 'Assurance (exp.)',      value: _exAss,     onPicked: (d) => setState(() => _exAss = d)),
+              _LDateField(label: 'Visite technique (exp.)', value: _exVis,   onPicked: (d) => setState(() => _exVis = d)),
             ),
             const SizedBox(height: 12),
             _Row3(
-              _DateField(label: 'Autorisation transport (exp.)', value: _exAT, onPicked: (d) => setState(() => _exAT = d)),
-              _DateField(label: 'Date taxe',       value: _dateTaxe,  onPicked: (d) => setState(() => _dateTaxe = d)),
-              _DateField(label: 'Badge (exp.)',     value: _exBadge,   onPicked: (d) => setState(() => _exBadge = d)),
+              _LDateField(label: 'Autorisation transport (exp.)', value: _exAT, onPicked: (d) => setState(() => _exAT = d)),
+              _LDateField(label: 'Date taxe',       value: _dateTaxe,  onPicked: (d) => setState(() => _dateTaxe = d)),
+              _LDateField(label: 'Badge (exp.)',     value: _exBadge,   onPicked: (d) => setState(() => _exBadge = d)),
             ),
             const SizedBox(height: 22),
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              _GhostBtn(label: 'Annuler', onTap: widget.onCancel),
+              _LGhostBtn(label: 'Annuler', onTap: widget.onCancel),
               const SizedBox(width: 10),
               _PrimaryBtn(
                 label: widget.editing != null ? 'Modifier' : 'Enregistrer',
@@ -782,7 +782,7 @@ class _VidangeFormState extends State<_VidangeForm> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _Row2(
-            _DateField(label: 'Date de vidange', value: _date, onPicked: (d) => setState(() => _date = d)),
+            _LDateField(label: 'Date de vidange', value: _date, onPicked: (d) => setState(() => _date = d)),
             _Field(ctrl: _km, label: 'Kilométrage (km)', icon: Icons.speed_outlined,
                 type: TextInputType.number, req: true),
           ),
@@ -821,7 +821,7 @@ class _VidangeFormState extends State<_VidangeForm> {
           ),
           const SizedBox(height: 20),
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _GhostBtn(label: 'Annuler', onTap: widget.onCancel),
+            _LGhostBtn(label: 'Annuler', onTap: widget.onCancel),
             const SizedBox(width: 10),
             _PrimaryBtn(label: widget.editing != null ? 'Modifier' : 'Enregistrer',
                 icon: Icons.check_rounded, onTap: _save),
@@ -1140,7 +1140,7 @@ class _GazoilFormState extends State<_GazoilForm> {
       child: Form(key: _fk, child: StatefulBuilder(builder: (ctx, setInner) {
         return Column(mainAxisSize: MainAxisSize.min, children: [
           _Row2(
-            _DateField(label: 'Date du plein', value: _date,
+            _LDateField(label: 'Date du plein', value: _date,
                 onPicked: (d) { setState(() => _date = d); setInner(() {}); }),
             _Field(ctrl: _km, label: 'Kilométrage (km)', icon: Icons.speed_outlined,
                 type: TextInputType.number, req: true),
@@ -1181,7 +1181,7 @@ class _GazoilFormState extends State<_GazoilForm> {
           ]),
           const SizedBox(height: 20),
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _GhostBtn(label: 'Annuler', onTap: widget.onCancel),
+            _LGhostBtn(label: 'Annuler', onTap: widget.onCancel),
             const SizedBox(width: 10),
             _PrimaryBtn(label: widget.editing != null ? 'Modifier' : 'Enregistrer',
                 icon: Icons.check_rounded, onTap: _save),
@@ -1616,11 +1616,11 @@ class _Field extends StatelessWidget {
   );
 }
 
-class _DateField extends StatelessWidget {
+class _LDateField extends StatelessWidget {
   final String label;
   final DateTime? value;
   final ValueChanged<DateTime> onPicked;
-  const _DateField({required this.label, required this.value, required this.onPicked});
+  const _LDateField({required this.label, required this.value, required this.onPicked});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -1701,10 +1701,10 @@ class _PrimaryBtn extends StatelessWidget {
   );
 }
 
-class _GhostBtn extends StatelessWidget {
+class _LGhostBtn extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
-  const _GhostBtn({required this.label, required this.onTap});
+  const _LGhostBtn({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) => TextButton(
@@ -1835,18 +1835,18 @@ void _showToast(BuildContext context, String msg) {
   final overlay = Overlay.of(context);
   late OverlayEntry entry;
   entry = OverlayEntry(
-      builder: (_) => _ToastWidget(message: msg, onDone: () => entry.remove()));
+      builder: (_) => _LToastWidget(message: msg, onDone: () => entry.remove()));
   overlay.insert(entry);
 }
 
-class _ToastWidget extends StatefulWidget {
+class _LToastWidget extends StatefulWidget {
   final String message;
   final VoidCallback onDone;
-  const _ToastWidget({required this.message, required this.onDone});
-  @override State<_ToastWidget> createState() => _ToastWidgetState();
+  const _LToastWidget({required this.message, required this.onDone});
+  @override State<_LToastWidget> createState() => _LToastWidgetState();
 }
 
-class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderStateMixin {
+class _LToastWidgetState extends State<_LToastWidget> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
   late final Animation<double> _a;
 
