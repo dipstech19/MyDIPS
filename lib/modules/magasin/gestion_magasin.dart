@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:dips_managment/core/utils/responsive.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
 //  DESIGN SYSTEM
@@ -34,6 +35,7 @@ const _mono  = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kMute
 const double kR  = 10;
 const double kR2 = 14;
 const double kP  = 22;
+const double kPm = 14; // mobile padding
 
 const List<String> kMagasins = ['A', 'B', 'C', 'D'];
 
@@ -263,12 +265,38 @@ class _GestionMagasinState extends State<GestionMagasin> with TickerProviderStat
 
   @override Widget build(BuildContext context) {
     final store = _store;
+    final mobile = isMobile(context);
     final rupt  = _produits.where((p) => p.rupture).length;
     final bas   = _produits.where((p) => p.bas).length;
     final totalE = _entrees.fold(0, (s, m) => s + m.totalQte);
     final totalS = _sorties.fold(0, (s, m) => s + m.totalQte);
 
+    final pages = [
+      _StockPage(store: store),
+      _EntreesPage(store: store, onRefresh: () => setState(() {})),
+      _SortiesPage(store: store, onRefresh: () => setState(() {})),
+    ];
+
+    if (mobile) {
+      return Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: kBg,
+        body: Column(children: [
+          _MobileTopBar(tab: _tab),
+          Expanded(child: pages[_tab]),
+        ]),
+        bottomNavigationBar: _MobileBottomNav(
+          tab: _tab,
+          onTap: (i) => setState(() { _tab = i; _tabCtrl.animateTo(i); }),
+          rupt: rupt, bas: bas,
+          entreeCount: _entrees.length,
+          sortieCount: _sorties.length,
+        ),
+      );
+    }
+
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: kBg,
       body: Column(children: [
         _TopNavBar(
@@ -293,11 +321,7 @@ class _GestionMagasinState extends State<GestionMagasin> with TickerProviderStat
         Expanded(child: TabBarView(
           controller: _tabCtrl,
           physics: const NeverScrollableScrollPhysics(),
-          children: [
-            _StockPage(store: store),
-            _EntreesPage(store: store, onRefresh: () => setState(() {})),
-            _SortiesPage(store: store, onRefresh: () => setState(() {})),
-          ],
+          children: pages,
         )),
       ]),
     );
@@ -305,7 +329,115 @@ class _GestionMagasinState extends State<GestionMagasin> with TickerProviderStat
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  TOP NAV BAR
+//  MOBILE TOP BAR
+// ════════════════════════════════════════════════════════════════════════════
+class _MobileTopBar extends StatelessWidget {
+  final int tab;
+  const _MobileTopBar({required this.tab});
+
+  @override Widget build(BuildContext context) {
+    const titles = ['Stock Actuel', 'Les Entrées', 'Les Sorties'];
+    const icons = [Icons.inventory_2_rounded, Icons.arrow_circle_down_rounded, Icons.arrow_circle_up_rounded];
+    const colors = [kBlue, kGreen, kOrange];
+    final col = colors[tab];
+    return Container(
+      decoration: const BoxDecoration(
+        color: kSurface,
+        border: Border(bottom: BorderSide(color: kBorder, width: 1.5)),
+        boxShadow: [BoxShadow(color: Color(0x0A000000), blurRadius: 10, offset: Offset(0, 3))],
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: kPm, vertical: 12),
+          child: Row(children: [
+            Container(width: 34, height: 34,
+                decoration: BoxDecoration(color: kBlueLt, borderRadius: BorderRadius.circular(9)),
+                child: const Icon(Icons.store_rounded, color: kBlue, size: 18)),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(titles[tab], style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: col)),
+              const Text('STOCK MANAGER', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: kMuted, letterSpacing: 1)),
+            ])),
+            Icon(icons[tab], color: col, size: 22),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MOBILE BOTTOM NAV
+// ════════════════════════════════════════════════════════════════════════════
+class _MobileBottomNav extends StatelessWidget {
+  final int tab;
+  final void Function(int) onTap;
+  final int rupt, bas, entreeCount, sortieCount;
+  const _MobileBottomNav({required this.tab, required this.onTap,
+    required this.rupt, required this.bas, required this.entreeCount, required this.sortieCount});
+
+  @override Widget build(BuildContext context) {
+    final items = [
+      {'icon': Icons.inventory_2_rounded, 'label': 'Stock', 'color': kBlue, 'badge': rupt + bas},
+      {'icon': Icons.arrow_circle_down_rounded, 'label': 'Entrées', 'color': kGreen, 'badge': 0},
+      {'icon': Icons.arrow_circle_up_rounded, 'label': 'Sorties', 'color': kOrange, 'badge': 0},
+    ];
+    return Container(
+      decoration: const BoxDecoration(
+        color: kSurface,
+        border: Border(top: BorderSide(color: kBorder, width: 1.5)),
+        boxShadow: [BoxShadow(color: Color(0x12000000), blurRadius: 12, offset: Offset(0, -3))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(children: List.generate(items.length, (i) {
+            final sel = tab == i;
+            final col = items[i]['color'] as Color;
+            final badge = items[i]['badge'] as int;
+            return Expanded(child: InkWell(
+              onTap: () => onTap(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Stack(children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: sel ? col.withOpacity(0.12) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(items[i]['icon'] as IconData, color: sel ? col : kMuted, size: 22),
+                    ),
+                    if (badge > 0) Positioned(
+                      right: 2, top: 2,
+                      child: Container(
+                        width: 16, height: 16,
+                        decoration: const BoxDecoration(color: kRed, shape: BoxShape.circle),
+                        child: Center(child: Text('$badge', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800))),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 3),
+                  Text(items[i]['label'] as String, style: TextStyle(
+                    fontSize: 11, fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                    color: sel ? col : kMuted,
+                  )),
+                ]),
+              ),
+            ));
+          })),
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  TOP NAV BAR (desktop)
 // ════════════════════════════════════════════════════════════════════════════
 class _TopNavBar extends StatelessWidget {
   final int tab;
@@ -342,41 +474,45 @@ class _TopNavBar extends StatelessWidget {
               const SizedBox(width: 20),
               Container(width: 1.5, height: 30, color: kBorder),
               const SizedBox(width: 14),
-              ...List.generate(tabs.length, (i) {
-                final col = tabs[i]['color'] as Color;
-                final sel = tab == i;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => onTap(i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut,
-                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: sel ? col.withOpacity(0.1) : Colors.transparent,
-                        borderRadius: BorderRadius.circular(10),
-                        border: sel ? Border.all(color: col.withOpacity(0.25), width: 1.5) : null,
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(tabs[i]['icon'] as IconData, size: 17, color: sel ? col : kMuted),
-                        const SizedBox(width: 7),
-                        Text(tabs[i]['label'] as String, style: TextStyle(
-                          fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
-                          color: sel ? col : kMuted,
-                        )),
-                        if (sel) ...[
+              Flexible(
+                child: Row(mainAxisSize: MainAxisSize.min, children: List.generate(tabs.length, (i) {
+                  final col = tabs[i]['color'] as Color;
+                  final sel = tab == i;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => onTap(i),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: sel ? col.withOpacity(0.1) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          border: sel ? Border.all(color: col.withOpacity(0.25), width: 1.5) : null,
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(tabs[i]['icon'] as IconData, size: 17, color: sel ? col : kMuted),
                           const SizedBox(width: 7),
-                          Container(width: 6, height: 6, decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
-                        ],
-                      ]),
+                          Text(tabs[i]['label'] as String, style: TextStyle(
+                            fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                            color: sel ? col : kMuted,
+                          ), overflow: TextOverflow.ellipsis),
+                          if (sel) ...[
+                            const SizedBox(width: 7),
+                            Container(width: 6, height: 6, decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
+                          ],
+                        ]),
+                      ),
                     ),
-                  ),
-                );
-              }),
+                  );
+                })),
+              ),
               const Spacer(),
-              ...statChips,
+              Flexible(
+                child: Row(mainAxisSize: MainAxisSize.min, children: statChips),
+              ),
             ]),
           ),
         ),
@@ -430,29 +566,20 @@ class _StockPageState extends State<_StockPage> {
 
   @override Widget build(BuildContext context) {
     final list = _list;
+    final mobile = isMobile(context);
+    final p = mobile ? kPm : kP;
+
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 16, kP, 0),
-        child: Row(children: [
-          Expanded(flex: 3, child: _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
-              labels: {'Tous':'Tous magasins',...{for(var m in kMagasins) m:'Magasin $m'}},
-              onChanged: (v) => setState(() => _mag = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _sort, items: ['nom','ref','stock','mag'],
-              labels: {'nom':'Nom','ref':'Référence','stock':'Stock','mag':'Magasin'},
-              onChanged: (v) => setState(() => _sort = v))),
-          const SizedBox(width: 8),
-          _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
-        ]),
+        padding: EdgeInsets.fromLTRB(p, 14, p, 0),
+        child: mobile ? _buildMobileFilters() : _buildDesktopFilters(),
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 12),
       Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 0, kP, kP),
-        child: _DataTable(
+        padding: EdgeInsets.fromLTRB(p, 0, p, p),
+        child: mobile
+            ? _buildMobileList(list)
+            : _DataTable(
           count: '${list.length} / ${s.produits.length} produits',
           empty: list.isEmpty, emptyMsg: 'Aucun produit trouvé',
           columns: const [
@@ -468,11 +595,11 @@ class _StockPageState extends State<_StockPage> {
                     child:Center(child:Text(g?.emoji??'📦',style:const TextStyle(fontSize:17)))),
                 const SizedBox(width:10),
                 Flexible(child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
-                  Text(p.nom,style:const TextStyle(fontSize:13,fontWeight:FontWeight.w600,color:kText),overflow:TextOverflow.ellipsis),
-                  if(g!=null) Text(g.label,style:_muted.copyWith(fontSize:10),overflow:TextOverflow.ellipsis),
+                  Text(p.nom,style:const TextStyle(fontSize:13,fontWeight:FontWeight.w600,color:kText),overflow:TextOverflow.ellipsis,maxLines:1),
+                  if(g!=null) Text(g.label,style:_muted.copyWith(fontSize:10),overflow:TextOverflow.ellipsis,maxLines:1),
                 ])),
               ]),
-              Text(p.reference, style: _mono),
+              Text(p.reference, style: _mono, overflow: TextOverflow.ellipsis),
               _PillBadge(p.categorie, kBlueLt, kBlue),
               Center(child:Container(
                 padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
@@ -489,10 +616,94 @@ class _StockPageState extends State<_StockPage> {
       )),
     ]);
   }
+
+  Widget _buildDesktopFilters() => Row(children: [
+    Expanded(flex: 3, child: _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v))),
+    const SizedBox(width: 10),
+    Expanded(flex: 2, child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
+    const SizedBox(width: 10),
+    Expanded(flex: 2, child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
+        labels: {'Tous':'Tous magasins',...{for(var m in kMagasins) m:'Magasin $m'}},
+        onChanged: (v) => setState(() => _mag = v))),
+    const SizedBox(width: 10),
+    Expanded(flex: 2, child: _DropBox(value: _sort, items: ['nom','ref','stock','mag'],
+        labels: {'nom':'Nom','ref':'Référence','stock':'Stock','mag':'Magasin'},
+        onChanged: (v) => setState(() => _sort = v))),
+    const SizedBox(width: 8),
+    _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
+  ]);
+
+  Widget _buildMobileFilters() => Column(children: [
+    _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v)),
+    const SizedBox(height: 8),
+    Row(children: [
+      Expanded(child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
+      const SizedBox(width: 8),
+      Expanded(child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
+          labels: {'Tous':'Tous',...{for(var m in kMagasins) m:'Mag. $m'}},
+          onChanged: (v) => setState(() => _mag = v))),
+      const SizedBox(width: 8),
+      _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
+    ]),
+  ]);
+
+  Widget _buildMobileList(List<Produit> list) {
+    if (list.isEmpty) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.inbox_rounded, size: 52, color: kBlue.withOpacity(0.2)),
+      const SizedBox(height: 12),
+      const Text('Aucun produit trouvé', style: _muted),
+    ]));
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: list.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) {
+        final p = list[i];
+        final g = groupeByLabel(p.groupeUniteLabel);
+        return Container(
+          decoration: BoxDecoration(
+            color: kSurface, borderRadius: BorderRadius.circular(kR2),
+            border: Border.all(color: kBorder),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0,2))],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              Container(width: 44, height: 44,
+                  decoration: BoxDecoration(color: kBlueLt, borderRadius: BorderRadius.circular(10)),
+                  child: Center(child: Text(g?.emoji ?? '📦', style: const TextStyle(fontSize: 20)))),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(p.nom, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 3),
+                Wrap(spacing: 6, runSpacing: 4, children: [
+                  Text(p.reference, style: _mono),
+                  _PillBadge(p.categorie, kBlueLt, kBlue),
+                  _PillBadge('M.${p.magasin}', kIndigoLt, kIndigo),
+                ]),
+              ])),
+              const SizedBox(width: 10),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(color: p.stockBg, borderRadius: BorderRadius.circular(20)),
+                  child: Text('${p.total}', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: p.stockColor)),
+                ),
+                const SizedBox(height: 6),
+                _IconBtn(Icons.visibility_outlined, 'Détails', kBlueLt, kBlue, () {
+                  _showDialog(context, _DetailsDialog(produit: p, groupe: g));
+                }),
+              ]),
+            ]),
+          ),
+        );
+      },
+    );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  PAGE ENTRÉES — redesigned with gradient header
+//  PAGE ENTRÉES
 // ════════════════════════════════════════════════════════════════════════════
 class _EntreesPage extends StatefulWidget {
   final AppStore store; final VoidCallback onRefresh;
@@ -511,60 +722,17 @@ class _EntreesPageState extends State<_EntreesPage> {
 
   @override Widget build(BuildContext context) {
     final list = _list;
+    final mobile = isMobile(context);
+    final p = mobile ? kPm : kP;
+
     return Column(children: [
-      // ── Gradient header card ──
-      Container(
-        margin: const EdgeInsets.fromLTRB(kP, 16, kP, 0),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF14532D), Color(0xFF16A34A)],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(kR2),
-          boxShadow: [BoxShadow(color: kGreen.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
-        ),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.arrow_circle_down_rounded, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Entrées de Stock', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
-            Text(
-              '${list.length} mouvement${list.length!=1?"s":""} · $_totalUnites unité${_totalUnites!=1?"s":""} reçue${_totalUnites!=1?"s":""}',
-              style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.75)),
-            ),
-          ])),
-          // Glass filter dropdowns
-          _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
-              hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; })),
-          const SizedBox(width: 8),
-          _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
-              labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
-              icon: Icons.warehouse_rounded, hint: 'Magasin',
-              onChanged: (v) => setState(() { _mag = v; })),
-          const SizedBox(width: 16),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white, foregroundColor: kGreen, elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            ),
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('Nouvelle entrée', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-            onPressed: () => _showDialog(context,
-                _MouvForm(type:'entree', store:s,
-                    onSave:(m,np){if(np!=null)s.addProduit(np);s.addEntree(m);widget.onRefresh();})),
-          ),
-        ]),
-      ),
-      const SizedBox(height: 14),
+      _buildHeader(context, list, mobile),
+      const SizedBox(height: 12),
       Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 0, kP, kP),
-        child: _DataTable(
+        padding: EdgeInsets.fromLTRB(p, 0, p, p),
+        child: mobile
+            ? _buildMobileList(list, context)
+            : _DataTable(
           count: '${list.length} entrée${list.length!=1?"s":""}',
           empty: list.isEmpty, emptyMsg: 'Aucune entrée — cliquez sur « Nouvelle entrée »',
           accentColor: kGreen,
@@ -584,10 +752,123 @@ class _EntreesPageState extends State<_EntreesPage> {
       )),
     ]);
   }
+
+  Widget _buildHeader(BuildContext context, List<Mouvement> list, bool mobile) {
+    final p = mobile ? kPm : kP;
+    return Container(
+      margin: EdgeInsets.fromLTRB(p, 14, p, 0),
+      padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : 20, vertical: mobile ? 12 : 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF14532D), Color(0xFF16A34A)],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(kR2),
+        boxShadow: [BoxShadow(color: kGreen.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
+      ),
+      child: mobile ? _buildMobileHeaderContent(context, list) : _buildDesktopHeaderContent(context, list),
+    );
+  }
+
+  Widget _buildDesktopHeaderContent(BuildContext context, List<Mouvement> list) => Row(children: [
+    Container(padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
+        child: const Icon(Icons.arrow_circle_down_rounded, color: Colors.white, size: 24)),
+    const SizedBox(width: 14),
+    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Entrées de Stock', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white), overflow: TextOverflow.ellipsis),
+      Text('${list.length} mouvement${list.length!=1?"s":""} · $_totalUnites unité${_totalUnites!=1?"s":""} reçue${_totalUnites!=1?"s":""}',
+          style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.75)), overflow: TextOverflow.ellipsis),
+    ])),
+    const SizedBox(width: 10),
+    ConstrainedBox(constraints: const BoxConstraints(maxWidth: 140),
+        child: _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
+            hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; }))),
+    const SizedBox(width: 8),
+    ConstrainedBox(constraints: const BoxConstraints(maxWidth: 130),
+        child: _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
+            labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
+            icon: Icons.warehouse_rounded, hint: 'Magasin',
+            onChanged: (v) => setState(() { _mag = v; }))),
+    const SizedBox(width: 16),
+    ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white, foregroundColor: kGreen, elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      ),
+      icon: const Icon(Icons.add_rounded, size: 16),
+      label: const Text('Nouvelle entrée', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+      onPressed: () => _showDialog(context,
+          _MouvForm(type:'entree', store:s,
+              onSave:(m,np){if(np!=null)s.addProduit(np);s.addEntree(m);widget.onRefresh();})),
+    ),
+  ]);
+
+  Widget _buildMobileHeaderContent(BuildContext context, List<Mouvement> list) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(children: [
+        Container(padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(9)),
+            child: const Icon(Icons.arrow_circle_down_rounded, color: Colors.white, size: 20)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Entrées de Stock', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+          Text('${list.length} mvt · $_totalUnites unités',
+              style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.75))),
+        ])),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white, foregroundColor: kGreen, elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            minimumSize: Size.zero,
+          ),
+          icon: const Icon(Icons.add_rounded, size: 15),
+          label: const Text('Nouvelle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          onPressed: () => _showDialog(context,
+              _MouvForm(type:'entree', store:s,
+                  onSave:(m,np){if(np!=null)s.addProduit(np);s.addEntree(m);widget.onRefresh();})),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(child: _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
+            hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; }))),
+        const SizedBox(width: 8),
+        Expanded(child: _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
+            labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
+            icon: Icons.warehouse_rounded, hint: 'Magasin',
+            onChanged: (v) => setState(() { _mag = v; }))),
+      ]),
+    ],
+  );
+
+  Widget _buildMobileList(List<Mouvement> list, BuildContext context) {
+    if (list.isEmpty) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.inbox_rounded, size: 52, color: kGreen.withOpacity(0.2)),
+      const SizedBox(height: 12),
+      Text('Aucune entrée', style: _muted.copyWith(color: kGreen)),
+    ]));
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: list.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) => _MouvCard(
+        m: list[i], color: kGreen, bgColor: kGreenLt,
+        onEdit: () => _showDialog(context, _MouvForm(type:'entree', store:s, existing:list[i],
+            onSave:(nm,np){if(np!=null)s.addProduit(np);s.delEntree(list[i].id);s.addEntree(nm);widget.onRefresh();})),
+        onDelete: () => _showDialog(context, _ConfirmDel(nom:list[i].nomProduit,
+            msg:'Supprimer cette entrée ? Le stock sera décrémenté.',
+            onConfirm:(){s.delEntree(list[i].id);widget.onRefresh();Navigator.pop(context);})),
+      ),
+    );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  PAGE SORTIES — redesigned with gradient header
+//  PAGE SORTIES
 // ════════════════════════════════════════════════════════════════════════════
 class _SortiesPage extends StatefulWidget {
   final AppStore store; final VoidCallback onRefresh;
@@ -606,59 +887,17 @@ class _SortiesPageState extends State<_SortiesPage> {
 
   @override Widget build(BuildContext context) {
     final list = _list;
+    final mobile = isMobile(context);
+    final p = mobile ? kPm : kP;
+
     return Column(children: [
-      // ── Gradient header card ──
-      Container(
-        margin: const EdgeInsets.fromLTRB(kP, 16, kP, 0),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF92400E), Color(0xFFD97706)],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(kR2),
-          boxShadow: [BoxShadow(color: kOrange.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
-        ),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.arrow_circle_up_rounded, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Sorties de Stock', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
-            Text(
-              '${list.length} mouvement${list.length!=1?"s":""} · $_totalUnites unité${_totalUnites!=1?"s":""} sortie${_totalUnites!=1?"s":""}',
-              style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.75)),
-            ),
-          ])),
-          _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
-              hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; })),
-          const SizedBox(width: 8),
-          _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
-              labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
-              icon: Icons.warehouse_rounded, hint: 'Magasin',
-              onChanged: (v) => setState(() { _mag = v; })),
-          const SizedBox(width: 16),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white, foregroundColor: kOrange, elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            ),
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('Nouvelle sortie', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-            onPressed: () => _showDialog(context,
-                _MouvForm(type:'sortie', store:s,
-                    onSave:(m,np){if(np!=null)s.addProduit(np);s.addSortie(m);widget.onRefresh();})),
-          ),
-        ]),
-      ),
-      const SizedBox(height: 14),
+      _buildHeader(context, list, mobile),
+      const SizedBox(height: 12),
       Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 0, kP, kP),
-        child: _DataTable(
+        padding: EdgeInsets.fromLTRB(p, 0, p, p),
+        child: mobile
+            ? _buildMobileList(list, context)
+            : _DataTable(
           count: '${list.length} sortie${list.length!=1?"s":""}',
           empty: list.isEmpty, emptyMsg: 'Aucune sortie — cliquez sur « Nouvelle sortie »',
           accentColor: kOrange,
@@ -679,10 +918,202 @@ class _SortiesPageState extends State<_SortiesPage> {
       )),
     ]);
   }
+
+  Widget _buildHeader(BuildContext context, List<Mouvement> list, bool mobile) {
+    final p = mobile ? kPm : kP;
+    return Container(
+      margin: EdgeInsets.fromLTRB(p, 14, p, 0),
+      padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : 20, vertical: mobile ? 12 : 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF92400E), Color(0xFFD97706)],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(kR2),
+        boxShadow: [BoxShadow(color: kOrange.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
+      ),
+      child: mobile ? _buildMobileHeaderContent(context, list) : _buildDesktopHeaderContent(context, list),
+    );
+  }
+
+  Widget _buildDesktopHeaderContent(BuildContext context, List<Mouvement> list) => Row(children: [
+    Container(padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
+        child: const Icon(Icons.arrow_circle_up_rounded, color: Colors.white, size: 24)),
+    const SizedBox(width: 14),
+    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Sorties de Stock', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white), overflow: TextOverflow.ellipsis),
+      Text('${list.length} mouvement${list.length!=1?"s":""} · $_totalUnites unité${_totalUnites!=1?"s":""} sortie${_totalUnites!=1?"s":""}',
+          style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.75)), overflow: TextOverflow.ellipsis),
+    ])),
+    const SizedBox(width: 10),
+    ConstrainedBox(constraints: const BoxConstraints(maxWidth: 140),
+        child: _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
+            hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; }))),
+    const SizedBox(width: 8),
+    ConstrainedBox(constraints: const BoxConstraints(maxWidth: 130),
+        child: _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
+            labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
+            icon: Icons.warehouse_rounded, hint: 'Magasin',
+            onChanged: (v) => setState(() { _mag = v; }))),
+    const SizedBox(width: 16),
+    ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white, foregroundColor: kOrange, elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      ),
+      icon: const Icon(Icons.add_rounded, size: 16),
+      label: const Text('Nouvelle sortie', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+      onPressed: () => _showDialog(context,
+          _MouvForm(type:'sortie', store:s,
+              onSave:(m,np){if(np!=null)s.addProduit(np);s.addSortie(m);widget.onRefresh();})),
+    ),
+  ]);
+
+  Widget _buildMobileHeaderContent(BuildContext context, List<Mouvement> list) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(children: [
+        Container(padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(9)),
+            child: const Icon(Icons.arrow_circle_up_rounded, color: Colors.white, size: 20)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Sorties de Stock', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white)),
+          Text('${list.length} mvt · $_totalUnites unités',
+              style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.75))),
+        ])),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white, foregroundColor: kOrange, elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            minimumSize: Size.zero,
+          ),
+          icon: const Icon(Icons.add_rounded, size: 15),
+          label: const Text('Nouvelle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          onPressed: () => _showDialog(context,
+              _MouvForm(type:'sortie', store:s,
+                  onSave:(m,np){if(np!=null)s.addProduit(np);s.addSortie(m);widget.onRefresh();})),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(child: _GlassDropdown(value: _cat, items: ['Toutes', ...s.cats], icon: Icons.category_outlined,
+            hint: 'Catégorie', onChanged: (v) => setState(() { _cat = v; }))),
+        const SizedBox(width: 8),
+        Expanded(child: _GlassDropdown(value: _mag, items: ['Tous', ...kMagasins],
+            labels: {'Tous':'Tous', ...{for(var m in kMagasins) m:'Mag. $m'}},
+            icon: Icons.warehouse_rounded, hint: 'Magasin',
+            onChanged: (v) => setState(() { _mag = v; }))),
+      ]),
+    ],
+  );
+
+  Widget _buildMobileList(List<Mouvement> list, BuildContext context) {
+    if (list.isEmpty) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.inbox_rounded, size: 52, color: kOrange.withOpacity(0.2)),
+      const SizedBox(height: 12),
+      Text('Aucune sortie', style: _muted.copyWith(color: kOrange)),
+    ]));
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: list.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) => _MouvCard(
+        m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
+        onEdit: () => _showDialog(context, _MouvForm(type:'sortie', store:s, existing:list[i],
+            onSave:(nm,np){if(np!=null)s.addProduit(np);s.delSortie(list[i].id);s.addSortie(nm);widget.onRefresh();})),
+        onDelete: () => _showDialog(context, _ConfirmDel(nom:list[i].nomProduit,
+            msg:'Supprimer cette sortie ? Le stock sera restitué.',
+            onConfirm:(){s.delSortie(list[i].id);widget.onRefresh();Navigator.pop(context);})),
+      ),
+    );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  GLASS DROPDOWN — for gradient headers
+//  MOBILE MOUVEMENT CARD
+// ════════════════════════════════════════════════════════════════════════════
+class _MouvCard extends StatelessWidget {
+  final Mouvement m;
+  final Color color, bgColor;
+  final bool showPreneur;
+  final VoidCallback onEdit, onDelete;
+  const _MouvCard({required this.m, required this.color, required this.bgColor,
+    this.showPreneur = false, required this.onEdit, required this.onDelete});
+
+  String get _date { final d=m.date; return '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}'; }
+  String get _time { final d=m.date; return '${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}'; }
+
+  @override Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: kSurface, borderRadius: BorderRadius.circular(kR2),
+        border: Border.all(color: kBorder),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0,2))],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Flexible(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: color.withOpacity(0.2))),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.access_time_rounded, size: 11, color: color),
+                const SizedBox(width: 4),
+                Flexible(child: Text('$_date · $_time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color), overflow: TextOverflow.ellipsis)),
+              ]),
+            )),
+            const Spacer(),
+            _PillBadge('M.${m.magasin}', kIndigoLt, kIndigo),
+          ]),
+          const SizedBox(height: 10),
+          Text(m.nomProduit, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          Wrap(spacing: 6, runSpacing: 4, children: [
+            Text(m.reference, style: _mono),
+            _PillBadge(m.categorie, kBlueLt, kBlue),
+          ]),
+          const SizedBox(height: 10),
+          if (m.aVariantes)
+            Wrap(spacing: 6, runSpacing: 6, children: m.lignes.map((l) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: color.withOpacity(0.2))),
+              child: Text('${l.unite} ×${l.quantite}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+            )).toList())
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+              child: Text('Qté: ${m.quantite}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: color)),
+            ),
+          if (showPreneur && m.preneurNom != null) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.person_outline_rounded, size: 13, color: kMuted),
+              const SizedBox(width: 5),
+              Flexible(child: Text(m.preneurNom!, style: _muted.copyWith(fontSize: 12), overflow: TextOverflow.ellipsis)),
+            ]),
+          ],
+          const SizedBox(height: 10),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, onEdit),
+            const SizedBox(width: 8),
+            _IconBtn(Icons.delete_outline_rounded, 'Supprimer', kRedLt, kRed, onDelete),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GLASS DROPDOWN
 // ════════════════════════════════════════════════════════════════════════════
 class _GlassDropdown extends StatelessWidget {
   final String value, hint;
@@ -695,7 +1126,7 @@ class _GlassDropdown extends StatelessWidget {
 
   @override Widget build(BuildContext context) => Container(
     height: 40,
-    padding: const EdgeInsets.symmetric(horizontal: 12),
+    padding: const EdgeInsets.symmetric(horizontal: 10),
     decoration: BoxDecoration(
       color: Colors.white.withOpacity(0.15),
       borderRadius: BorderRadius.circular(9),
@@ -711,7 +1142,7 @@ class _GlassDropdown extends StatelessWidget {
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, size: 13, color: Colors.white70),
           const SizedBox(width: 6),
-          Text(labels?[v] ?? v, style: const TextStyle(fontSize: 12, color: Colors.white)),
+          Flexible(child: Text(labels?[v] ?? v, style: const TextStyle(fontSize: 12, color: Colors.white), overflow: TextOverflow.ellipsis)),
         ]),
       )).toList(),
       onChanged: (v) => onChanged(v!),
@@ -720,7 +1151,7 @@ class _GlassDropdown extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  FORMULAIRE MOUVEMENT — Magasin en étape 1 avec cards visuelles
+//  FORMULAIRE MOUVEMENT — responsive dialog
 // ════════════════════════════════════════════════════════════════════════════
 class _MouvForm extends StatefulWidget {
   final String type;
@@ -732,24 +1163,19 @@ class _MouvForm extends StatefulWidget {
 }
 
 class _MouvFormState extends State<_MouvForm> {
-  // Step 1: Magasin (NEW — first step)
   String?  _selMag;
-  // Step 2: Catégorie
   String?  _selCat;
   bool     _newCatMode = false;
   final    _newCatCtrl = TextEditingController();
-  // Step 3: Produit
   Produit? _selProd;
   bool     _newProdMode = false;
   final    _newNomCtrl = TextEditingController();
   final    _newRefCtrl = TextEditingController();
   bool     _newHasVar = false;
   String?  _newGroupeLabel;
-  // Step 4: Quantité
   final    _qteC = TextEditingController(text: '1');
   final    Map<String, TextEditingController> _varCtrl = {};
   final    Set<String> _selVar = {};
-  // Step 5: Prélevé par (sortie only)
   final    _preneurC = TextEditingController();
 
   bool get _isSortie => widget.type == 'sortie';
@@ -757,23 +1183,13 @@ class _MouvFormState extends State<_MouvForm> {
   GroupeUnites? get _groupe => _newProdMode ? groupeByLabel(_newGroupeLabel) : groupeByLabel(_selProd?.groupeUniteLabel);
   bool get _hasVar => _newProdMode ? _newHasVar : (_selProd?.aVariantes ?? false);
 
-  // Products filtered by selected magasin + category
   List<Produit> get _filteredProduits => widget.store.produits.where((p) {
     final magOk = _selMag == null || p.magasin == _selMag;
     final catOk = _selCat == null || p.categorie == _selCat;
     return magOk && catOk;
   }).toList();
 
-  // Categories present in selected magasin
-  List<String> get _availableCats {
-    final base = widget.store.cats.toList();
-    if (_selMag == null) return base;
-    final inMag = widget.store.produits
-        .where((p) => p.magasin == _selMag)
-        .map((p) => p.categorie)
-        .toSet();
-    return base; // show all categories; filtering happens at product level
-  }
+  List<String> get _availableCats => widget.store.cats.toList();
 
   @override void initState() {
     super.initState();
@@ -844,80 +1260,37 @@ class _MouvFormState extends State<_MouvForm> {
     return _FullDialog(
       color: _col,
       icon: _isSortie ? Icons.arrow_circle_up_rounded : Icons.arrow_circle_down_rounded,
-      title: _isSortie ? 'Nouvelle Sortie de Stock' : 'Nouvelle Entrée de Stock',
+      title: _isSortie ? 'Nouvelle Sortie de Stock' : "Nouvelle Entrée de Stock",
       onSave: _canSave ? _save : null,
       saveLabel: _isSortie ? 'Valider la sortie' : "Valider l'entrée",
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-        // ════ STEP 1: MAGASIN (visual card picker) ════
         _SectionHdr('1. Choisir le magasin', Icons.warehouse_rounded, _col),
         const SizedBox(height: 12),
-        Row(children: kMagasins.map((mag) {
-          final sel = _selMag == mag;
-          final prodCount = widget.store.produits.where((p) => p.magasin == mag).length;
-          final ruptCount = widget.store.produits.where((p) => p.magasin == mag && p.rupture).length;
-          return Expanded(child: Padding(
+        LayoutBuilder(builder: (ctx, constraints) {
+          final isNarrow = constraints.maxWidth < 500;
+          if (isNarrow) {
+            return GridView.count(
+              crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.2,
+              children: kMagasins.map((mag) => _MagasinCard(mag: mag, sel: _selMag == mag, col: _col, store: widget.store,
+                  onTap: () => setState(() {
+                    _selMag = mag; _selProd = null; _selCat = null;
+                    _selVar.clear(); _varCtrl.clear(); _newCatMode = false; _newProdMode = false;
+                  }))).toList(),
+            );
+          }
+          return Row(children: kMagasins.map((mag) => Expanded(child: Padding(
             padding: const EdgeInsets.only(right: 10),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => setState(() {
-                _selMag = mag; _selProd = null; _selCat = null;
-                _selVar.clear(); _varCtrl.clear(); _newCatMode = false; _newProdMode = false;
-              }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                decoration: BoxDecoration(
-                  color: sel ? _col.withOpacity(0.07) : kSurface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: sel ? _col : kBorder, width: sel ? 2.0 : 1.5),
-                  boxShadow: sel ? [BoxShadow(color: _col.withOpacity(0.18), blurRadius: 12, offset: const Offset(0, 4))] : [
-                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4, offset: const Offset(0, 2))
-                  ],
-                ),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 44, height: 44,
-                    decoration: BoxDecoration(
-                      color: sel ? _col : kBg,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Center(child: Text('🏪', style: TextStyle(fontSize: 22))),
-                  ),
-                  const SizedBox(height: 10),
-                  Text('Magasin $mag', style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w800,
-                    color: sel ? _col : kText,
-                  )),
-                  const SizedBox(height: 4),
-                  Text('$prodCount produit${prodCount!=1?"s":""}',
-                      style: _muted.copyWith(fontSize: 11)),
-                  if (ruptCount > 0) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(20)),
-                      child: Text('$ruptCount rupture${ruptCount!=1?"s":""}',
-                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kRed)),
-                    ),
-                  ],
-                  if (sel) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: _col, borderRadius: BorderRadius.circular(20)),
-                      child: const Text('✓ Sélectionné', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
-                    ),
-                  ],
-                ]),
-              ),
-            ),
-          ));
-        }).toList()),
+            child: _MagasinCard(mag: mag, sel: _selMag == mag, col: _col, store: widget.store,
+                onTap: () => setState(() {
+                  _selMag = mag; _selProd = null; _selCat = null;
+                  _selVar.clear(); _varCtrl.clear(); _newCatMode = false; _newProdMode = false;
+                })),
+          ))).toList());
+        }),
         const SizedBox(height: 26),
 
-        // ════ STEP 2: CATÉGORIE ════
         if (_selMag != null) ...[
           _SectionHdr('2. Catégorie', Icons.category_outlined, _col),
           const SizedBox(height: 10),
@@ -938,7 +1311,6 @@ class _MouvFormState extends State<_MouvForm> {
           ]),
           const SizedBox(height: 26),
 
-          // ════ STEP 3: PRODUIT ════
           if (_selCat != null || _newCatMode) ...[
             _SectionHdr('3. Produit', Icons.inventory_2_outlined, _col),
             const SizedBox(height: 10),
@@ -973,7 +1345,6 @@ class _MouvFormState extends State<_MouvForm> {
                   onTap: () => setState(() { _newProdMode = !_newProdMode; _selProd = null; _selVar.clear(); _varCtrl.clear(); })),
             ]),
 
-            // Info card for selected product
             if (_selProd != null && !_newProdMode) ...[
               const SizedBox(height: 12),
               Container(
@@ -983,17 +1354,14 @@ class _MouvFormState extends State<_MouvForm> {
                   borderRadius: BorderRadius.circular(kR),
                   border: Border.all(color: kBlueMd),
                 ),
-                child: Row(children: [
+                child: Wrap(spacing: 20, runSpacing: 10, children: [
                   _InfoTile(Icons.category_outlined,    'Catégorie',    _selProd!.categorie),
-                  const SizedBox(width: 20),
                   _InfoTile(Icons.warehouse_rounded,    'Magasin',      'Magasin ${_selProd!.magasin}'),
-                  const SizedBox(width: 20),
                   _InfoTile(Icons.inventory_2_outlined, 'Stock actuel', '${_selProd!.total}', col: _selProd!.stockColor),
                 ]),
               ),
             ],
 
-            // Warning when no products in this magasin/category
             if (_filteredProduits.isEmpty && !_newProdMode && _selCat != null) ...[
               const SizedBox(height: 10),
               Container(
@@ -1002,14 +1370,13 @@ class _MouvFormState extends State<_MouvForm> {
                 child: Row(children: [
                   const Icon(Icons.info_outline_rounded, color: kOrange, size: 16),
                   const SizedBox(width: 10),
-                  Expanded(child: Text('Aucun produit dans Magasin $_selMag pour cette catégorie. Utilisez « + Nouveau » pour en créer un.',
+                  Expanded(child: Text('Aucun produit dans Magasin $_selMag. Utilisez « + Nouveau ».',
                       style: _muted.copyWith(fontSize: 12, color: kOrange))),
                 ]),
               ),
             ],
             const SizedBox(height: 26),
 
-            // ════ STEP 4: QUANTITÉ ════
             if (_selProd != null || _newProdMode) ...[
               _SectionHdr('4. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col),
               const SizedBox(height: 10),
@@ -1040,7 +1407,6 @@ class _MouvFormState extends State<_MouvForm> {
               const SizedBox(height: 26),
             ],
 
-            // ════ STEP 5: PRÉLEVÉ PAR (sortie only) ════
             if (_isSortie && (_selProd != null || _newProdMode)) ...[
               _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
               const SizedBox(height: 10),
@@ -1056,7 +1422,66 @@ class _MouvFormState extends State<_MouvForm> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  NOUVEAU PRODUIT BLOCK — magasin fixé par l'étape 1
+//  MAGASIN CARD (extracted for reuse)
+// ════════════════════════════════════════════════════════════════════════════
+class _MagasinCard extends StatelessWidget {
+  final String mag; final bool sel; final Color col;
+  final AppStore store; final VoidCallback onTap;
+  const _MagasinCard({required this.mag, required this.sel, required this.col,
+    required this.store, required this.onTap});
+
+  @override Widget build(BuildContext context) {
+    final prodCount = store.produits.where((p) => p.magasin == mag).length;
+    final ruptCount = store.produits.where((p) => p.magasin == mag && p.rupture).length;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12), onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        decoration: BoxDecoration(
+          color: sel ? col.withOpacity(0.07) : kSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: sel ? col : kBorder, width: sel ? 2.0 : 1.5),
+          boxShadow: sel ? [BoxShadow(color: col.withOpacity(0.18), blurRadius: 12, offset: const Offset(0, 4))] : [
+            BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4, offset: const Offset(0, 2))
+          ],
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 34, height: 34,
+            decoration: BoxDecoration(color: sel ? col : kBg, borderRadius: BorderRadius.circular(8)),
+            child: const Center(child: Text('🏪', style: TextStyle(fontSize: 17))),
+          ),
+          const SizedBox(height: 6),
+          Text('Mag. $mag', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: sel ? col : kText)),
+          const SizedBox(height: 2),
+          Text('$prodCount produit${prodCount!=1?"s":""}', style: _muted.copyWith(fontSize: 9)),
+          if (ruptCount > 0) ...[
+            const SizedBox(height: 3),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(20)),
+              child: Text('$ruptCount rupture${ruptCount!=1?"s":""}',
+                  style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: kRed)),
+            ),
+          ],
+          if (sel) ...[
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(20)),
+              child: const Text('✓ OK', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white)),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  NOUVEAU PRODUIT BLOCK
 // ════════════════════════════════════════════════════════════════════════════
 class _NewProdBlock extends StatelessWidget {
   final TextEditingController nomCtrl, refCtrl;
@@ -1075,29 +1500,45 @@ class _NewProdBlock extends StatelessWidget {
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Magasin indicator (read-only — fixed from step 1)
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(color: kIndigoLt, borderRadius: BorderRadius.circular(8), border: Border.all(color: kIndigo.withOpacity(0.2))),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           const Icon(Icons.warehouse_rounded, size: 14, color: kIndigo),
           const SizedBox(width: 7),
-          Text('Sera enregistré dans Magasin $mag',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kIndigo)),
+          Flexible(child: Text('Sera enregistré dans Magasin $mag',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kIndigo),
+              overflow: TextOverflow.ellipsis)),
         ]),
       ),
       const SizedBox(height: 14),
-      Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('NOM DU PRODUIT', style: _label), const SizedBox(height: 6),
-          _StyledTF(ctrl: nomCtrl, hint: 'Ex: Casque de sécurité', onChanged: (_) => onChanged()),
-        ])),
-        const SizedBox(width: 14),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('RÉFÉRENCE', style: _label), const SizedBox(height: 6),
-          _StyledTF(ctrl: refCtrl, hint: 'Ex: EPI-010', onChanged: (_) => onChanged()),
-        ])),
-      ]),
+      LayoutBuilder(builder: (ctx, constraints) {
+        final isNarrow = constraints.maxWidth < 400;
+        if (isNarrow) {
+          return Column(children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('NOM DU PRODUIT', style: _label), const SizedBox(height: 6),
+              _StyledTF(ctrl: nomCtrl, hint: 'Ex: Casque de sécurité', onChanged: (_) => onChanged()),
+            ]),
+            const SizedBox(height: 12),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('RÉFÉRENCE', style: _label), const SizedBox(height: 6),
+              _StyledTF(ctrl: refCtrl, hint: 'Ex: EPI-010', onChanged: (_) => onChanged()),
+            ]),
+          ]);
+        }
+        return Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('NOM DU PRODUIT', style: _label), const SizedBox(height: 6),
+            _StyledTF(ctrl: nomCtrl, hint: 'Ex: Casque de sécurité', onChanged: (_) => onChanged()),
+          ])),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('RÉFÉRENCE', style: _label), const SizedBox(height: 6),
+            _StyledTF(ctrl: refCtrl, hint: 'Ex: EPI-010', onChanged: (_) => onChanged()),
+          ])),
+        ]);
+      }),
       const SizedBox(height: 14),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('A DES VARIANTES ?', style: _label), const SizedBox(height: 6),
@@ -1112,7 +1553,7 @@ class _NewProdBlock extends StatelessWidget {
         const Text("GROUPE D'UNITÉS", style: _label), const SizedBox(height: 6),
         _StyledDrop<String>(value: groupeLabel, hint: 'Choisir un groupe',
             items: kGroupes.map((g) => DropdownMenuItem(value: g.label,
-                child: Row(children: [Text(g.emoji), const SizedBox(width: 8), Text(g.label)]))).toList(),
+                child: Row(children: [Text(g.emoji), const SizedBox(width: 8), Flexible(child: Text(g.label, overflow: TextOverflow.ellipsis))]))).toList(),
             onChanged: onGroupeChanged),
       ],
     ]),
@@ -1142,7 +1583,7 @@ class _VarQteTableState extends State<_VarQteTable> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(color: col.withOpacity(0.08), borderRadius: const BorderRadius.vertical(top: Radius.circular(kR))),
           child: Row(children: [
-            SizedBox(width: 110, child: Text('UNITÉ',    style: _label.copyWith(color: col))),
+            SizedBox(width: 80, child: Text('UNITÉ', style: _label.copyWith(color: col))),
             const SizedBox(width: 12),
             Expanded(child: Text('QUANTITÉ', style: _label.copyWith(color: col))),
             const SizedBox(width: 36),
@@ -1153,23 +1594,23 @@ class _VarQteTableState extends State<_VarQteTable> {
           return Column(children: [
             if (i > 0) const Divider(height: 1, color: kBorder),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(children: [
-                Container(width: 110, height: 38, alignment: Alignment.center,
+                Container(width: 80, height: 36, alignment: Alignment.center,
                     decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(8)),
-                    child: Text(u, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Colors.white))),
+                    child: Text(u, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white))),
                 const SizedBox(width: 12),
                 Expanded(child: Row(children: [
                   _StepBtn(Icons.remove_rounded, col, () {
                     final v = int.tryParse(ctrl.text) ?? 0;
                     if (v > 0) { ctrl.text = '${v-1}'; setState(() {}); }
                   }),
-                  Expanded(child: SizedBox(height: 42, child: TextField(
+                  Expanded(child: SizedBox(height: 40, child: TextField(
                     controller: ctrl,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: kText),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText),
                     decoration: InputDecoration(
                       hintText: '0', contentPadding: EdgeInsets.zero,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: kBorder)),
@@ -1182,11 +1623,10 @@ class _VarQteTableState extends State<_VarQteTable> {
                 ])),
                 const SizedBox(width: 8),
                 InkWell(
-                  borderRadius: BorderRadius.circular(7),
-                  onTap: () { widget.onRemove(u); setState(() {}); },
+                  borderRadius: BorderRadius.circular(7), onTap: () { widget.onRemove(u); setState(() {}); },
                   child: Container(padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(7)),
-                      child: const Icon(Icons.close_rounded, size: 15, color: kRed)),
+                      child: const Icon(Icons.close_rounded, size: 14, color: kRed)),
                 ),
               ]),
             ),
@@ -1226,15 +1666,16 @@ class _DetailsDialog extends StatelessWidget {
         ]),
         const SizedBox(height: 16),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(color: p.stockBg, borderRadius: BorderRadius.circular(kR), border: Border.all(color: p.stockColor.withOpacity(0.2))),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.inventory_2_outlined, color: p.stockColor, size: 22),
-            const SizedBox(width: 12),
-            Text('${p.total}', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: p.stockColor)),
-            const SizedBox(width: 6),
-            Text('unité${p.total != 1 ? "s" : ""}', style: TextStyle(fontSize: 13, color: p.stockColor.withOpacity(0.8))),
-            const SizedBox(width: 12),
+          child: Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.inventory_2_outlined, color: p.stockColor, size: 22),
+              const SizedBox(width: 10),
+              Text('${p.total}', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: p.stockColor)),
+              const SizedBox(width: 6),
+              Text('unité${p.total != 1 ? "s" : ""}', style: TextStyle(fontSize: 13, color: p.stockColor.withOpacity(0.8))),
+            ]),
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: p.stockColor.withOpacity(0.15), borderRadius: BorderRadius.circular(20)),
                 child: Text(p.stockLabel, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: p.stockColor))),
@@ -1293,7 +1734,7 @@ class _DetCard extends StatelessWidget {
   final IconData icon; final String label, val;
   const _DetCard(this.icon, this.label, this.val);
   @override Widget build(BuildContext context) => Container(
-    width: 185, padding: const EdgeInsets.all(12),
+    width: 175, padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
     child: Row(children: [
       Icon(icon, size: 15, color: kBlue), const SizedBox(width: 9),
@@ -1329,7 +1770,7 @@ class _ConfirmDel extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  FULL DIALOG CONTAINER
+//  FULL DIALOG — responsive margins
 // ════════════════════════════════════════════════════════════════════════════
 class _FullDialog extends StatelessWidget {
   final Color color; final IconData icon; final String title, saveLabel;
@@ -1340,62 +1781,85 @@ class _FullDialog extends StatelessWidget {
     this.showCancel = true,
   });
 
-  @override Widget build(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: Material(color: Colors.transparent, child: Container(
-      margin: const EdgeInsets.fromLTRB(60, 28, 60, 28),
-      constraints: const BoxConstraints(maxWidth: 900),
-      decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(18),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.22), blurRadius: 50, offset: const Offset(0, 12))]),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: kP, vertical: 18),
-          decoration: BoxDecoration(color: color, borderRadius: const BorderRadius.vertical(top: Radius.circular(18))),
-          child: Row(children: [
-            Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(9)),
-                child: Icon(icon, color: Colors.white, size: 20)),
-            const SizedBox(width: 14),
-            Expanded(child: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white))),
-            InkWell(onTap: () => Navigator.pop(context), borderRadius: BorderRadius.circular(8),
-                child: Container(padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), borderRadius: BorderRadius.circular(8)),
-                    child: const Icon(Icons.close_rounded, color: Colors.white, size: 18))),
-          ]),
+  @override Widget build(BuildContext context) {
+    final mobile = isMobile(context);
+    final mq = MediaQuery.of(context);
+    final screenH = mq.size.height;
+    final keyboardH = mq.viewInsets.bottom;
+    final hMargin = mobile ? 8.0 : 60.0;
+    final vMargin = mobile ? 8.0 : 28.0;
+    // Max height: screen - keyboard - top/bottom margins - status bar
+    final maxH = screenH - keyboardH - vMargin * 2 - mq.padding.top - mq.padding.bottom;
+
+    return Align(
+      alignment: mobile ? Alignment.bottomCenter : Alignment.topCenter,
+      child: Material(color: Colors.transparent, child: Container(
+        margin: EdgeInsets.fromLTRB(hMargin, vMargin, hMargin, vMargin),
+        constraints: BoxConstraints(maxWidth: 900, maxHeight: maxH),
+        decoration: BoxDecoration(
+          color: kSurface,
+          borderRadius: BorderRadius.circular(mobile ? 20 : 18),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.22), blurRadius: 50, offset: const Offset(0, 12))],
         ),
-        Flexible(child: SingleChildScrollView(padding: const EdgeInsets.all(kP), child: child)),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: kP, vertical: 14),
-          decoration: const BoxDecoration(color: kBg, border: Border(top: BorderSide(color: kBorder)),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(18))),
-          child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            if (showCancel) ...[
-              TextButton(onPressed: () => Navigator.pop(context),
-                  child: const Text('Annuler', style: TextStyle(color: kMuted))),
-              const SizedBox(width: 10),
-            ],
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 200),
-              opacity: onSave != null ? 1.0 : 0.4,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color, foregroundColor: Colors.white, elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
-                ),
-                onPressed: onSave,
-                icon: Icon(icon, size: 15),
-                label: Text(saveLabel, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // ── Header (fixe) ──
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: mobile ? 16 : kP, vertical: 14),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.vertical(top: Radius.circular(mobile ? 20 : 18))),
+            child: Row(children: [
+              Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(9)),
+                  child: Icon(icon, color: Colors.white, size: 18)),
+              const SizedBox(width: 12),
+              Expanded(child: Text(title, style: TextStyle(fontSize: mobile ? 15 : 17, fontWeight: FontWeight.w700, color: Colors.white), overflow: TextOverflow.ellipsis)),
+              InkWell(onTap: () => Navigator.pop(context), borderRadius: BorderRadius.circular(8),
+                  child: Container(padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), borderRadius: BorderRadius.circular(8)),
+                      child: const Icon(Icons.close_rounded, color: Colors.white, size: 18))),
+            ]),
+          ),
+          // ── Corps scrollable (flexible) ──
+          Flexible(child: SingleChildScrollView(
+            padding: EdgeInsets.all(mobile ? 14 : kP),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: child,
+          )),
+          // ── Footer (fixe) ──
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : kP, vertical: 12),
+            decoration: BoxDecoration(
+              color: kBg, border: const Border(top: BorderSide(color: kBorder)),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(mobile ? 20 : 18)),
             ),
-          ]),
-        ),
-      ]),
-    )),
-  );
+            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              if (showCancel) ...[
+                TextButton(onPressed: () => Navigator.pop(context),
+                    child: const Text('Annuler', style: TextStyle(color: kMuted))),
+                const SizedBox(width: 10),
+              ],
+              AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: onSave != null ? 1.0 : 0.4,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: color, foregroundColor: Colors.white, elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+                    padding: EdgeInsets.symmetric(horizontal: mobile ? 16 : 22, vertical: 12),
+                  ),
+                  onPressed: onSave,
+                  icon: Icon(icon, size: 15),
+                  label: Text(saveLabel, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      )),
+    );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ROW MOUVEMENT TABLE
+//  ROW MOUVEMENT TABLE (desktop)
 // ════════════════════════════════════════════════════════════════════════════
 class _MouvRow extends _DataTableRow {
   final Mouvement m; final Color color, bgColor;
@@ -1412,8 +1876,8 @@ class _MouvRow extends _DataTableRow {
       Text(_date, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText)),
       Text(_time, style: _muted.copyWith(fontSize: 11)),
     ]),
-    Text(m.nomProduit, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText), overflow: TextOverflow.ellipsis),
-    Text(m.reference, style: _mono),
+    Text(m.nomProduit, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1),
+    Text(m.reference, style: _mono, overflow: TextOverflow.ellipsis, maxLines: 1),
     _PillBadge(m.categorie, kBlueLt, kBlue),
     Center(child: _PillBadge('M.${m.magasin}', kIndigoLt, kIndigo)),
     m.aVariantes
@@ -1428,7 +1892,7 @@ class _MouvRow extends _DataTableRow {
     if (showPreneur)
       Row(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.person_outline_rounded, size:13, color:kMuted), const SizedBox(width:5),
-        Flexible(child: Text(m.preneurNom ?? '—', style: _body.copyWith(fontSize:12), overflow: TextOverflow.ellipsis)),
+        Flexible(child: Text(m.preneurNom ?? '—', style: _body.copyWith(fontSize:12), overflow: TextOverflow.ellipsis, maxLines: 1)),
       ]),
     Row(mainAxisSize: MainAxisSize.min, children: [
       _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, onEdit),
@@ -1561,7 +2025,7 @@ class _SectionHdr extends StatelessWidget {
     Container(padding:const EdgeInsets.all(6), decoration:BoxDecoration(color:color.withOpacity(0.1), borderRadius:BorderRadius.circular(7)),
         child:Icon(icon, size:14, color:color)),
     const SizedBox(width:9),
-    Text(label.toUpperCase(), style:TextStyle(fontSize:11, fontWeight:FontWeight.w800, color:color, letterSpacing:.6)),
+    Flexible(child: Text(label.toUpperCase(), style:TextStyle(fontSize:11, fontWeight:FontWeight.w800, color:color, letterSpacing:.6), overflow: TextOverflow.ellipsis)),
     const SizedBox(width:12),
     Expanded(child:Divider(color:color.withOpacity(0.2))),
   ]);
@@ -1594,7 +2058,7 @@ class _DropBox extends StatelessWidget {
           value:items.contains(value)?value as String:items.first, isExpanded:true,
           style:const TextStyle(fontSize:13, color:kText, fontFamily:'Roboto'),
           icon:const Icon(Icons.keyboard_arrow_down_rounded, color:kBlue, size:18),
-          items:items.map((v)=>DropdownMenuItem(value:v, child:Text(labels?[v]??v))).toList(),
+          items:items.map((v)=>DropdownMenuItem(value:v, child:Text(labels?[v]??v, overflow: TextOverflow.ellipsis))).toList(),
           onChanged:(v)=>onChanged(v!))));
 }
 
@@ -1668,10 +2132,10 @@ class _InfoTile extends StatelessWidget {
   const _InfoTile(this.icon, this.label, this.val, {this.col});
   @override Widget build(BuildContext context) => Row(mainAxisSize:MainAxisSize.min, children:[
     Icon(icon, size:14, color:kBlue), const SizedBox(width:7),
-    Column(crossAxisAlignment:CrossAxisAlignment.start, mainAxisSize:MainAxisSize.min, children:[
+    Flexible(child: Column(crossAxisAlignment:CrossAxisAlignment.start, mainAxisSize:MainAxisSize.min, children:[
       Text(label, style:_label.copyWith(fontSize:10)),
-      Text(val, style:TextStyle(fontSize:13, fontWeight:FontWeight.w700, color:col??kText)),
-    ]),
+      Text(val, style:TextStyle(fontSize:13, fontWeight:FontWeight.w700, color:col??kText), overflow: TextOverflow.ellipsis),
+    ])),
   ]);
 }
 
@@ -1687,6 +2151,12 @@ void _showDialog(BuildContext context, Widget dialog) {
               .animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
           child: child),
     ),
-    pageBuilder: (_,__,___) => dialog,
+    pageBuilder: (ctx, __, ___) => MediaQuery(
+      // Forward keyboard insets so _FullDialog can compute its max height
+      data: MediaQuery.of(context).copyWith(
+        viewInsets: MediaQuery.of(context).viewInsets,
+      ),
+      child: dialog,
+    ),
   );
 }

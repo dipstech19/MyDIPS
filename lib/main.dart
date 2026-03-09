@@ -32,6 +32,7 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      home: const MainLayout(), // ← ligne manquante → écran noir sans elle
     );
   }
 }
