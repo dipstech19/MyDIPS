@@ -4,6 +4,8 @@ import '../core/auth/auth_provider.dart';
 import '../core/locale/app_locale.dart';
 import '../core/utils/responsive.dart';
 import '../modules/Paramètres/paramètres.dart';
+import '../modules/Demandes/demandes_page.dart';
+import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
 import '../modules/magasin/gestion_magasin.dart';
@@ -37,6 +39,8 @@ class _MainLayoutState extends State<MainLayout> {
       _NavItem(icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
       _NavItem(icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
       _NavItem(icon: Icons.settings, label: tr(context, 'nav_settings')),
+      _NavItem(icon: Icons.inbox, label: 'Demandes'),
+      _NavItem(icon: Icons.local_shipping, label: 'Logistique'),
     ];
   }
 
@@ -234,6 +238,10 @@ class _MainLayoutState extends State<MainLayout> {
         );
       case 5:
         return const ParametresPage();
+      case 6:
+        return const DemandesPage();
+      case 7:
+        return const LogistiquePage();
       default:
         return const _PlaceholderPage(
           icon: Icons.settings,
