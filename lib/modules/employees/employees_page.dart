@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/utils/responsive.dart';
+import '../../shared/widgets/smart_avatar.dart';
 import 'models/employe_model.dart';
 import 'models/equipe_model.dart';
 import 'employees_provider.dart';
 import 'widgets/employee_detail_dialog.dart';
 import 'widgets/employee_form_dialog.dart';
+import 'widgets/employee_edit_dialog.dart';
 import 'widgets/equipes_tab.dart';
 
 class EmployeesPage extends StatefulWidget {
@@ -93,6 +95,30 @@ class _EmployeesPageState extends State<EmployeesPage>
     );
   }
 
+  Widget _buildErrorBanner(String error) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        border: Border(bottom: BorderSide(color: Colors.red.shade200)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 22, color: Colors.red.shade800),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Erreur Firebase: $error',
+              style: TextStyle(fontSize: 13, color: Colors.red.shade900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -103,6 +129,12 @@ class _EmployeesPageState extends State<EmployeesPage>
 
     final padding = pagePadding(context);
     final mobile = isMobile(context);
+
+    // Show loading indicator
+    if (prov.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: padding, vertical: mobile ? 12 : 16),
       child: Column(
@@ -110,6 +142,8 @@ class _EmployeesPageState extends State<EmployeesPage>
         children: [
           if (!prov.firebaseAvailable) _buildOfflineBanner(),
           if (!prov.firebaseAvailable) const SizedBox(height: 12),
+          if (prov.error != null && prov.firebaseAvailable) _buildErrorBanner(prov.error!),
+          if (prov.error != null && prov.firebaseAvailable) const SizedBox(height: 12),
           // ===== HEADER =====
           if (mobile)
             Column(
@@ -355,7 +389,7 @@ class _EmployeesPageState extends State<EmployeesPage>
               const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
               if (isDirecteur) const Expanded(flex: 1, child: Text('Salaire', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
               const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              SizedBox(width: mobile ? 70 : 80, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              SizedBox(width: mobile ? 100 : 120, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
             ]),
           ),
           const Divider(height: 1),
@@ -380,10 +414,10 @@ class _EmployeesPageState extends State<EmployeesPage>
                       padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 16, vertical: mobile ? 10 : 12),
                       child: Row(children: [
                         Expanded(flex: 3, child: Row(children: [
-                          CircleAvatar(
-                            backgroundColor: const Color(0xFF1565C0).withOpacity(0.15),
+                          SmartAvatar(
+                            imageUrl: e.photoUrl,
+                            fallbackText: e.nom,
                             radius: mobile ? 14 : 18,
-                            child: Text(e.nom[0], style: TextStyle(color: const Color(0xFF1565C0), fontWeight: FontWeight.bold, fontSize: mobile ? 12 : 14)),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -432,19 +466,37 @@ class _EmployeesPageState extends State<EmployeesPage>
                           ),
                         )),
                         SizedBox(
-                          width: mobile ? 70 : 80,
+                          width: mobile ? 100 : 120,
                           child: isDirecteur
                               ? Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
                                       icon: const Icon(Icons.visibility, size: 18),
+                                      tooltip: 'Voir détails',
                                       onPressed: () => showDialog(context: context, builder: (_) => EmployeeDetailDialog(employe: e, allEmployes: employes, isDirecteur: isDirecteur)),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                     ),
                                     IconButton(
+                                      icon: Icon(Icons.edit, size: 18, color: Colors.green[700]),
+                                      tooltip: 'Modifier',
+                                      onPressed: () => showDialog(
+                                        context: context,
+                                        builder: (_) => EmployeeEditDialog(
+                                          employe: e,
+                                          allEmployes: employes,
+                                          onSave: (updated) async {
+                                            await prov.updateEmploye(updated);
+                                          },
+                                        ),
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                    ),
+                                    IconButton(
                                       icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                      tooltip: 'Changer statut',
                                       onPressed: () => _showChangeStatutDialog(context, e, prov),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

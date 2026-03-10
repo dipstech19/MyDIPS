@@ -6,7 +6,8 @@ class AppUser {
   final String username;
   final String password;
   final UserRole role;
-  final String? equipeId; // فقط لـ Chef Équipe
+  final String? equipeId;
+  final String? photoUrl;
 
   AppUser({
     required this.id,
@@ -15,10 +16,11 @@ class AppUser {
     required this.password,
     required this.role,
     this.equipeId,
+    this.photoUrl,
   });
 }
 
-// Users de test
+/// المستخدمون الثابتون (Admin و Chefs)
 final List<AppUser> appUsers = [
   AppUser(
     id: 'u1',

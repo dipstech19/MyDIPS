@@ -10,13 +10,21 @@ import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
 import 'modules/employees/postes_provider.dart';
 import 'modules/Paramètres/admins_provider.dart';
+import 'modules/Paramètres/chauffeurs_provider.dart';
+import 'modules/Paramètres/chef_comptes_provider.dart';
+import 'modules/pointage/pointage_provider.dart';
+import 'modules/magasin/magasin_provider.dart';
+import 'modules/employees/conges_provider.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    await Firebase.initializeApp();
-  } catch (_) {
-    // Firebase non configuré (ex: web/Windows) — l'app affichera le bandeau "Connectez Firebase"
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase init error: $e');
   }
   runApp(
     MultiProvider(
@@ -26,6 +34,11 @@ void main() async {
         ChangeNotifierProvider(create: (_) => EmployeesProvider()),
         ChangeNotifierProvider(create: (_) => PostesProvider()),
         ChangeNotifierProvider(create: (_) => AdminsProvider()),
+        ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
+        ChangeNotifierProvider(create: (_) => ChefComptesProvider()),
+        ChangeNotifierProvider(create: (_) => PointageProvider()),
+        ChangeNotifierProvider(create: (_) => MagasinProvider()),
+        ChangeNotifierProvider(create: (_) => CongesProvider()),
       ],
       child: const MyApp(),
     ),

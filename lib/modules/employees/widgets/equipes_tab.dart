@@ -180,15 +180,16 @@ class _EquipesTabState extends State<EquipesTab> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Actions
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  size: 18),
-                              color: Colors.red,
-                              tooltip: 'Supprimer',
-                              onPressed: () =>
-                                  widget.onDeleteEquipe(eq),
-                            ),
+                            // Actions — Supprimer uniquement pour le Directeur, pas pour le Chef d'équipe
+                            if (widget.isDirecteur)
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    size: 18),
+                                color: Colors.red,
+                                tooltip: 'Supprimer',
+                                onPressed: () =>
+                                    widget.onDeleteEquipe(eq),
+                              ),
                             Icon(
                               isExpanded
                                   ? Icons.keyboard_arrow_up

@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/auth_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/locale/app_locale.dart';
 import '../../core/utils/responsive.dart';
 import '../../shared/widgets/shared_widgets.dart';
+import '../../shared/widgets/smart_avatar.dart';
 import '../../modules/employees/models/employe_model.dart';
 import '../../modules/employees/employees_provider.dart';
 import 'pointage_data.dart';
+import 'pointage_provider.dart';
+import 'pointage_hours_config.dart';
+import 'models/pointage_model.dart';
 
-/// Pointage chauffeur: liste des chefs à gauche, ouvriers du chef sélectionné à droite (présent / absent / pas dans le véhicule)
+/// Pointage chauffeur: حاضر | غائب | في المركبة (سيارة/دراجة). بعد الإرسال لا يمكن التعديل.
 class DriverPointagePage extends StatefulWidget {
   const DriverPointagePage({super.key});
 
@@ -17,32 +22,63 @@ class DriverPointagePage extends StatefulWidget {
 }
 
 class _DriverPointagePageState extends State<DriverPointagePage> {
-  final Map<String, AttendanceState> _attendance = {};
   String? _selectedEquipeId;
 
-  String _key(String equipeId, String employeId) => '${equipeId}_$employeId';
-
-  AttendanceState _getState(String equipeId, String employeId) =>
-      _attendance[_key(equipeId, employeId)] ?? AttendanceState.unmarked;
-
-  void _setState(String equipeId, String employeId, AttendanceState state) {
-    setState(() => _attendance[_key(equipeId, employeId)] = state);
+  static AttendanceState _driverStatusToState(DriverPointageStatus s) {
+    switch (s) {
+      case DriverPointageStatus.present:
+        return AttendanceState.present;
+      case DriverPointageStatus.absent:
+        return AttendanceState.absent;
+      case DriverPointageStatus.enVehicule:
+        return AttendanceState.notInVehicle;
+      case DriverPointageStatus.unset:
+        return AttendanceState.unmarked;
+    }
   }
 
-  void _sendReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(tr(context, 'report_sent')),
-        backgroundColor: AppColors.green,
-        behavior: SnackBarBehavior.fixed,
-      ),
-    );
+  static DriverPointageStatus _stateToDriverStatus(AttendanceState s) {
+    switch (s) {
+      case AttendanceState.present:
+        return DriverPointageStatus.present;
+      case AttendanceState.absent:
+        return DriverPointageStatus.absent;
+      case AttendanceState.notInVehicle:
+        return DriverPointageStatus.enVehicule;
+      case AttendanceState.unmarked:
+        return DriverPointageStatus.unset;
+    }
+  }
+
+  Future<void> _sendReport(PointageHoursConfig? pointageConfig) async {
+    final pointageProvider = context.read<PointageProvider>();
+    final ok = await pointageProvider.submitDriverReport(configOverride: pointageConfig);
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr(context, 'report_sent')),
+          backgroundColor: AppColors.green,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr(context, 'pointage_hours_cannot_mark')),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final locale = context.watch<LocaleProvider>();
     final emp = context.watch<EmployeesProvider>();
+    final pointageProvider = context.watch<PointageProvider>();
+    final auth = context.watch<AuthProvider>();
     final isRtl = locale.isArabic;
     final mobile = isMobile(context);
     final teams = getAllTeamsWithWorkers(emp.equipes, emp.employes);
@@ -51,6 +87,13 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final workers = team?.workers ?? <Employe>[];
     final borderColor = Colors.grey.shade300;
     final padding = pagePadding(context);
+    final selectedEquipeList = emp.equipes.where((e) => e.id == _selectedEquipeId).toList();
+    final selectedEquipe = selectedEquipeList.isEmpty ? null : selectedEquipeList.first;
+    final config = getConfigForEquipe(selectedEquipe);
+    final now = DateTime.now();
+    final hoursStatus = getPointageHoursStatus(now, config);
+    final isWithinArrival = config.canMarkArrivalNow(now);
+    final isWithinDeparture = config.canMarkDepartureNow(now);
 
     return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
@@ -69,11 +112,13 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
               style: TextStyle(fontSize: 13, color: Colors.grey[600]),
             ),
             const SizedBox(height: 12),
+            _PointageHoursBanner(context: context, status: hoursStatus, config: config),
+            const SizedBox(height: 12),
             if (mobile) _buildMobileChefSelector(context, teams),
             if (mobile) const SizedBox(height: 12),
             Expanded(
               child: mobile
-                  ? _buildMobileWorkersSection(context, team, workers, borderColor)
+                  ? _buildMobileWorkersSection(context, team, workers, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config)
                   : Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -111,7 +156,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                                   color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.15) : null,
                                   child: ListTile(
                                     leading: const Icon(Icons.person, size: 20),
-                                    title: Text(t.chefName, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, fontSize: 13)),
+                                    title: Text('${t.equipeName} — ${t.chefName}', style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, fontSize: 13)),
                                     trailing: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                       decoration: BoxDecoration(color: Colors.white70, borderRadius: BorderRadius.circular(12)),
@@ -129,17 +174,20 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   const SizedBox(width: 16),
                   Expanded(
                     flex: 2,
-                    child: _buildMobileWorkersSection(context, team, workers, borderColor),
+                    child: _buildMobileWorkersSection(context, team, workers, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: mobile ? 10 : 16),
             SafeArea(
               child: SizedBox(
-                height: 52,
+                height: mobile ? 40 : 52,
                 width: double.infinity,
-                child: PrimaryButton(label: tr(context, 'send_report_btn'), onTap: _sendReport),
+                child: PrimaryButton(
+                  label: tr(context, 'send_report_btn'),
+                  onTap: isWithinArrival ? () => _sendReport(config) : null,
+                ),
               ),
             ),
           ],
@@ -148,7 +196,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     );
   }
 
-  Widget _buildMobileChefSelector(BuildContext context, List<({String equipeId, String chefName, List<Employe> workers})> teams) {
+  Widget _buildMobileChefSelector(BuildContext context, List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams) {
     if (teams.isEmpty) {
       return Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600]));
     }
@@ -162,7 +210,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
           final t = teams[i];
           final isSelected = _selectedEquipeId == t.equipeId;
           return FilterChip(
-            label: Text(t.chefName, style: const TextStyle(fontSize: 13)),
+            label: Text('${t.equipeName} — ${t.chefName}', style: const TextStyle(fontSize: 13)),
             selected: isSelected,
             onSelected: (_) => setState(() => _selectedEquipeId = t.equipeId),
             showCheckmark: false,
@@ -173,13 +221,24 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     );
   }
 
-  Widget _buildMobileWorkersSection(BuildContext context, ({String equipeId, String chefName, List<Employe> workers})? team, List<Employe> workers, Color borderColor) {
+  Widget _buildMobileWorkersSection(
+    BuildContext context,
+    ({String equipeId, String equipeName, String chefName, List<Employe> workers})? team,
+    List<Employe> workers,
+    Color borderColor,
+    PointageProvider pointageProvider,
+    AuthProvider auth,
+    bool isWithinArrival,
+    bool isWithinDeparture,
+    PointageHoursConfig pointageConfig,
+  ) {
     if (team == null) {
       return Center(child: Text(tr(context, 'select_chef'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
     }
     if (workers.isEmpty) {
       return Center(child: Text(tr(context, 'no_workers'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
     }
+    final titleLabel = '${tr(context, 'workers_of')} ${team.equipeName} (${team.chefName})';
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -190,10 +249,88 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          Text('${tr(context, 'workers_of')} ${team.chefName}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          Text(titleLabel, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
           const SizedBox(height: 10),
           ...workers.map((e) {
-            final state = _getState(team.equipeId, e.id);
+            final driverStatus = pointageProvider.getDriverStatusForEmployee(e.id);
+            final state = _driverStatusToState(driverStatus);
+            final locked = pointageProvider.isDriverLockedForEmployee(e.id);
+            final record = pointageProvider.getRecordForEmployee(e.id) ??
+                PointageRecord(
+                  id: '',
+                  employeId: e.id,
+                  employeNom: e.nom,
+                  employeCin: e.cin ?? '',
+                  equipeId: team.equipeId,
+                  equipeName: team.equipeName,
+                  chefName: team.chefName,
+                  status: AttendanceStatus.unmarked,
+                  date: DateTime.now(),
+                  createdAt: DateTime.now(),
+                );
+            Widget chipsWidget;
+            if (isWithinArrival) {
+              chipsWidget = DriverStatusChips(
+                current: state,
+                onSelect: (locked || !isWithinArrival) ? (_) {} : (s) async {
+                  final ok = await pointageProvider.markDriverAttendance(
+                    employeId: e.id,
+                    employeNom: e.nom,
+                    employeCin: e.cin ?? '',
+                    equipeId: team.equipeId,
+                    equipeName: team.equipeName,
+                    chefName: team.chefName,
+                    driverStatus: _stateToDriverStatus(s),
+                    driverId: auth.currentUser?.id,
+                    configOverride: pointageConfig,
+                  );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                    );
+                  }
+                },
+                presentLabel: tr(context, 'present'),
+                absentLabel: tr(context, 'absent'),
+                notInVehicleLabel: tr(context, 'not_in_vehicle'),
+              );
+            } else if (isWithinDeparture) {
+              chipsWidget = _DepartureChips(
+                record: record,
+                config: pointageConfig,
+                onStillWorking: () async {
+                  final ok = await pointageProvider.setDepartureStatus(
+                    record: record,
+                    status: DepartureStatus.stillWorking,
+                    configOverride: pointageConfig,
+                  );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                    );
+                  }
+                },
+                onFinished: (int? overtimeMinutes) async {
+                  final ok = await pointageProvider.setDepartureStatus(
+                    record: record,
+                    status: DepartureStatus.finished,
+                    overtimeMinutes: overtimeMinutes,
+                    configOverride: pointageConfig,
+                  );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                    );
+                  }
+                },
+                stillLabel: tr(context, 'departure_still_working'),
+                finishedLabel: tr(context, 'departure_finished'),
+                overtimeLabel: tr(context, 'overtime_minutes'),
+                overtimeHint: tr(context, 'overtime_minutes_hint'),
+              );
+            } else {
+              chipsWidget = const SizedBox.shrink();
+            }
             return Card(
               margin: const EdgeInsets.only(bottom: 8),
               child: Padding(
@@ -208,33 +345,45 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                         children: [
                           Row(
                             children: [
-                              AvatarCircle(letter: e.nom.isNotEmpty ? e.nom.substring(0, 1) : '?', color: AppColors.accent, size: 36),
+                              SmartAvatar(
+                                imageUrl: e.photoUrl,
+                                fallbackText: e.nom,
+                                radius: 18,
+                              ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                    Text('${tr(context, 'cin_label')}: ${e.cin}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                                    if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(record.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
+                              if (locked)
+                                Icon(Icons.lock, size: 16, color: Colors.grey[600]),
                             ],
                           ),
                           const SizedBox(height: 10),
-                          DriverStatusChips(
-                            current: state,
-                            onSelect: (s) => _setState(team.equipeId, e.id, s),
-                            presentLabel: tr(context, 'present'),
-                            absentLabel: tr(context, 'absent'),
-                            notInVehicleLabel: tr(context, 'not_in_vehicle'),
-                          ),
+                          chipsWidget,
                         ],
                       );
                     }
                     return Row(
                       children: [
-                        AvatarCircle(letter: e.nom.isNotEmpty ? e.nom.substring(0, 1) : '?', color: AppColors.accent, size: 36),
+                        SmartAvatar(
+                          imageUrl: e.photoUrl,
+                          fallbackText: e.nom,
+                          radius: 18,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -242,17 +391,21 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                              Text('${tr(context, 'cin_label')}: ${e.cin}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                              if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    '${tr(context, 'pointage_analysis_overtime_h')}: ${(record.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
-                        DriverStatusChips(
-                          current: state,
-                          onSelect: (s) => _setState(team.equipeId, e.id, s),
-                          presentLabel: tr(context, 'present'),
-                          absentLabel: tr(context, 'absent'),
-                          notInVehicleLabel: tr(context, 'not_in_vehicle'),
-                        ),
+                        if (locked)
+                          Icon(Icons.lock, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 8),
+                        chipsWidget,
                       ],
                     );
                   },
@@ -260,6 +413,127 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+}
+
+class _DepartureChips extends StatelessWidget {
+  final PointageRecord record;
+  final PointageHoursConfig config;
+  final VoidCallback onStillWorking;
+  final void Function(int? overtimeMinutes) onFinished;
+  final String stillLabel;
+  final String finishedLabel;
+  final String overtimeLabel;
+  final String overtimeHint;
+
+  const _DepartureChips({
+    required this.record,
+    required this.config,
+    required this.onStillWorking,
+    required this.onFinished,
+    required this.stillLabel,
+    required this.finishedLabel,
+    required this.overtimeLabel,
+    required this.overtimeHint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isStill = record.departureStatus == DepartureStatus.stillWorking;
+    final isFinished = record.departureStatus == DepartureStatus.finished;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        FilterChip(
+          label: Text(stillLabel, style: const TextStyle(fontSize: 12)),
+          selected: isStill,
+          onSelected: (_) => onStillWorking(),
+        ),
+        FilterChip(
+          label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
+          selected: isFinished,
+          onSelected: (_) async {
+            final controller = TextEditingController();
+            final minutes = await showDialog<int?>(
+              context: context,
+              builder: (ctx) {
+                return AlertDialog(
+                  title: Text(overtimeLabel),
+                  content: TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      hintText: overtimeHint,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, null),
+                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        final v = int.tryParse(controller.text.trim());
+                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
+                      },
+                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                    ),
+                  ],
+                );
+              },
+            );
+            onFinished(minutes);
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _PointageHoursBanner extends StatelessWidget {
+  final BuildContext context;
+  final PointageHoursStatus status;
+  final PointageHoursConfig config;
+
+  const _PointageHoursBanner({required this.context, required this.status, required this.config});
+
+  @override
+  Widget build(BuildContext context) {
+    final String msg;
+    final Color bg;
+    final now = DateTime.now();
+    if (status == PointageHoursStatus.open) {
+      if (config.isWithinArrivalWindow(now)) {
+        msg = tr(this.context, 'pointage_arrival_window').replaceFirst('%s', config.arrivalWindowFormatted());
+      } else {
+        msg = tr(this.context, 'pointage_departure_window').replaceFirst('%s', config.departureWindowFormatted());
+      }
+      bg = Colors.green.shade50;
+    } else if (status == PointageHoursStatus.notYetOpen) {
+      msg = tr(this.context, 'pointage_hours_not_yet').replaceFirst('%s', config.startTimeFormatted());
+      bg = Colors.orange.shade100;
+    } else {
+      msg = tr(this.context, 'pointage_hours_closed').replaceFirst('%s', config.endTimeFormatted());
+      bg = Colors.red.shade50;
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: status == PointageHoursStatus.open ? Colors.green.shade200 : Colors.orange.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(status == PointageHoursStatus.open ? Icons.check_circle : Icons.schedule, size: 20, color: status == PointageHoursStatus.open ? Colors.green.shade700 : Colors.orange.shade800),
+          const SizedBox(width: 8),
+          Expanded(child: Text(msg, style: TextStyle(fontSize: 12, color: Colors.grey[800]))),
         ],
       ),
     );

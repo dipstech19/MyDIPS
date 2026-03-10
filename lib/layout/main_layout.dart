@@ -8,8 +8,10 @@ import '../modules/Demandes/demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
-import '../modules/magasin/gestion_magasin.dart';
+import '../modules/magasin/gestion_magasin_firebase.dart';
+import '../modules/magasin/magasin_provider.dart';
 import '../modules/pointage/pointage_page.dart';
+import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
 
@@ -229,7 +231,7 @@ class _MainLayoutState extends State<MainLayout> {
       case 2:
         return const PointagePage();
       case 3:
-        return const GestionMagasin();
+        return const GestionMagasinFirebase();
       case 4:
         return const _PlaceholderPage(
           icon: Icons.bar_chart,
@@ -312,12 +314,14 @@ class _DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final emp = context.watch<EmployeesProvider>();
+    final pointage = context.watch<PointageProvider>();
+    final magasin = context.watch<MagasinProvider>();
     final mobile = isMobile(context);
     final padding = pagePadding(context);
     final employesCount = emp.employes.length;
-    const presentLabel = '0';
-    const stockLabel = '0';
-    const rapportsLabel = '0';
+    final presentLabel = '${pointage.todayPresentCount}';
+    final stockLabel = '${magasin.totalStock}';
+    final rapportsLabel = '${pointage.monthlyReportsCount}';
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(padding),
