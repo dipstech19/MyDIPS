@@ -270,6 +270,24 @@ class PointageRepository {
         .toList();
   }
 
+  /// جميع سجلات الحضور في نطاق تواريخ (لتصدير Excel).
+  Future<List<PointageRecord>> getPointageInDateRange(
+    DateTime startInclusive,
+    DateTime endInclusive,
+  ) async {
+    final start = DateTime(startInclusive.year, startInclusive.month, startInclusive.day);
+    final endDay = DateTime(endInclusive.year, endInclusive.month, endInclusive.day);
+    final end = endDay.add(const Duration(days: 1));
+    final snap = await _firestore
+        .collection(_pointageCollection)
+        .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
+        .where('date', isLessThan: end.toIso8601String())
+        .get();
+    return snap.docs
+        .map((d) => PointageRecord.fromMap({...d.data(), 'id': d.id}))
+        .toList();
+  }
+
   // ——— Équipes ne travaillant pas (ce jour) ———
 
   Future<List<String>> getNonWorkingEquipeIds(DateTime date) async {

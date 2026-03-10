@@ -207,6 +207,12 @@ class PointageProvider extends ChangeNotifier {
     return list.where((r) => r.isFinalPresent).length;
   }
 
+  /// جميع سجلات الحضور في نطاق تواريخ (لتصدير Excel).
+  Future<List<PointageRecord>> getPointageInDateRange(DateTime start, DateTime end) async {
+    if (!_firebaseAvailable || _repo == null) return [];
+    return _repo!.getPointageInDateRange(start, end);
+  }
+
   Future<void> markAttendance({
     required String employeId,
     required String employeNom,

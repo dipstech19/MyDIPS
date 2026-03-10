@@ -127,6 +127,16 @@ class AppTranslations {
     'pointage_analysis_workers_count': '%s travailleur(s)',
     'pointage_tap_to_open_hint': 'Appuyez pour afficher dans la zone ci‑dessus',
     'pointage_back_to_workers': 'Retour aux travailleurs',
+    'pointage_download_report': 'Télécharger rapport du jour',
+    'pointage_signature_chef': 'Chef d\'équipe',
+    'pointage_signature_driver': 'Chauffeur',
+    'pointage_download_pdf_equipe': 'Télécharger PDF (équipe)',
+    'pointage_download_excel': 'Télécharger Excel (période)',
+    'pointage_excel_date_range': 'Période pour Excel',
+    'pointage_excel_from': 'Du',
+    'pointage_excel_to': 'Au',
+    'pointage_export_ok': 'Export réussi',
+    'pointage_export_excel_saved': 'Fichier Excel enregistré',
   };
 
   static const Map<String, String> ar = {
@@ -234,6 +244,16 @@ class AppTranslations {
     'pointage_analysis_workers_count': '%s عامل(ون)',
     'pointage_tap_to_open_hint': 'اضغط لعرض في المنطقة أعلاه',
     'pointage_back_to_workers': 'العودة للعمال',
+    'pointage_download_report': 'تنزيل تقرير اليوم',
+    'pointage_signature_chef': 'شاف دكيب',
+    'pointage_signature_driver': 'السائق',
+    'pointage_download_pdf_equipe': 'تنزيل PDF (الفريق)',
+    'pointage_download_excel': 'تنزيل Excel (الفترة)',
+    'pointage_excel_date_range': 'الفترة لملف Excel',
+    'pointage_excel_from': 'من',
+    'pointage_excel_to': 'إلى',
+    'pointage_export_ok': 'تم التصدير بنجاح',
+    'pointage_export_excel_saved': 'تم حفظ ملف Excel',
   };
 
   static String get(String locale, String key) {
@@ -242,8 +262,14 @@ class AppTranslations {
   }
 }
 
-/// استدعاء الترجمة حسب locale الحالي (يُستخدم مع Provider)
+/// استدعاء الترجمة حسب locale الحالي (يُستخدم داخل build فقط — يستخدم watch).
 String tr(BuildContext context, String key) {
   final locale = context.watch<LocaleProvider>().locale;
+  return AppTranslations.get(locale, key);
+}
+
+/// ترجمة بدون listen — للاستخدام داخل event handlers (onPressed, onTap، إلخ).
+String trOf(BuildContext context, String key) {
+  final locale = context.read<LocaleProvider>().locale;
   return AppTranslations.get(locale, key);
 }

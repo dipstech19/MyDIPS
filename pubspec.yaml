@@ -43,6 +43,7 @@ dependencies:
   intl: any
   image_picker: ^1.0.7
   http: any
+  share_plus: ^10.0.2
 
 dev_dependencies:
   flutter_test:
