@@ -11,51 +11,97 @@ import '../employees_provider.dart';
 import '../postes_provider.dart';
 import '../services/storage_service.dart';
 
-class EmployeeFormDialog extends StatefulWidget {
-  final List<Employe> employes;
+class EmployeeEditDialog extends StatefulWidget {
+  final Employe employe;
+  final List<Employe> allEmployes;
   final Function(Employe) onSave;
 
-  const EmployeeFormDialog({
+  const EmployeeEditDialog({
     super.key,
-    required this.employes,
+    required this.employe,
+    required this.allEmployes,
     required this.onSave,
   });
 
   @override
-  State<EmployeeFormDialog> createState() => _EmployeeFormDialogState();
+  State<EmployeeEditDialog> createState() => _EmployeeEditDialogState();
 }
 
-class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
+class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   final _formKey = GlobalKey<FormState>();
 
-  final _nomCtrl = TextEditingController();
-  final _cinCtrl = TextEditingController();
-  final _telCtrl = TextEditingController();
-  final _tel2Ctrl = TextEditingController();
-  final _naissanceCtrl = TextEditingController();
-  final _adresseCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _salaireCtrl = TextEditingController();
-  final _dateDebutCtrl = TextEditingController();
-  final _finContratCtrl = TextEditingController();
-  final _cnssCtrl = TextEditingController();
-  final _dateCnssCtrl = TextEditingController();
+  late TextEditingController _nomCtrl;
+  late TextEditingController _cinCtrl;
+  late TextEditingController _telCtrl;
+  late TextEditingController _tel2Ctrl;
+  late TextEditingController _naissanceCtrl;
+  late TextEditingController _adresseCtrl;
+  late TextEditingController _emailCtrl;
+  late TextEditingController _salaireCtrl;
+  late TextEditingController _dateDebutCtrl;
+  late TextEditingController _finContratCtrl;
+  late TextEditingController _cnssCtrl;
+  late TextEditingController _dateCnssCtrl;
 
-  String _poste = '';
-  String _magasin = '';
-  String _dept = '';
-  String _contrat = 'CDI';
-  String _chefId = '';
-  EmployeStatut _statut = EmployeStatut.enService;
+  late String _poste;
+  late String _magasin;
+  late String _dept;
+  late String _contrat;
+  late String _chefId;
+  late EmployeStatut _statut;
   
-  // Photo de profil
   String? _photoPath;
   Uint8List? _photoBytes;
+  String _existingPhotoUrl = '';
   
-  // Documents
-  final List<_TempDocument> _tempDocuments = [];
+  late List<Document> _documents;
+  final List<_TempDocument> _newDocuments = [];
 
   static const _contrats = ['CDI', 'CDD', 'Anapec'];
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.employe;
+    _nomCtrl = TextEditingController(text: e.nom);
+    _cinCtrl = TextEditingController(text: e.cin);
+    _telCtrl = TextEditingController(text: e.telephone);
+    _tel2Ctrl = TextEditingController(text: e.telephone2);
+    _naissanceCtrl = TextEditingController(text: e.dateNaissance);
+    _adresseCtrl = TextEditingController(text: e.adresse);
+    _emailCtrl = TextEditingController(text: e.email);
+    _salaireCtrl = TextEditingController(text: e.salaireBase.toStringAsFixed(0));
+    _dateDebutCtrl = TextEditingController(text: e.dateDebut);
+    _finContratCtrl = TextEditingController(text: e.finContrat);
+    _cnssCtrl = TextEditingController(text: e.cnss);
+    _dateCnssCtrl = TextEditingController(text: e.dateCnss);
+    
+    _poste = e.poste;
+    _magasin = e.magasin;
+    _dept = e.departement;
+    _contrat = _contrats.contains(e.typeContrat) ? e.typeContrat : 'CDI';
+    _chefId = e.chefDirectId;
+    _statut = e.statut;
+    _existingPhotoUrl = e.photoUrl;
+    _documents = List.from(e.documents);
+  }
+
+  @override
+  void dispose() {
+    _nomCtrl.dispose();
+    _cinCtrl.dispose();
+    _telCtrl.dispose();
+    _tel2Ctrl.dispose();
+    _naissanceCtrl.dispose();
+    _adresseCtrl.dispose();
+    _emailCtrl.dispose();
+    _salaireCtrl.dispose();
+    _dateDebutCtrl.dispose();
+    _finContratCtrl.dispose();
+    _cnssCtrl.dispose();
+    _dateCnssCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +114,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
     final padding = mobile ? 16.0 : 28.0;
+    
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: EdgeInsets.symmetric(
@@ -82,170 +129,170 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         child: Container(
           padding: EdgeInsets.all(padding),
           child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // HEADER
-              Row(children: [
-                Icon(Icons.person_add, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
-                SizedBox(width: mobile ? 8 : 12),
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // HEADER
+                Row(children: [
+                  Icon(Icons.edit, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
+                  SizedBox(width: mobile ? 8 : 12),
+                  Expanded(
+                    child: Text('Modifier Employé',
+                        style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40)),
+                ]),
+                const Divider(height: 24),
+
                 Expanded(
-                  child: Text('Nouvel Employé',
-                      style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis),
-                ),
-                IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40)),
-              ]),
-              const Divider(height: 24),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Photo de profil
+                        _sectionTitle('📷 Photo de profil'),
+                        const SizedBox(height: 12),
+                        _buildPhotoSection(),
+                        
+                        const SizedBox(height: 20),
+                        _sectionTitle('🪪 Identité'),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _field(_nomCtrl, 'Nom complet *', required: true),
+                          _field(_cinCtrl, 'CIN *', required: true),
+                        ),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _field(_telCtrl, 'Téléphone *', required: true),
+                          _field(_tel2Ctrl, 'Téléphone 2'),
+                        ),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _dateField(_naissanceCtrl, 'Date de naissance *', required: true),
+                          _field(_emailCtrl, 'Email'),
+                        ),
+                        const SizedBox(height: 12),
+                        _field(_adresseCtrl, 'Adresse *', required: true),
 
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Photo de profil
-                      _sectionTitle('📷 Photo de profil'),
-                      const SizedBox(height: 12),
-                      _buildPhotoSection(),
-                      
-                      const SizedBox(height: 20),
-                      _sectionTitle('🪪 Identité'),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _field(_nomCtrl, 'Nom complet *', required: true),
-                        _field(_cinCtrl, 'CIN *', required: true),
-                      ),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _field(_telCtrl, 'Téléphone *', required: true),
-                        _field(_tel2Ctrl, 'Téléphone 2'),
-                      ),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _dateField(_naissanceCtrl, 'Date de naissance *', required: true),
-                        _field(_emailCtrl, 'Email'),
-                      ),
-                      const SizedBox(height: 12),
-                      _field(_adresseCtrl, 'Adresse *', required: true),
-
-                      const SizedBox(height: 20),
-                      _sectionTitle('💼 Travail'),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _dropdownPoste(posteNames),
-                        _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
-                      ),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
-                        _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
-                      ),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _dropdown('Type contrat *', _contrat, _contrats, (v) => setState(() => _contrat = v!)),
-                        _dateField(_dateDebutCtrl, 'Date début *', required: true),
-                      ),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _contrat != 'CDI'
-                            ? _dateField(_finContratCtrl, 'Fin contrat *')
-                            : const SizedBox(),
-                        _dropdownEmploye(),
-                      ),
-                      const SizedBox(height: 12),
-                      // STATUT
-                      const Text('Statut *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 10,
-                        children: EmployeStatut.values.map((s) {
-                          final isSelected = _statut == s;
-                          return InkWell(
-                            onTap: () => setState(() => _statut = s),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: isSelected ? s.color.withOpacity(0.15) : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: isSelected ? s.color : Colors.grey.shade300,
-                                  width: isSelected ? 2 : 1,
+                        const SizedBox(height: 20),
+                        _sectionTitle('💼 Travail'),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _dropdownPoste(posteNames),
+                          _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
+                        ),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
+                          _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
+                        ),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _dropdown('Type contrat *', _contrat, _contrats, (v) => setState(() => _contrat = v!)),
+                          _dateField(_dateDebutCtrl, 'Date début *', required: true),
+                        ),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _contrat != 'CDI'
+                              ? _dateField(_finContratCtrl, 'Fin contrat')
+                              : const SizedBox(),
+                          _dropdownEmploye(),
+                        ),
+                        const SizedBox(height: 12),
+                        // STATUT
+                        const Text('Statut *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 10,
+                          children: EmployeStatut.values.map((s) {
+                            final isSelected = _statut == s;
+                            return InkWell(
+                              onTap: () => setState(() => _statut = s),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? s.color.withOpacity(0.15) : Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isSelected ? s.color : Colors.grey.shade300,
+                                    width: isSelected ? 2 : 1,
+                                  ),
                                 ),
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(s.icon, color: isSelected ? s.color : Colors.grey, size: 16),
+                                  const SizedBox(width: 6),
+                                  Text(s.label,
+                                      style: TextStyle(
+                                          color: isSelected ? s.color : Colors.grey,
+                                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                          fontSize: 13)),
+                                ]),
                               ),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(s.icon, color: isSelected ? s.color : Colors.grey, size: 16),
-                                const SizedBox(width: 6),
-                                Text(s.label,
-                                    style: TextStyle(
-                                        color: isSelected ? s.color : Colors.grey,
-                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                        fontSize: 13)),
-                              ]),
-                            ),
-                          );
-                        }).toList(),
-                      ),
+                            );
+                          }).toList(),
+                        ),
 
-                      const SizedBox(height: 20),
-                      _sectionTitle('📋 CNSS'),
-                      const SizedBox(height: 12),
-                      _row2(
-                        _field(_cnssCtrl, 'Numéro CNSS'),
-                        _dateField(_dateCnssCtrl, 'Date inscription CNSS'),
-                      ),
-                      
-                      const SizedBox(height: 20),
-                      _sectionTitle('📁 Documents'),
-                      const SizedBox(height: 12),
-                      _buildDocumentsSection(),
-                    ],
+                        const SizedBox(height: 20),
+                        _sectionTitle('📋 CNSS'),
+                        const SizedBox(height: 12),
+                        _row2(
+                          _field(_cnssCtrl, 'Numéro CNSS'),
+                          _dateField(_dateCnssCtrl, 'Date inscription CNSS'),
+                        ),
+                        
+                        const SizedBox(height: 20),
+                        _sectionTitle('📁 Documents'),
+                        const SizedBox(height: 12),
+                        _buildDocumentsSection(),
+                      ],
+                    ),
                   ),
                 ),
-              ),
 
-              const Divider(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  OutlinedButton(
-                    onPressed: _saving ? null : () => Navigator.pop(context),
-                    child: const Text('Annuler'),
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: ElevatedButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving 
-                          ? SizedBox(
-                              width: mobile ? 18 : 24,
-                              height: mobile ? 18 : 24,
-                              child: const CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Icon(Icons.save, size: mobile ? 18 : 24),
-                      label: Text(_saving ? 'Enregistrement...' : 'Enregistrer'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                          horizontal: mobile ? 16 : 24,
-                          vertical: mobile ? 12 : 14,
+                const Divider(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: _saving ? null : () => Navigator.pop(context),
+                      child: const Text('Annuler'),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: ElevatedButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving 
+                            ? SizedBox(
+                                width: mobile ? 18 : 24,
+                                height: mobile ? 18 : 24,
+                                child: const CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : Icon(Icons.save, size: mobile ? 18 : 24),
+                        label: Text(_saving ? 'Enregistrement...' : 'Enregistrer'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1565C0),
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: mobile ? 16 : 24,
+                            vertical: mobile ? 12 : 14,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
         ),
       ),
     );
@@ -257,11 +304,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     if (_formKey.currentState!.validate() && !_saving) {
       setState(() => _saving = true);
       
-      debugPrint('EmployeeFormDialog: Starting save...');
-      debugPrint('EmployeeFormDialog: Photo bytes: ${_photoBytes?.length ?? 0}');
-      debugPrint('EmployeeFormDialog: Photo path: $_photoPath');
-      debugPrint('EmployeeFormDialog: Documents count: ${_tempDocuments.length}');
-      
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
       final magasins = _uniqueMagasins(empProv);
@@ -270,27 +312,25 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
-      final employeeId = DateTime.now().millisecondsSinceEpoch.toString();
-      debugPrint('EmployeeFormDialog: Employee ID: $employeeId');
+      final employeeId = widget.employe.id;
       
-      // Upload photo to Firebase Storage
-      String? photoUrl;
+      // Upload photo to Firebase Storage if new photo selected
+      String photoUrl = _existingPhotoUrl;
       if (_photoBytes != null) {
         final ext = _photoPath?.split('.').last ?? 'jpg';
-        debugPrint('EmployeeFormDialog: Uploading photo with extension: $ext');
-        photoUrl = await StorageService.uploadEmployeePhoto(
+        final uploadedUrl = await StorageService.uploadEmployeePhoto(
           employeeId: employeeId,
           bytes: _photoBytes!,
           extension: ext,
         );
-        debugPrint('EmployeeFormDialog: Photo URL received: $photoUrl');
-      } else {
-        debugPrint('EmployeeFormDialog: No photo to upload');
+        if (uploadedUrl != null) {
+          photoUrl = uploadedUrl;
+        }
       }
       
-      // Upload documents to Firebase Storage
-      final documents = <Document>[];
-      for (final td in _tempDocuments) {
+      // Combine existing and upload new documents
+      final allDocs = [..._documents];
+      for (final td in _newDocuments) {
         final docId = DateTime.now().millisecondsSinceEpoch.toString() + td.name.hashCode.toString();
         String? docUrl;
         if (td.bytes != null) {
@@ -302,7 +342,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
             extension: td.extension,
           );
         }
-        documents.add(Document(
+        allDocs.add(Document(
           id: docId,
           nom: td.name,
           path: docUrl ?? td.path ?? '',
@@ -312,7 +352,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         ));
       }
       
-      final newEmployee = Employe(
+      widget.onSave(Employe(
         id: employeeId,
         nom: _nomCtrl.text,
         cin: _cinCtrl.text,
@@ -332,12 +372,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         cnss: _cnssCtrl.text,
         dateCnss: _dateCnssCtrl.text,
         statut: _statut,
-        documents: documents,
-        photoUrl: photoUrl ?? '',
-      );
-      
-      debugPrint('EmployeeFormDialog: Saving employee with photoUrl: ${newEmployee.photoUrl}');
-      widget.onSave(newEmployee);
+        documents: allDocs,
+        photoUrl: photoUrl,
+      ));
       
       if (mounted) {
         Navigator.pop(context);
@@ -441,12 +478,14 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final set = <String>{};
     for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
     for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
+    if (_magasin.isNotEmpty) set.add(_magasin);
     final list = set.toList()..sort();
     return list.isEmpty ? ['—'] : list;
   }
 
   List<String> _uniqueDepartements(EmployeesProvider prov) {
     final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
+    if (_dept.isNotEmpty) set.add(_dept);
     final list = set.toList()..sort();
     return list.isEmpty ? ['—'] : list;
   }
@@ -455,6 +494,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final items = posteNames.isEmpty
         ? <String>['(Ajoutez des postes dans Paramètres > Postes)']
         : posteNames;
+    
+    // Add current poste if not in list
+    if (_poste.isNotEmpty && !items.contains(_poste)) {
+      items.add(_poste);
+    }
+    
     final value = items.contains(_poste)
         ? _poste
         : (posteNames.isNotEmpty ? posteNames.first : items.first);
@@ -471,27 +516,32 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     );
   }
 
-  Widget _dropdown(String label, String value, List<String> items, void Function(String?) onChanged) =>
-      DropdownButtonFormField<String>(
-        value: value.isEmpty && items.isNotEmpty ? items.first : value,
-        decoration: InputDecoration(
-          labelText: label,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          isDense: true,
-        ),
-        items: items.map((i) => DropdownMenuItem(value: i, child: Text(i))).toList(),
-        onChanged: onChanged,
-      );
+  Widget _dropdown(String label, String value, List<String> items, void Function(String?) onChanged) {
+    final effectiveValue = value.isEmpty && items.isNotEmpty ? items.first : value;
+    final effectiveItems = items.contains(effectiveValue) ? items : [...items, effectiveValue];
+    
+    return DropdownButtonFormField<String>(
+      value: effectiveValue,
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: effectiveItems.map((i) => DropdownMenuItem(value: i, child: Text(i))).toList(),
+      onChanged: onChanged,
+    );
+  }
 
-  /// الموظفون الذين منصبهم "Chef" أو يحتوي على "chef" (مثلاً Chef d'équipe) — يظهرون فقط في قائمة Chef direct
   static bool _isChefPoste(String poste) {
     final p = poste.trim().toLowerCase();
     return p.contains('chef') || p == 'shef';
   }
 
   Widget _dropdownEmploye() {
-    final chefCandidates = widget.employes.where((e) => _isChefPoste(e.poste)).toList();
+    final chefCandidates = widget.allEmployes
+        .where((e) => _isChefPoste(e.poste) && e.id != widget.employe.id)
+        .toList();
     final value = _chefId.isEmpty || !chefCandidates.any((e) => e.id == _chefId)
         ? ''
         : _chefId;
@@ -511,7 +561,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     );
   }
   
-  // ========== Photo de profil ==========
+  // Photo Section
   Widget _buildPhotoSection() {
     return Center(
       child: Column(
@@ -530,9 +580,14 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                         image: MemoryImage(_photoBytes!),
                         fit: BoxFit.cover,
                       )
-                    : null,
+                    : _existingPhotoUrl.isNotEmpty
+                        ? DecorationImage(
+                            image: NetworkImage(_existingPhotoUrl),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
               ),
-              child: _photoBytes == null
+              child: (_photoBytes == null && _existingPhotoUrl.isEmpty)
                   ? Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -547,12 +602,13 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                   : null,
             ),
           ),
-          if (_photoBytes != null) ...[
+          if (_photoBytes != null || _existingPhotoUrl.isNotEmpty) ...[
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: () => setState(() {
                 _photoBytes = null;
                 _photoPath = null;
+                _existingPhotoUrl = '';
               }),
               icon: const Icon(Icons.delete, size: 16, color: Colors.red),
               label: const Text('Supprimer', style: TextStyle(color: Colors.red, fontSize: 12)),
@@ -592,12 +648,13 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     }
   }
   
-  // ========== Documents Section ==========
+  // Documents Section
   Widget _buildDocumentsSection() {
+    final allDocs = [..._documents.map((d) => _DocItem(doc: d)), ..._newDocuments.map((d) => _DocItem(temp: d))];
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Add document button
         OutlinedButton.icon(
           onPressed: _addDocument,
           icon: const Icon(Icons.upload_file, size: 18),
@@ -609,8 +666,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         ),
         const SizedBox(height: 12),
         
-        // Document list
-        if (_tempDocuments.isEmpty)
+        if (allDocs.isEmpty)
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -624,7 +680,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                 Icon(Icons.folder_open, color: Colors.grey.shade400),
                 const SizedBox(width: 8),
                 Text(
-                  'Aucun document ajouté',
+                  'Aucun document',
                   style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                 ),
               ],
@@ -634,32 +690,37 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _tempDocuments.length,
+            itemCount: allDocs.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
-              final doc = _tempDocuments[index];
+              final item = allDocs[index];
+              final isExisting = item.doc != null;
+              final name = isExisting ? item.doc!.nom : item.temp!.name;
+              final cat = isExisting ? item.doc!.categorie : item.temp!.categorie;
+              final ext = isExisting ? item.doc!.extension : item.temp!.extension;
+              
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: doc.categorie.color.withOpacity(0.08),
+                  color: cat.color.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: doc.categorie.color.withOpacity(0.3)),
+                  border: Border.all(color: cat.color.withOpacity(0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(doc.categorie.icon, color: doc.categorie.color, size: 20),
+                    Icon(cat.icon, color: cat.color, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            doc.name,
+                            name,
                             style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            '${doc.categorie.label} • ${doc.extension.toUpperCase()}',
+                            '${cat.label} • ${ext.toUpperCase()}',
                             style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
                           ),
                         ],
@@ -667,7 +728,15 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                      onPressed: () => setState(() => _tempDocuments.removeAt(index)),
+                      onPressed: () {
+                        setState(() {
+                          if (isExisting) {
+                            _documents.remove(item.doc);
+                          } else {
+                            _newDocuments.remove(item.temp);
+                          }
+                        });
+                      },
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     ),
@@ -701,7 +770,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         }
       }
 
-      // Show dialog to select category
       final category = await showDialog<DocCategorie>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -721,7 +789,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
       if (category != null && bytes != null) {
         setState(() {
-          _tempDocuments.add(_TempDocument(
+          _newDocuments.add(_TempDocument(
             name: file.name,
             path: file.path,
             bytes: bytes,
@@ -735,7 +803,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   }
 }
 
-// Temporary document class for form
 class _TempDocument {
   final String name;
   final String? path;
@@ -750,4 +817,11 @@ class _TempDocument {
     required this.extension,
     required this.categorie,
   });
+}
+
+class _DocItem {
+  final Document? doc;
+  final _TempDocument? temp;
+  
+  _DocItem({this.doc, this.temp});
 }

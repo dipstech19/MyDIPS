@@ -25,10 +25,12 @@ class EmployeesProvider extends ChangeNotifier {
   StreamSubscription? _subEquipes;
 
   EmployeesProvider() {
+    debugPrint('EmployeesProvider: Firebase available = $_firebaseAvailable, apps = ${Firebase.apps.length}');
     if (!_firebaseAvailable) {
       _employes = [];
       _equipes = [];
       _loading = false;
+      _error = 'Firebase non disponible';
       notifyListeners();
       return;
     }
@@ -47,12 +49,14 @@ class EmployeesProvider extends ChangeNotifier {
     final repo = _repo!;
     _subEmployes = repo.watchEmployes().listen(
       (list) {
+        debugPrint('EmployeesProvider: Received ${list.length} employes from Firestore');
         _employes = list;
         _loading = false;
         _error = null;
         notifyListeners();
       },
       onError: (e) {
+        debugPrint('EmployeesProvider: Error watching employes: $e');
         _error = e.toString();
         _loading = false;
         notifyListeners();
@@ -61,10 +65,12 @@ class EmployeesProvider extends ChangeNotifier {
 
     _subEquipes = repo.watchEquipes().listen(
       (list) {
+        debugPrint('EmployeesProvider: Received ${list.length} equipes from Firestore');
         _equipes = list;
         notifyListeners();
       },
       onError: (e) {
+        debugPrint('EmployeesProvider: Error watching equipes: $e');
         _error = _error ?? e.toString();
         notifyListeners();
       },

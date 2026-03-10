@@ -53,6 +53,7 @@ class Employe {
   final String dateCnss;
   final EmployeStatut statut;
   final List<Document> documents;
+  final String photoUrl;
 
   Employe({
     required this.id,
@@ -75,6 +76,7 @@ class Employe {
     required this.dateCnss,
     required this.statut,
     this.documents = const [],
+    this.photoUrl = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -97,6 +99,7 @@ class Employe {
       'cnss': cnss,
       'dateCnss': dateCnss,
       'statut': statut.name,
+      'photoUrl': photoUrl,
       'documents': documents.map((d) => {
             'id': d.id,
             'nom': d.nom,
@@ -166,6 +169,55 @@ class Employe {
       dateCnss: map['dateCnss'] as String? ?? '',
       statut: statut,
       documents: documentList,
+      photoUrl: map['photoUrl'] as String? ?? '',
+    );
+  }
+
+  Employe copyWith({
+    String? id,
+    String? nom,
+    String? cin,
+    String? telephone,
+    String? telephone2,
+    String? dateNaissance,
+    String? adresse,
+    String? email,
+    String? poste,
+    String? magasin,
+    String? departement,
+    double? salaireBase,
+    String? typeContrat,
+    String? dateDebut,
+    String? finContrat,
+    String? chefDirectId,
+    String? cnss,
+    String? dateCnss,
+    EmployeStatut? statut,
+    List<Document>? documents,
+    String? photoUrl,
+  }) {
+    return Employe(
+      id: id ?? this.id,
+      nom: nom ?? this.nom,
+      cin: cin ?? this.cin,
+      telephone: telephone ?? this.telephone,
+      telephone2: telephone2 ?? this.telephone2,
+      dateNaissance: dateNaissance ?? this.dateNaissance,
+      adresse: adresse ?? this.adresse,
+      email: email ?? this.email,
+      poste: poste ?? this.poste,
+      magasin: magasin ?? this.magasin,
+      departement: departement ?? this.departement,
+      salaireBase: salaireBase ?? this.salaireBase,
+      typeContrat: typeContrat ?? this.typeContrat,
+      dateDebut: dateDebut ?? this.dateDebut,
+      finContrat: finContrat ?? this.finContrat,
+      chefDirectId: chefDirectId ?? this.chefDirectId,
+      cnss: cnss ?? this.cnss,
+      dateCnss: dateCnss ?? this.dateCnss,
+      statut: statut ?? this.statut,
+      documents: documents ?? this.documents,
+      photoUrl: photoUrl ?? this.photoUrl,
     );
   }
 }

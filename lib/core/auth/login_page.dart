@@ -14,13 +14,27 @@ class _LoginPageState extends State<LoginPage> {
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscure = true;
+  bool _loading = false;
   String? _error;
 
-  void _login() {
+  Future<void> _login() async {
+    if (_loading) return;
+    
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     final auth = context.read<AuthProvider>();
-    final ok = auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
-    if (!ok) {
-      setState(() => _error = 'Nom d\'utilisateur ou mot de passe incorrect');
+    final ok = await auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
+    
+    if (!ok && mounted) {
+      setState(() {
+        _loading = false;
+        _error = 'Nom d\'utilisateur ou mot de passe incorrect';
+      });
+    } else if (mounted) {
+      setState(() => _loading = false);
     }
   }
 
@@ -122,12 +136,13 @@ class _LoginPageState extends State<LoginPage> {
         Text('Connectez-vous à votre compte', style: TextStyle(color: Colors.grey[600], fontSize: isMobile ? 13 : 14)),
         SizedBox(height: spacing),
 
-        Text('Nom d\'utilisateur', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+        Text('Identifiant ou email', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
         const SizedBox(height: 8),
         TextField(
           controller: _usernameCtrl,
+          keyboardType: TextInputType.emailAddress,
           decoration: InputDecoration(
-            hintText: 'admin',
+            hintText: 'admin / email (chef)',
             prefixIcon: const Icon(Icons.person_outline),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
             filled: true,
@@ -182,7 +197,7 @@ class _LoginPageState extends State<LoginPage> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: _login,
+            onPressed: _loading ? null : _login,
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1565C0),
               foregroundColor: Colors.white,
@@ -190,7 +205,16 @@ class _LoginPageState extends State<LoginPage> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               elevation: 0,
             ),
-            child: Text('Se connecter', style: TextStyle(fontSize: isMobile ? 15 : 16, fontWeight: FontWeight.w600)),
+            child: _loading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : Text('Se connecter', style: TextStyle(fontSize: isMobile ? 15 : 16, fontWeight: FontWeight.w600)),
           ),
         ),
 
@@ -205,10 +229,11 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Comptes de test:', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
+              Text('Comptes:', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 4),
               Text('admin / 1234  →  Directeur', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
-              Text('fatima / 1234  →  Chef Équipe', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
+              Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
+              Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
             ],
           ),
         ),
