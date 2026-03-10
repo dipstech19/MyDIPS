@@ -4,6 +4,11 @@ class Equipe {
   final String magasin;
   final String chefId;
   final List<String> membreIds;
+  /// ساعات البوانتاج لهذا الفريق (اختياري). إن كانت null يُستخدم الإعداد العام.
+  final int? pointageStartHour;
+  final int? pointageStartMinute;
+  final int? pointageEndHour;
+  final int? pointageEndMinute;
 
   Equipe({
     required this.id,
@@ -11,6 +16,10 @@ class Equipe {
     required this.magasin,
     required this.chefId,
     this.membreIds = const [],
+    this.pointageStartHour,
+    this.pointageStartMinute,
+    this.pointageEndHour,
+    this.pointageEndMinute,
   });
 
   Equipe copyWith({
@@ -18,6 +27,10 @@ class Equipe {
     String? magasin,
     String? chefId,
     List<String>? membreIds,
+    int? pointageStartHour,
+    int? pointageStartMinute,
+    int? pointageEndHour,
+    int? pointageEndMinute,
   }) {
     return Equipe(
       id: id,
@@ -25,20 +38,33 @@ class Equipe {
       magasin: magasin ?? this.magasin,
       chefId: chefId ?? this.chefId,
       membreIds: membreIds ?? this.membreIds,
+      pointageStartHour: pointageStartHour ?? this.pointageStartHour,
+      pointageStartMinute: pointageStartMinute ?? this.pointageStartMinute,
+      pointageEndHour: pointageEndHour ?? this.pointageEndHour,
+      pointageEndMinute: pointageEndMinute ?? this.pointageEndMinute,
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final m = <String, dynamic>{
       'nom': nom,
       'magasin': magasin,
       'chefId': chefId,
       'membreIds': membreIds,
     };
+    if (pointageStartHour != null) m['pointageStartHour'] = pointageStartHour;
+    if (pointageStartMinute != null) m['pointageStartMinute'] = pointageStartMinute;
+    if (pointageEndHour != null) m['pointageEndHour'] = pointageEndHour;
+    if (pointageEndMinute != null) m['pointageEndMinute'] = pointageEndMinute;
+    return m;
   }
 
   static Equipe fromMap(Map<String, dynamic> map) {
     final membreIds = map['membreIds'];
+    final startH = map['pointageStartHour'];
+    final startM = map['pointageStartMinute'];
+    final endH = map['pointageEndHour'];
+    final endM = map['pointageEndMinute'];
     return Equipe(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
@@ -47,6 +73,10 @@ class Equipe {
       membreIds: membreIds is List<dynamic>
           ? membreIds.map((e) => e.toString()).toList()
           : const [],
+      pointageStartHour: startH is int ? startH : (startH != null ? int.tryParse(startH.toString()) : null),
+      pointageStartMinute: startM is int ? startM : (startM != null ? int.tryParse(startM.toString()) : null),
+      pointageEndHour: endH is int ? endH : (endH != null ? int.tryParse(endH.toString()) : null),
+      pointageEndMinute: endM is int ? endM : (endM != null ? int.tryParse(endM.toString()) : null),
     );
   }
 }

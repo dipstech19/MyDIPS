@@ -310,9 +310,10 @@ class DriverStatusChips extends StatelessWidget {
         onTap: () => onSelect(AttendanceState.unmarked),
       );
     }
-    // غير محدد: عرض الثلاثة خيارات
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    // غير محدد: عرض الثلاثة خيارات (Wrap لتجنب overflow على الشاشات الضيقة)
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         _StatusChip(
           label: presentLabel,
@@ -321,7 +322,6 @@ class DriverStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.present),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: absentLabel,
           icon: Icons.close,
@@ -329,7 +329,6 @@ class DriverStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.absent),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: notInVehicleLabel,
           icon: Icons.directions_car,
@@ -377,8 +376,9 @@ class ChefStatusChips extends StatelessWidget {
         onTap: () => onSelect(AttendanceState.unmarked),
       );
     }
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         _StatusChip(
           label: presentLabel,
@@ -387,7 +387,6 @@ class ChefStatusChips extends StatelessWidget {
           selected: false,
           onTap: () => onSelect(AttendanceState.present),
         ),
-        const SizedBox(width: 6),
         _StatusChip(
           label: absentLabel,
           icon: Icons.close,
@@ -424,18 +423,21 @@ class _StatusChip extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: selected ? Colors.white : color),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                  color: selected ? Colors.white : color,
+              Icon(icon, size: 14, color: selected ? Colors.white : color),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                    color: selected ? Colors.white : color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

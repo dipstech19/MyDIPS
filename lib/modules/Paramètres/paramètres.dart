@@ -1,6 +1,8 @@
 import 'dart:io' as dart_io;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/utils/responsive.dart';
+import '../../shared/widgets/smart_avatar.dart';
 import '../employees/data/postes_repository.dart';
 import '../employees/postes_provider.dart';
 import '../employees/employees_provider.dart';
@@ -8,6 +10,10 @@ import '../employees/models/employe_model.dart' as emp;
 import '../employees/models/equipe_model.dart';
 import 'data/admins_repository.dart';
 import 'admins_provider.dart';
+import 'chauffeurs_provider.dart';
+import 'chef_comptes_provider.dart';
+import 'models/chauffeur_model.dart';
+import 'models/chef_compte_model.dart';
 
 // Modèles locaux pour l'UI Chefs (affichage dérivé de Equipe + Employe)
 class _ChefEquipeView {
@@ -26,6 +32,36 @@ class _ParamChefEquipe {
   final String id; String nom; String prenom; String email; String telephone; String departement;
   int nbEmployes; bool actif; DateTime dateCreation; List<_ParamEmploye> employes;
   _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
+}
+
+/// فقط الموظفون الذين منصبهم Chef/Shef — لاستخدامهم في قوائم "Chef (employé)"
+bool _isChefPoste(String poste) {
+  final p = poste.trim().toLowerCase();
+  return p.contains('chef') || p == 'shef';
+}
+
+/// قائمة Chef (employé) — تظهر فقط من عندهم منصب Chef/Shef
+class _ChefEquipeDropdown extends StatelessWidget {
+  final EmployeesProvider prov;
+  final String? chefId;
+  final void Function(String?) onChanged;
+
+  const _ChefEquipeDropdown({required this.prov, required this.chefId, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = prov.employes.where((e) => _isChefPoste(e.poste)).toList();
+    final value = (chefId != null && chefId!.isNotEmpty && candidates.any((e) => e.id == chefId)) ? chefId! : '';
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: const InputDecoration(labelText: 'Chef (employé)'),
+      items: [
+        const DropdownMenuItem(value: '', child: Text('— Aucun —')),
+        ...candidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
+      ],
+      onChanged: (v) => onChanged(v?.isEmpty == true ? null : v),
+    );
+  }
 }
 
 Widget _offlineBanner() {
@@ -68,6 +104,8 @@ class _ParametresPageState extends State<ParametresPage> {
   final List<_SettingsSection> _sections = [
     _SettingsSection(icon: Icons.admin_panel_settings, label: 'Administrateurs'),
     _SettingsSection(icon: Icons.groups, label: 'Chefs d\'équipe'),
+    _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
+    _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
@@ -78,6 +116,8 @@ class _ParametresPageState extends State<ParametresPage> {
 
   @override
   Widget build(BuildContext context) {
+    final padding = pagePadding(context);
+    final mobile = isMobile(context);
     return Column(
       children: [
         // ══════════════════════════════════════════
@@ -103,54 +143,54 @@ class _ParametresPageState extends State<ParametresPage> {
             children: [
               // ── Title row ──
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
+                padding: EdgeInsets.fromLTRB(padding, mobile ? 10 : 14, padding, 0),
                 child: Row(
                   children: [
-                    // Icon with blue bg
                     Container(
-                      padding: const EdgeInsets.all(7),
+                      padding: EdgeInsets.all(mobile ? 5 : 7),
                       decoration: BoxDecoration(
                         color: const Color(0xFF328EEE).withOpacity(0.10),
                         borderRadius: BorderRadius.circular(9),
                       ),
-                      child: const Icon(Icons.settings_rounded,
-                          color: Color(0xFF328EEE), size: 18),
+                      child: Icon(Icons.settings_rounded, color: const Color(0xFF328EEE), size: mobile ? 16 : 18),
                     ),
-                    const SizedBox(width: 10),
-                    // Title
-                    const Text(
-                      'Paramètres',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1A2340),
-                        letterSpacing: 0.1,
+                    SizedBox(width: mobile ? 8 : 10),
+                    Flexible(
+                      child: Text(
+                        'Paramètres',
+                        style: TextStyle(
+                          fontSize: mobile ? 15 : 17,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF1A2340),
+                          letterSpacing: 0.1,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    // Thin vertical separator
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 14),
-                      width: 1,
-                      height: 18,
-                      color: const Color(0xFFDDE3EE),
-                    ),
-                    // Subtitle
-                    Text(
-                      'Administration & Configuration',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[450] ?? Colors.grey,
-                        fontWeight: FontWeight.w400,
+                    if (!mobile) ...[
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 14),
+                        width: 1,
+                        height: 18,
+                        color: const Color(0xFFDDE3EE),
                       ),
-                    ),
+                      Text(
+                        'Administration & Configuration',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[450] ?? Colors.grey,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     _SuperAdminBadge(),
                   ],
                 ),
               ),
-              // ── Tab row ──
+              // ── Tab row (scrollable on mobile) ──
               Padding(
-                padding: const EdgeInsets.only(left: 8, right: 8, top: 4),
+                padding: EdgeInsets.only(left: mobile ? 4 : 8, right: mobile ? 4 : 8, top: 4),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -258,12 +298,14 @@ class _ParametresPageState extends State<ParametresPage> {
     switch (index) {
       case 0:  return const _AdminsSection();
       case 1:  return const _ChefsEquipeSection();
-      case 2:  return const _PostesSection();
-      case 3:  return const _GeneralSection();
-      case 4:  return const _NotificationsSection();
-      case 5:  return const _SecuriteSection();
-      case 6:  return const _DatabaseSection();
-      case 7:  return const _AboutSection();
+      case 2:  return const _ChefComptesSection();
+      case 3:  return const _ChauffeursSection();
+      case 4:  return const _PostesSection();
+      case 5:  return const _GeneralSection();
+      case 6:  return const _NotificationsSection();
+      case 7:  return const _SecuriteSection();
+      case 8:  return const _DatabaseSection();
+      case 9:  return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -658,98 +700,175 @@ class _AdminsSectionState extends State<_AdminsSection> {
   Widget build(BuildContext context) {
     final prov = context.watch<AdminsProvider>();
     final filtered = _filtered(prov);
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
     return Column(
       children: [
         if (!prov.firebaseAvailable) _offlineBanner(),
-        // ── Top bar ──
+        // ── Top bar (responsive: stack on mobile to avoid overflow) ──
         Container(
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
-          child: Row(
-            children: [
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Administrateurs',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
-                Text('${prov.admins.length} compte(s) enregistré(s)',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              ]),
-              const Spacer(),
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  onChanged: (v) => setState(() => _searchQuery = v),
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Rechercher...',
-                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
-                    prefixIcon: const Icon(Icons.search, size: 16),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 9),
-                    filled: true, fillColor: _kBg,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
-                  ),
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Administrateurs',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('${prov.admins.length} compte(s) enregistré(s)',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    TextField(
+                      onChanged: (v) => setState(() => _searchQuery = v),
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Rechercher...',
+                        hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                        prefixIcon: const Icon(Icons.search, size: 16),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                        filled: true, fillColor: _kBg,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: _kBorder),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                          ),
+                          icon: const Icon(Icons.file_download_outlined, size: 15, color: _kDark),
+                          label: const Text('Exporter CSV', style: TextStyle(fontSize: 12, color: _kDark)),
+                          onPressed: () => _exportAdminsCsv(context),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                            ),
+                            icon: const Icon(Icons.add, size: 15),
+                            label: const Text('Ajouter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                            onPressed: () => _openAdminDrawer(context, prov),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Administrateurs',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('${prov.admins.length} compte(s) enregistré(s)',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    SizedBox(
+                      width: 200,
+                      child: TextField(
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                          prefixIcon: const Icon(Icons.search, size: 16),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                          filled: true, fillColor: _kBg,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _kBorder),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                      ),
+                      icon: const Icon(Icons.file_download_outlined, size: 15, color: _kDark),
+                      label: const Text('Exporter CSV', style: TextStyle(fontSize: 12, color: _kDark)),
+                      onPressed: () => _exportAdminsCsv(context),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                      ),
+                      icon: const Icon(Icons.add, size: 15),
+                      label: const Text('Ajouter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      onPressed: () => _openAdminDrawer(context, prov),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: _kBorder),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                ),
-                icon: const Icon(Icons.file_download_outlined, size: 15, color: _kDark),
-                label: const Text('Exporter CSV', style: TextStyle(fontSize: 12, color: _kDark)),
-                onPressed: () => _exportAdminsCsv(context),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                ),
-                icon: const Icon(Icons.add, size: 15),
-                label: const Text('Ajouter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                onPressed: () => _openAdminDrawer(context, prov),
-              ),
-            ],
-          ),
         ),
         const Divider(height: 1, color: _kBorder),
-        // ── Table header ──
-        Container(
-          color: const Color(0xFFF0F4FA),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
-          child: const Row(children: [
-            Expanded(flex: 3, child: _TH('NOM COMPLET')),
-            Expanded(flex: 2, child: _TH('TÉLÉPHONE')),
-            Expanded(flex: 2, child: _TH('RÔLE')),
-            Expanded(flex: 2, child: _TH('STATUT')),
-            SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
-          ]),
-        ),
-        const Divider(height: 1, color: _kBorder),
-        // ── Rows ──
+        // ── Table (desktop) / Card list (mobile, responsive) ──
         Expanded(
           child: filtered.isEmpty
               ? const _EmptyState()
-              : ListView.builder(
-            itemCount: filtered.length,
-            itemBuilder: (context, i) {
-              final admin = filtered[i];
-              return _AdminTableRow(
-                admin: admin,
-                isEven: i.isEven,
-                onEdit: () => _openAdminDrawer(context, prov, admin),
-                onDelete: () => _confirmDelete(context, prov, admin),
-                onToggle: () async {
-                  admin.actif = !admin.actif;
-                  await prov.updateAdmin(admin);
-                },
-              );
-            },
-          ),
+              : mobile
+                  ? ListView.builder(
+                      padding: EdgeInsets.all(padding),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, i) {
+                        final admin = filtered[i];
+                        return _AdminCard(
+                          admin: admin,
+                          onEdit: () => _openAdminDrawer(context, prov, admin),
+                          onDelete: () => _confirmDelete(context, prov, admin),
+                          onToggle: () async {
+                            admin.actif = !admin.actif;
+                            await prov.updateAdmin(admin);
+                          },
+                        );
+                      },
+                    )
+                  : Column(
+                  children: [
+                    Container(
+                      color: const Color(0xFFF0F4FA),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
+                      child: const Row(children: [
+                        Expanded(flex: 3, child: _TH('NOM COMPLET')),
+                        Expanded(flex: 2, child: _TH('TÉLÉPHONE')),
+                        Expanded(flex: 2, child: _TH('RÔLE')),
+                        Expanded(flex: 2, child: _TH('STATUT')),
+                        SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
+                      ]),
+                    ),
+                    const Divider(height: 1, color: _kBorder),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filtered.length,
+                        itemBuilder: (context, i) {
+                          final admin = filtered[i];
+                          return _AdminTableRow(
+                            admin: admin,
+                            isEven: i.isEven,
+                            onEdit: () => _openAdminDrawer(context, prov, admin),
+                            onDelete: () => _confirmDelete(context, prov, admin),
+                            onToggle: () async {
+                              admin.actif = !admin.actif;
+                              await prov.updateAdmin(admin);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ],
     );
@@ -767,6 +886,109 @@ class _AdminsSectionState extends State<_AdminsSection> {
       );
     }
     await _saveAndOpenFile('administrateurs_export.csv', csv.toString(), context);
+  }
+}
+
+// ── Mobile card for one admin (responsive, no overflow) ──
+class _AdminCard extends StatelessWidget {
+  final AdminUser admin;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onToggle;
+
+  const _AdminCard({
+    required this.admin,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final a = admin;
+    final padding = pagePadding(context);
+    return Card(
+      margin: EdgeInsets.only(bottom: padding),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: _kBorder)),
+      child: Padding(
+        padding: EdgeInsets.all(padding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${a.prenom} ${a.nom}',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: onToggle,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: a.actif ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: a.actif ? Colors.green : Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          a.actif ? 'Actif' : 'Inactif',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: a.actif ? Colors.green.shade700 : Colors.red.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(a.telephone, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: _kAccent.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _kAccent.withOpacity(0.2)),
+              ),
+              child: Text(a.role, style: const TextStyle(fontSize: 11, color: _kAccent, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Modifier'),
+                  onPressed: onEdit,
+                  style: TextButton.styleFrom(foregroundColor: _kAccent),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Supprimer'),
+                  onPressed: onDelete,
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -1270,72 +1492,122 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
   Widget build(BuildContext context) {
     final prov = context.watch<EmployeesProvider>();
     final views = _views(prov);
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
     return Column(
       children: [
         if (!prov.firebaseAvailable) _offlineBanner(),
         Container(
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
-          child: Row(
-            children: [
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Chefs d\'équipe (données réelles)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
-                Text('${prov.equipes.length} équipe(s) — Firestore',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              ]),
-              const Spacer(),
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  onChanged: (v) => setState(() => _searchQuery = v),
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Rechercher...',
-                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
-                    prefixIcon: const Icon(Icons.search, size: 16),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 9),
-                    filled: true, fillColor: _kBg,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
-                  ),
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Chefs d\'équipe (données réelles)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('${prov.equipes.length} équipe(s) — Firestore',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    TextField(
+                      onChanged: (v) => setState(() => _searchQuery = v),
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Rechercher...',
+                        hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                        prefixIcon: const Icon(Icons.search, size: 16),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                        filled: true, fillColor: _kBg,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kDark, foregroundColor: Colors.white, elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                        ),
+                        icon: const Icon(Icons.group_add, size: 15),
+                        label: const Text('Ajouter équipe', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        onPressed: () => _showAddEquipeDialog(context, prov),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Chefs d\'équipe (données réelles)',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('${prov.equipes.length} équipe(s) — Firestore',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    SizedBox(
+                      width: 200,
+                      child: TextField(
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                          prefixIcon: const Icon(Icons.search, size: 16),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                          filled: true, fillColor: _kBg,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _kBorder)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kDark, foregroundColor: Colors.white, elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                      ),
+                      icon: const Icon(Icons.group_add, size: 15),
+                      label: const Text('Ajouter équipe', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      onPressed: () => _showAddEquipeDialog(context, prov),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kDark, foregroundColor: Colors.white, elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                ),
-                icon: const Icon(Icons.group_add, size: 15),
-                label: const Text('Ajouter équipe', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                onPressed: () => _showAddEquipeDialog(context, prov),
-              ),
-            ],
+        ),
+        const Divider(height: 1, color: _kBorder),
+        if (!mobile)
+          Container(
+            color: const Color(0xFFF0F4FA),
+            padding: EdgeInsets.symmetric(horizontal: padding, vertical: 9),
+            child: const Row(children: [
+              Expanded(flex: 3, child: _TH('ÉQUIPE')),
+              Expanded(flex: 2, child: _TH('CHEF')),
+              Expanded(flex: 2, child: _TH('MAGASIN')),
+              Expanded(flex: 1, child: _TH('MEMBRES')),
+              SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
+            ]),
           ),
-        ),
-        const Divider(height: 1, color: _kBorder),
-        Container(
-          color: const Color(0xFFF0F4FA),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
-          child: const Row(children: [
-            Expanded(flex: 3, child: _TH('ÉQUIPE')),
-            Expanded(flex: 2, child: _TH('CHEF')),
-            Expanded(flex: 2, child: _TH('MAGASIN')),
-            Expanded(flex: 1, child: _TH('MEMBRES')),
-            SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
-          ]),
-        ),
-        const Divider(height: 1, color: _kBorder),
+        if (!mobile) const Divider(height: 1, color: _kBorder),
         Expanded(
           child: views.isEmpty
               ? const _EmptyState()
               : ListView.builder(
+                  padding: mobile ? EdgeInsets.all(padding) : null,
                   itemCount: views.length,
                   itemBuilder: (context, i) {
                     final v = views[i];
+                    if (mobile) {
+                      return _ChefEquipeCard(
+                        view: v,
+                        onEdit: () => _showEditEquipeDialog(context, prov, v.equipe),
+                        onDelete: () => _confirmDeleteEquipe(context, prov, v.equipe),
+                      );
+                    }
                     return _ChefEquipeRow(
                       view: v,
                       isEven: i.isEven,
@@ -1366,12 +1638,7 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                 const SizedBox(height: 12),
                 TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: chefId,
-                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
-                  items: prov.employes.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))).toList(),
-                  onChanged: (v) => setDialogState(() => chefId = v),
-                ),
+                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
               ],
             ),
           ),
@@ -1397,6 +1664,11 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
     final nomCtrl = TextEditingController(text: eq.nom);
     final magasinCtrl = TextEditingController(text: eq.magasin);
     String? chefId = eq.chefId.isEmpty ? null : eq.chefId;
+    bool useCustomHours = eq.pointageStartHour != null && eq.pointageEndHour != null;
+    int startHour = eq.pointageStartHour ?? 6;
+    int startMinute = eq.pointageStartMinute ?? 0;
+    int endHour = eq.pointageEndHour ?? 10;
+    int endMinute = eq.pointageEndMinute ?? 0;
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -1405,17 +1677,75 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextField(controller: nomCtrl, decoration: const InputDecoration(labelText: 'Nom équipe')),
                 const SizedBox(height: 12),
                 TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: chefId,
-                  decoration: const InputDecoration(labelText: 'Chef (employé)'),
-                  items: [const DropdownMenuItem(value: '', child: Text('— Aucun —')), ...prov.employes.map((e) => DropdownMenuItem<String>(value: e.id, child: Text('${e.nom} — ${e.poste}')))],
-                  onChanged: (v) => setDialogState(() => chefId = v ?? ''),
+                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
+                const SizedBox(height: 16),
+                const Divider(),
+                Text('Heures de pointage (chef d\'équipe)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey[800])),
+                const SizedBox(height: 6),
+                CheckboxListTile(
+                  value: useCustomHours,
+                  onChanged: (v) => setDialogState(() => useCustomHours = v ?? false),
+                  title: const Text('Heures personnalisées pour cette équipe', style: TextStyle(fontSize: 12)),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
                 ),
+                if (useCustomHours) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      SizedBox(width: 72, child: Text('Ouverture', style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: startHour.clamp(0, 23),
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
+                          onChanged: (v) => setDialogState(() => startHour = v ?? 6),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: [0, 15, 30, 45].contains(startMinute) ? startMinute : 0,
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
+                          onChanged: (v) => setDialogState(() => startMinute = v ?? 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      SizedBox(width: 72, child: Text('Fermeture', style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: endHour.clamp(0, 23),
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
+                          onChanged: (v) => setDialogState(() => endHour = v ?? 10),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: [0, 15, 30, 45].contains(endMinute) ? endMinute : 0,
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
+                          onChanged: (v) => setDialogState(() => endMinute = v ?? 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -1423,11 +1753,74 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
               onPressed: () async {
-                final updated = eq.copyWith(nom: nomCtrl.text.trim(), magasin: magasinCtrl.text.trim(), chefId: chefId ?? '');
+                final updated = Equipe(
+                  id: eq.id,
+                  nom: nomCtrl.text.trim(),
+                  magasin: magasinCtrl.text.trim(),
+                  chefId: chefId ?? '',
+                  membreIds: eq.membreIds,
+                  pointageStartHour: useCustomHours ? startHour : null,
+                  pointageStartMinute: useCustomHours ? startMinute : null,
+                  pointageEndHour: useCustomHours ? endHour : null,
+                  pointageEndMinute: useCustomHours ? endMinute : null,
+                );
                 await prov.updateEquipe(updated);
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Card pour équipe (mobile, responsive)
+class _ChefEquipeCard extends StatelessWidget {
+  final _ChefEquipeView view;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _ChefEquipeCard({required this.view, required this.onEdit, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    final v = view;
+    final eq = v.equipe;
+    final padding = pagePadding(context);
+    return Card(
+      margin: EdgeInsets.only(bottom: padding),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: _kBorder)),
+      child: Padding(
+        padding: EdgeInsets.all(padding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(eq.nom, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark)),
+            const SizedBox(height: 6),
+            Text('Chef: ${v.chefNom}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+            Text('Magasin: ${eq.magasin}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+            const SizedBox(height: 4),
+            Text('${eq.membreIds.length} membre(s)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Modifier'),
+                  onPressed: onEdit,
+                  style: TextButton.styleFrom(foregroundColor: _kAccent),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Supprimer'),
+                  onPressed: onDelete,
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                ),
+              ],
             ),
           ],
         ),
@@ -2117,6 +2510,755 @@ class _DrawerSection extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
+//  SECTION: COMPTES CHEFS (حسابات تسجيل دخول الشافات)
+// ─────────────────────────────────────────────
+
+class _ChefComptesSection extends StatefulWidget {
+  const _ChefComptesSection();
+  @override
+  State<_ChefComptesSection> createState() => _ChefComptesSectionState();
+}
+
+class _ChefComptesSectionState extends State<_ChefComptesSection> {
+  String _searchQuery = '';
+
+  void _confirmDelete(BuildContext ctx, ChefComptesProvider prov, ChefCompte c) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Supprimer le compte chef'),
+        content: Text('Supprimer le compte « ${c.nom} » (${c.email}) ?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              await prov.deleteChefCompte(c.id);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<ChefComptesProvider>();
+    final emps = context.watch<EmployeesProvider>();
+
+    if (prov.loading && prov.firebaseAvailable) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final filtered = prov.chefComptes.where((c) {
+      final q = _searchQuery.toLowerCase();
+      return c.nom.toLowerCase().contains(q) || c.email.toLowerCase().contains(q);
+    }).toList();
+
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
+    return Column(
+      children: [
+        if (!prov.firebaseAvailable) _offlineBanner(),
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('Email + mot de passe — le chef ne voit que son équipe',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 36,
+                      child: TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: const Color(0xFFF7F9FC),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showDialog(context, prov, emps, null),
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Ajouter'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF328EEE),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('Email + mot de passe — le chef ne voit que son équipe',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    SizedBox(
+                      width: 220,
+                      height: 36,
+                      child: TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: const Color(0xFFF7F9FC),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => _showDialog(context, prov, emps, null),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Ajouter'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF328EEE),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.login, size: 56, color: Colors.grey[300]),
+                      const SizedBox(height: 12),
+                      Text(
+                        prov.chefComptes.isEmpty ? 'Aucun compte chef' : 'Aucun résultat',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) {
+                    final c = filtered[i];
+                    final equipe = emps.equipes.where((e) => e.id == c.equipeId).toList();
+                    final equipeName = equipe.isNotEmpty ? equipe.first.nom : c.equipeId;
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(color: Colors.grey.shade200),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: const Color(0xFF328EEE).withOpacity(0.15),
+                          child: const Icon(Icons.person, color: Color(0xFF328EEE)),
+                        ),
+                        title: Text(c.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(c.email, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                            Text('Équipe: $equipeName', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: c.actif ? Colors.green.shade50 : Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                c.actif ? 'Actif' : 'Inactif',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.actif ? Colors.green.shade700 : Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              onPressed: () => _showDialog(context, prov, emps, c),
+                              tooltip: 'Modifier',
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete_outline, size: 18, color: Colors.red.shade400),
+                              onPressed: () => _confirmDelete(context, prov, c),
+                              tooltip: 'Supprimer',
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _showDialog(BuildContext context, ChefComptesProvider prov, EmployeesProvider emps, ChefCompte? existing) {
+    final isEdit = existing != null;
+    final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+    final emailCtrl = TextEditingController(text: existing?.email ?? '');
+    final passwordCtrl = TextEditingController(text: existing?.password ?? '');
+    String? selectedEquipeId = existing?.equipeId;
+    bool actif = existing?.actif ?? true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final equipes = emps.equipes;
+          if (equipes.isEmpty) {
+            return AlertDialog(
+              title: const Text('Aucune équipe'),
+              content: const Text('Créez d\'abord au moins une équipe (onglet Chefs d\'équipe).'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+              ],
+            );
+          }
+          return AlertDialog(
+            title: Text(isEdit ? 'Modifier le compte chef' : 'Ajouter un compte chef'),
+            content: SizedBox(
+              width: 400,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nomCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nom complet *',
+                        prefixIcon: Icon(Icons.badge_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Email (pour connexion) *',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: passwordCtrl,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: isEdit ? 'Nouveau mot de passe (laisser vide pour garder)' : 'Mot de passe *',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedEquipeId?.isNotEmpty == true ? selectedEquipeId : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Équipe (le chef ne verra que cette équipe) *',
+                        prefixIcon: Icon(Icons.groups_outlined),
+                      ),
+                      items: equipes.map((e) => DropdownMenuItem(value: e.id, child: Text(e.nom))).toList(),
+                      onChanged: (v) => setDialogState(() => selectedEquipeId = v),
+                    ),
+                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      title: const Text('Compte actif'),
+                      value: actif,
+                      onChanged: (v) => setDialogState(() => actif = v),
+                      secondary: Icon(actif ? Icons.check_circle : Icons.cancel, color: actif ? Colors.green : Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              ElevatedButton(
+                onPressed: () async {
+                  final nom = nomCtrl.text.trim();
+                  final email = emailCtrl.text.trim();
+                  final password = passwordCtrl.text.trim();
+
+                  if (nom.isEmpty || email.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Nom et email obligatoires')),
+                    );
+                    return;
+                  }
+                  if (!isEdit && password.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Mot de passe obligatoire pour un nouveau compte')),
+                    );
+                    return;
+                  }
+                  if (selectedEquipeId == null || selectedEquipeId!.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Sélectionnez une équipe')),
+                    );
+                    return;
+                  }
+
+                  final compte = ChefCompte(
+                    id: existing?.id ?? 'chef_${DateTime.now().millisecondsSinceEpoch}',
+                    nom: nom,
+                    email: email.toLowerCase().trim(),
+                    password: password.isEmpty ? (existing!.password) : password,
+                    equipeId: selectedEquipeId!,
+                    actif: actif,
+                    dateCreation: existing?.dateCreation ?? DateTime.now(),
+                  );
+
+                  if (isEdit) {
+                    await prov.updateChefCompte(compte);
+                  } else {
+                    await prov.addChefCompte(compte);
+                  }
+
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF328EEE),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(isEdit ? 'Enregistrer' : 'Ajouter'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  SECTION: CHAUFFEURS (السائقون)
+// ─────────────────────────────────────────────
+
+class _ChauffeursSection extends StatefulWidget {
+  const _ChauffeursSection();
+  @override
+  State<_ChauffeursSection> createState() => _ChauffeursSectionState();
+}
+
+class _ChauffeursSectionState extends State<_ChauffeursSection> {
+  String _searchQuery = '';
+
+  /// تحقق إذا كان المنصب سائق
+  bool _isChauffeurPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chauffeur') || p.contains('سائق') || p.contains('driver');
+  }
+
+  void _confirmDeleteChauffeur(BuildContext ctx, ChauffeursProvider prov, Chauffeur c) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Supprimer le chauffeur'),
+        content: Text('Supprimer le chauffeur « ${c.nom} » ?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              await prov.deleteChauffeur(c.id);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<ChauffeursProvider>();
+    final emps = context.watch<EmployeesProvider>();
+    
+    if (prov.loading && prov.firebaseAvailable) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final filtered = prov.chauffeurs.where((c) {
+      final q = _searchQuery.toLowerCase();
+      return c.nom.toLowerCase().contains(q) || c.username.toLowerCase().contains(q);
+    }).toList();
+
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
+    return Column(
+      children: [
+        if (!prov.firebaseAvailable) _offlineBanner(),
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Chauffeurs (السائقون)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 36,
+                      child: TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: const Color(0xFFF7F9FC),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showChauffeurDialog(context, prov, emps, null),
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Ajouter'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF328EEE),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Chauffeurs (السائقون)',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    SizedBox(
+                      width: 220,
+                      height: 36,
+                      child: TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Rechercher...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          filled: true,
+                          fillColor: const Color(0xFFF7F9FC),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => _showChauffeurDialog(context, prov, emps, null),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Ajouter'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF328EEE),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.local_shipping_outlined, size: 56, color: Colors.grey[300]),
+                      const SizedBox(height: 12),
+                      Text(
+                        prov.chauffeurs.isEmpty ? 'Aucun chauffeur ajouté' : 'Aucun résultat',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) {
+                    final c = filtered[i];
+                    final empMatch = emps.employes.where((e) => e.id == c.employeId).toList();
+                    final linkedEmploye = empMatch.isNotEmpty ? empMatch.first : null;
+                    final equipeMatch = emps.equipes.where((e) => e.id == c.equipeId).toList();
+                    final linkedEquipe = equipeMatch.isNotEmpty ? equipeMatch.first : null;
+                    
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(color: Colors.grey.shade200),
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: SmartAvatar(
+                          imageUrl: c.photoUrl.isNotEmpty ? c.photoUrl : linkedEmploye?.photoUrl,
+                          fallbackText: c.nom,
+                          radius: 22,
+                        ),
+                        title: Text(c.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Identifiant: ${c.username}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                            if (linkedEquipe != null)
+                              Text('Équipe: ${linkedEquipe.nom}', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: c.actif ? Colors.green.shade50 : Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                c.actif ? 'Actif' : 'Inactif',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.actif ? Colors.green.shade700 : Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              onPressed: () => _showChauffeurDialog(context, prov, emps, c),
+                              tooltip: 'Modifier',
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete_outline, size: 18, color: Colors.red.shade400),
+                              onPressed: () => _confirmDeleteChauffeur(context, prov, c),
+                              tooltip: 'Supprimer',
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _showChauffeurDialog(BuildContext context, ChauffeursProvider prov, EmployeesProvider emps, Chauffeur? existing) {
+    final isEdit = existing != null;
+    final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+    final usernameCtrl = TextEditingController(text: existing?.username ?? '');
+    final passwordCtrl = TextEditingController(text: existing?.password ?? '');
+    String? selectedEquipeId = existing?.equipeId;
+    String? selectedEmployeId = existing?.employeId;
+    bool actif = existing?.actif ?? true;
+    String? photoUrl = existing?.photoUrl;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final equipes = emps.equipes;
+          // فقط الموظفون الذين منصبهم سائق، بدون تكرار حسب الـ id
+          final chauffeurEmployes = emps.employes
+              .where((e) => _isChauffeurPoste(e.poste))
+              .fold<Map<String, emp.Employe>>({}, (m, e) {
+                if (!m.containsKey(e.id)) m[e.id] = e;
+                return m;
+              })
+              .values
+              .toList();
+          final validEmployeIds = chauffeurEmployes.map((e) => e.id).toSet();
+          final dropdownValue = (selectedEmployeId != null &&
+                  (selectedEmployeId?.isNotEmpty ?? false) &&
+                  validEmployeIds.contains(selectedEmployeId))
+              ? selectedEmployeId
+              : null;
+
+          return AlertDialog(
+            title: Text(isEdit ? 'Modifier le chauffeur' : 'Ajouter un chauffeur'),
+            content: SizedBox(
+              width: 400,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: dropdownValue,
+                      decoration: const InputDecoration(
+                        labelText: 'Lier à un employé (Chauffeur)',
+                        prefixIcon: Icon(Icons.local_shipping_outlined),
+                      ),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('— Aucun —')),
+                        ...chauffeurEmployes.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
+                      ],
+                      onChanged: (v) {
+                        setDialogState(() {
+                          selectedEmployeId = v;
+                          if (v != null) {
+                            final emp = chauffeurEmployes.firstWhere((e) => e.id == v);
+                            if (nomCtrl.text.isEmpty) nomCtrl.text = emp.nom;
+                            if (emp.photoUrl.isNotEmpty) photoUrl = emp.photoUrl;
+                          }
+                        });
+                      },
+                    ),
+                    if (chauffeurEmployes.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'ℹ️ Aucun employé avec le poste "Chauffeur" trouvé. Ajoutez d\'abord un employé avec ce poste.',
+                          style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nomCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nom complet *',
+                        prefixIcon: Icon(Icons.badge_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: usernameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nom d\'utilisateur *',
+                        prefixIcon: Icon(Icons.account_circle_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: passwordCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Mot de passe *',
+                        prefixIcon: Icon(Icons.lock_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedEquipeId?.isNotEmpty == true ? selectedEquipeId : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Équipe',
+                        prefixIcon: Icon(Icons.groups_outlined),
+                      ),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('— Aucune —')),
+                        ...equipes.map((e) => DropdownMenuItem(value: e.id, child: Text(e.nom))),
+                      ],
+                      onChanged: (v) => setDialogState(() => selectedEquipeId = v),
+                    ),
+                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      title: const Text('Compte actif'),
+                      subtitle: Text(actif ? 'Le chauffeur peut se connecter' : 'Le chauffeur ne peut pas se connecter'),
+                      value: actif,
+                      onChanged: (v) => setDialogState(() => actif = v),
+                      secondary: Icon(actif ? Icons.check_circle : Icons.cancel, color: actif ? Colors.green : Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              ElevatedButton(
+                onPressed: () async {
+                  final nom = nomCtrl.text.trim();
+                  final username = usernameCtrl.text.trim();
+                  final password = passwordCtrl.text.trim();
+                  
+                  if (nom.isEmpty || username.isEmpty || password.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('Veuillez remplir tous les champs obligatoires')),
+                    );
+                    return;
+                  }
+
+                  final chauffeur = Chauffeur(
+                    id: existing?.id ?? 'ch_${DateTime.now().millisecondsSinceEpoch}',
+                    nom: nom,
+                    username: username,
+                    password: password,
+                    equipeId: selectedEquipeId,
+                    employeId: selectedEmployeId,
+                    photoUrl: photoUrl ?? '',
+                    actif: actif,
+                    dateCreation: existing?.dateCreation ?? DateTime.now(),
+                  );
+
+                  if (isEdit) {
+                    await prov.updateChauffeur(chauffeur);
+                  } else {
+                    await prov.addChauffeur(chauffeur);
+                  }
+
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF328EEE),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(isEdit ? 'Enregistrer' : 'Ajouter'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
 //  SECTION: POSTES (مناصب — من Firestore)
 // ─────────────────────────────────────────────
 
@@ -2153,26 +3295,48 @@ class _PostesSection extends StatelessWidget {
           ),
         Container(
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
-          child: Row(
-            children: [
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Postes (fonctions)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
-                Text('${list.length} poste(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              ]),
-              const Spacer(),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+          padding: EdgeInsets.fromLTRB(pagePadding(context), 14, pagePadding(context), 12),
+          child: isMobile(context)
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Postes (fonctions)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('${list.length} poste(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                        ),
+                        icon: const Icon(Icons.add, size: 15),
+                        label: const Text('Ajouter un poste', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        onPressed: () => _showPosteDialog(context, prov, null),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Postes (fonctions)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('${list.length} poste(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                      ),
+                      icon: const Icon(Icons.add, size: 15),
+                      label: const Text('Ajouter un poste', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      onPressed: () => _showPosteDialog(context, prov, null),
+                    ),
+                  ],
                 ),
-                icon: const Icon(Icons.add, size: 15),
-                label: const Text('Ajouter un poste', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                onPressed: () => _showPosteDialog(context, prov, null),
-              ),
-            ],
-          ),
         ),
         const Divider(height: 1, color: _kBorder),
         Expanded(

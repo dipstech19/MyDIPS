@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/utils/responsive.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
 //  DESIGN SYSTEM
@@ -319,6 +320,8 @@ class _TopNavBar extends StatelessWidget {
       {'label': 'Les Entrées',  'icon': Icons.arrow_circle_down_rounded, 'color': kGreen},
       {'label': 'Les Sorties',  'icon': Icons.arrow_circle_up_rounded,   'color': kOrange},
     ];
+    final mobile = isMobile(context);
+    final padding = mobile ? pagePadding(context) : kP;
     return Container(
       decoration: const BoxDecoration(
         color: kSurface,
@@ -328,55 +331,64 @@ class _TopNavBar extends StatelessWidget {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: kP),
+          padding: EdgeInsets.symmetric(horizontal: padding),
           child: SizedBox(
-            height: 64,
+            height: mobile ? 56 : 64,
             child: Row(children: [
-              Container(width: 38, height: 38, decoration: BoxDecoration(color: kBlueLt, borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.store_rounded, color: kBlue, size: 20)),
-              const SizedBox(width: 10),
-              const Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text('STOCK',   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: kBlue,  letterSpacing: .5)),
-                Text('MANAGER', style: TextStyle(fontSize: 9,  fontWeight: FontWeight.w700, color: kMuted, letterSpacing: 1)),
+              Container(width: mobile ? 34 : 38, height: mobile ? 34 : 38, decoration: BoxDecoration(color: kBlueLt, borderRadius: BorderRadius.circular(10)),
+                  child: Icon(Icons.store_rounded, color: kBlue, size: mobile ? 18 : 20)),
+              SizedBox(width: mobile ? 8 : 10),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text('STOCK',   style: TextStyle(fontSize: mobile ? 11 : 13, fontWeight: FontWeight.w900, color: kBlue,  letterSpacing: .5)),
+                Text('MANAGER', style: TextStyle(fontSize: 8,  fontWeight: FontWeight.w700, color: kMuted, letterSpacing: 1)),
               ]),
-              const SizedBox(width: 20),
-              Container(width: 1.5, height: 30, color: kBorder),
-              const SizedBox(width: 14),
-              ...List.generate(tabs.length, (i) {
-                final col = tabs[i]['color'] as Color;
-                final sel = tab == i;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => onTap(i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut,
-                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: sel ? col.withOpacity(0.1) : Colors.transparent,
-                        borderRadius: BorderRadius.circular(10),
-                        border: sel ? Border.all(color: col.withOpacity(0.25), width: 1.5) : null,
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(tabs[i]['icon'] as IconData, size: 17, color: sel ? col : kMuted),
-                        const SizedBox(width: 7),
-                        Text(tabs[i]['label'] as String, style: TextStyle(
-                          fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
-                          color: sel ? col : kMuted,
-                        )),
-                        if (sel) ...[
-                          const SizedBox(width: 7),
-                          Container(width: 6, height: 6, decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
-                        ],
-                      ]),
-                    ),
+              SizedBox(width: mobile ? 12 : 20),
+              Container(width: 1.5, height: 24, color: kBorder),
+              SizedBox(width: mobile ? 8 : 14),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...List.generate(tabs.length, (i) {
+                        final col = tabs[i]['color'] as Color;
+                        final sel = tab == i;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () => onTap(i),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeInOut,
+                              padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 15, vertical: mobile ? 7 : 9),
+                              decoration: BoxDecoration(
+                                color: sel ? col.withOpacity(0.1) : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                                border: sel ? Border.all(color: col.withOpacity(0.25), width: 1.5) : null,
+                              ),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(tabs[i]['icon'] as IconData, size: mobile ? 15 : 17, color: sel ? col : kMuted),
+                                SizedBox(width: mobile ? 5 : 7),
+                                Text(tabs[i]['label'] as String, style: TextStyle(
+                                  fontSize: mobile ? 12 : 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                                  color: sel ? col : kMuted,
+                                )),
+                                if (sel) ...[
+                                  SizedBox(width: mobile ? 5 : 7),
+                                  Container(width: 6, height: 6, decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
+                                ],
+                              ]),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
                   ),
-                );
-              }),
-              const Spacer(),
-              ...statChips,
+                ),
+              ),
+              Wrap(spacing: 6, runSpacing: 4, children: statChips),
             ]),
           ),
         ),
@@ -430,28 +442,46 @@ class _StockPageState extends State<_StockPage> {
 
   @override Widget build(BuildContext context) {
     final list = _list;
+    final mobile = isMobile(context);
+    final padding = mobile ? pagePadding(context) : kP;
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 16, kP, 0),
-        child: Row(children: [
-          Expanded(flex: 3, child: _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
-              labels: {'Tous':'Tous magasins',...{for(var m in kMagasins) m:'Magasin $m'}},
-              onChanged: (v) => setState(() => _mag = v))),
-          const SizedBox(width: 10),
-          Expanded(flex: 2, child: _DropBox(value: _sort, items: ['nom','ref','stock','mag'],
-              labels: {'nom':'Nom','ref':'Référence','stock':'Stock','mag':'Magasin'},
-              onChanged: (v) => setState(() => _sort = v))),
-          const SizedBox(width: 8),
-          _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
-        ]),
+        padding: EdgeInsets.fromLTRB(padding, 16, padding, 0),
+        child: mobile
+            ? Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  SizedBox(width: double.infinity, child: _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v))),
+                  SizedBox(width: 140, child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
+                  SizedBox(width: 140, child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
+                      labels: {'Tous':'Tous magasins',...{for(var m in kMagasins) m:'Magasin $m'}},
+                      onChanged: (v) => setState(() => _mag = v))),
+                  SizedBox(width: 140, child: _DropBox(value: _sort, items: ['nom','ref','stock','mag'],
+                      labels: {'nom':'Nom','ref':'Référence','stock':'Stock','mag':'Magasin'},
+                      onChanged: (v) => setState(() => _sort = v))),
+                  _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
+                ],
+              )
+            : Row(children: [
+                Expanded(flex: 3, child: _SearchBox(ctrl: _sc, value: _q, onChanged: (v) => setState(() => _q = v))),
+                const SizedBox(width: 10),
+                Expanded(flex: 2, child: _DropBox(value: _cat, items: ['Toutes', ...s.cats], onChanged: (v) => setState(() => _cat = v))),
+                const SizedBox(width: 10),
+                Expanded(flex: 2, child: _DropBox(value: _mag, items: ['Tous', ...kMagasins],
+                    labels: {'Tous':'Tous magasins',...{for(var m in kMagasins) m:'Magasin $m'}},
+                    onChanged: (v) => setState(() => _mag = v))),
+                const SizedBox(width: 10),
+                Expanded(flex: 2, child: _DropBox(value: _sort, items: ['nom','ref','stock','mag'],
+                    labels: {'nom':'Nom','ref':'Référence','stock':'Stock','mag':'Magasin'},
+                    onChanged: (v) => setState(() => _sort = v))),
+                const SizedBox(width: 8),
+                _AscBtn(asc: _asc, onTap: () => setState(() => _asc = !_asc)),
+              ]),
       ),
       const SizedBox(height: 14),
       Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(kP, 0, kP, kP),
+        padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
         child: _DataTable(
           count: '${list.length} / ${s.produits.length} produits',
           empty: list.isEmpty, emptyMsg: 'Aucun produit trouvé',
@@ -1340,11 +1370,15 @@ class _FullDialog extends StatelessWidget {
     this.showCancel = true,
   });
 
-  @override Widget build(BuildContext context) => Align(
+  @override Widget build(BuildContext context) {
+    final margin = dialogMargin(context);
+    final maxW = dialogMaxWidth(context);
+    final maxH = dialogMaxHeight(context);
+    return Align(
     alignment: Alignment.topCenter,
     child: Material(color: Colors.transparent, child: Container(
-      margin: const EdgeInsets.fromLTRB(60, 28, 60, 28),
-      constraints: const BoxConstraints(maxWidth: 900),
+      margin: EdgeInsets.fromLTRB(margin, margin, margin, margin),
+      constraints: BoxConstraints(maxWidth: maxW, maxHeight: maxH),
       decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(18),
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.22), blurRadius: 50, offset: const Offset(0, 12))]),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -1392,6 +1426,7 @@ class _FullDialog extends StatelessWidget {
       ]),
     )),
   );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -55,16 +55,16 @@ List<({String chefId, String chefName})> getChefsForReport(
   return list;
 }
 
-/// كل الفرق مع اسم الشاف وقائمة العمال (لشاشة قائمة اليوم)
-List<({String equipeId, String chefName, List<Employe> workers})>
+/// كل الفرق مع اسم الفريق واسم الشاف وقائمة العمال (لشاشة قائمة اليوم)
+List<({String equipeId, String equipeName, String chefName, List<Employe> workers})>
 getAllTeamsWithWorkers(List<Equipe> equipes, List<Employe> employes) {
-  final list = <({String equipeId, String chefName, List<Employe> workers})>[];
+  final list = <({String equipeId, String equipeName, String chefName, List<Employe> workers})>[];
   for (final eq in equipes) {
     final chefName = getChefName(employes, eq.chefId);
     final workers = employes
         .where((e) => eq.membreIds.contains(e.id) || e.id == eq.chefId)
         .toList();
-    list.add((equipeId: eq.id, chefName: chefName, workers: workers));
+    list.add((equipeId: eq.id, equipeName: eq.nom, chefName: chefName, workers: workers));
   }
   return list;
 }
