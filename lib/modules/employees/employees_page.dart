@@ -389,7 +389,7 @@ class _EmployeesPageState extends State<EmployeesPage>
               const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
               if (isDirecteur) const Expanded(flex: 1, child: Text('Salaire', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
               const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              SizedBox(width: mobile ? 100 : 120, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              SizedBox(width: mobile ? 140 : 160, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
             ]),
           ),
           const Divider(height: 1),
@@ -466,10 +466,11 @@ class _EmployeesPageState extends State<EmployeesPage>
                           ),
                         )),
                         SizedBox(
-                          width: mobile ? 100 : 120,
+                          width: mobile ? 140 : 160,
                           child: isDirecteur
                               ? Row(
                                   mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
                                     IconButton(
                                       icon: const Icon(Icons.visibility, size: 18),
@@ -498,6 +499,13 @@ class _EmployeesPageState extends State<EmployeesPage>
                                       icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
                                       tooltip: 'Changer statut',
                                       onPressed: () => _showChangeStatutDialog(context, e, prov),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
+                                      tooltip: 'Supprimer l\'employé',
+                                      onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                     ),
@@ -593,6 +601,47 @@ class _EmployeesPageState extends State<EmployeesPage>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showDeleteEmployeConfirm(BuildContext context, Employe employe, EmployeesProvider prov) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            Icon(Icons.delete_outline, color: Colors.red[700], size: 24),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Supprimer l\'employé')),
+          ],
+        ),
+        content: Text(
+          'Êtes-vous sûr de vouloir supprimer « ${employe.nom} » ? Cette action est irréversible.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await prov.deleteEmploye(employe.id);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Employé ${employe.nom} supprimé'),
+                    backgroundColor: Colors.green,
+                    behavior: SnackBarBehavior.fixed,
+                  ),
+                );
+              }
+            },
+            child: Text('Supprimer', style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }

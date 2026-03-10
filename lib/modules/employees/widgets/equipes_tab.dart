@@ -478,6 +478,7 @@ class _EquipesTabState extends State<EquipesTab> {
             width: 350,
             child: DropdownButtonFormField<String>(
               value: selectedId,
+              isExpanded: true,
               decoration: InputDecoration(
                 labelText: 'Choisir un employé',
                 border: OutlineInputBorder(
@@ -486,7 +487,10 @@ class _EquipesTabState extends State<EquipesTab> {
               items: disponibles
                   .map((e) => DropdownMenuItem(
                   value: e.id,
-                  child: Text('${e.nom} (${e.poste})')))
+                  child: Text(
+                    '${e.nom} (${e.poste})',
+                    overflow: TextOverflow.ellipsis,
+                  )))
                   .toList(),
               onChanged: (v) => setStateD(() => selectedId = v!),
             ),

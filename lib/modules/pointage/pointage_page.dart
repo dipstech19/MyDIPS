@@ -15,6 +15,7 @@ import 'pointage_data.dart';
 import 'pointage_provider.dart';
 import 'pointage_hours_config.dart';
 import 'models/pointage_model.dart';
+import 'services/pointage_export_service.dart';
 
 /// Badge صغير لحالة السائق أو الشاف
 class _DriverChefBadge extends StatelessWidget {
@@ -150,6 +151,11 @@ class _PointagePageState extends State<PointagePage> {
 
     final showDriverList = isDirecteur;
     final isChefOnly = isChefEquipe && !isDirecteur;
+    if (isChefOnly) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        pointageProvider.ensureNonWorkingLoadedForDate(DateTime.now());
+      });
+    }
 
     return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
@@ -466,6 +472,48 @@ class _PointagePageState extends State<PointagePage> {
             width: double.infinity,
             child: PrimaryButton(label: tr(context, 'send_report_btn'), onTap: sendReport),
           ),
+          SizedBox(height: 8),
+          Row(
+            children: [
+              if (team != null) ...[
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    if (team == null) return;
+                    final key = teamChefKey(team!.equipeName, team!.chefName);
+                    final presentNames = (presentByChef[key] ?? []).map((e) => e.nom).toList();
+                    final absentNames = (absentByChef[key] ?? []).map((e) => e.nom).toList();
+                    final filePath = await PointageExportService.shareDailyReportPdf(
+                      date: viewDate,
+                      title: trOf(context, 'report_presence_title'),
+                      presentNames: presentNames,
+                      absentNames: absentNames,
+                      signatureLabel: trOf(context, 'pointage_signature_chef'),
+                      personName: team!.chefName,
+                      equipeName: team!.equipeName,
+                    );
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
+                          backgroundColor: Colors.green,
+                          behavior: SnackBarBehavior.fixed,
+                          duration: const Duration(seconds: 5),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.picture_as_pdf, size: 18),
+                  label: FittedBox(fit: BoxFit.scaleDown, child: Text(tr(context, 'pointage_download_pdf_equipe'))),
+                ),
+                const SizedBox(width: 8),
+              ],
+              OutlinedButton.icon(
+                onPressed: () => _showExcelExportDialog(context, teams, pointageProvider),
+                icon: const Icon(Icons.table_chart, size: 18),
+                label: FittedBox(fit: BoxFit.scaleDown, child: Text(tr(context, 'pointage_download_excel'))),
+              ),
+            ],
+          ),
           SizedBox(height: mobile ? 12 : 16),
           Divider(thickness: 1, color: Colors.grey.shade300),
           const SizedBox(height: 10),
@@ -515,6 +563,59 @@ class _PointagePageState extends State<PointagePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _showExcelExportDialog(
+    BuildContext context,
+    List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams,
+    PointageProvider pointageProvider,
+  ) async {
+    final now = DateTime.now();
+    DateTime start = DateTime(now.year, now.month, 1);
+    DateTime end = now;
+    if (!context.mounted) return;
+    final picked = await showDialog<({DateTime start, DateTime end})>(
+      context: context,
+      builder: (ctx) {
+        return _ExcelDateRangeDialog(initialStart: start, initialEnd: end);
+      },
+    );
+    if (picked == null || !mounted) return;
+    start = picked.start;
+    end = picked.end;
+    if (start.isAfter(end)) {
+      final t = start;
+      start = end;
+      end = t;
+    }
+    final records = await pointageProvider.getPointageInDateRange(start, end);
+    final employees = <({String id, String nom, String equipeName})>[];
+    for (final t in teams) {
+      for (final w in t.workers) {
+        employees.add((id: w.id, nom: w.nom, equipeName: '${t.equipeName} — ${t.chefName}'));
+      }
+    }
+    final rows = PointageExportService.computeExcelRows(
+      startDate: start,
+      endDate: end,
+      employees: employees,
+      records: records,
+    );
+    final filePath = await PointageExportService.saveAndOpenExcel(
+      startDate: start,
+      endDate: end,
+      rows: rows,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${trOf(context, 'pointage_export_excel_saved')}: $filePath'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.fixed,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   Widget _buildAdminMobileChefSelector(
@@ -1041,6 +1142,36 @@ class _PointagePageState extends State<PointagePage> {
             ),
             const SizedBox(height: 10),
             _PointageHoursBanner(context: context, status: hoursStatus, config: config),
+            if (auth.equipeId != null && auth.equipeId!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Material(
+                color: Colors.orange.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.work_off, size: 20, color: Colors.orange[800]),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          tr(context, 'pointage_team_not_working'),
+                          style: TextStyle(fontSize: 13, color: Colors.orange[900]),
+                        ),
+                      ),
+                      Switch(
+                        value: pointageProvider.isEquipeNonWorking(auth.equipeId!),
+                        onChanged: (value) async {
+                          await pointageProvider.setEquipeNonWorkingForDate(DateTime.now(), auth.equipeId!, value);
+                          if (context.mounted) setState(() {});
+                        },
+                        activeColor: Colors.orange,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             Text(
               '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
@@ -1053,6 +1184,34 @@ class _PointagePageState extends State<PointagePage> {
                 itemCount: workers.length,
                 itemBuilder: (context, i) => buildWorkerCard(workers[i]),
               ),
+            ),
+            SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final presentNames = workers.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+                final absentNames = workers.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+                final filePath = await PointageExportService.shareDailyReportPdf(
+                  date: DateTime.now(),
+                  title: trOf(context, 'report_presence_title'),
+                  presentNames: presentNames,
+                  absentNames: absentNames,
+                  signatureLabel: trOf(context, 'pointage_signature_chef'),
+                  personName: auth.currentUser?.nom ?? '',
+                  equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
+                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
+                      backgroundColor: Colors.green,
+                      behavior: SnackBarBehavior.fixed,
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.download, size: 20),
+              label: Text(tr(context, 'pointage_download_report')),
             ),
             SizedBox(height: 12),
             SizedBox(
@@ -1091,6 +1250,36 @@ class _PointagePageState extends State<PointagePage> {
           ),
           const SizedBox(height: 12),
           _PointageHoursBanner(context: context, status: hoursStatus, config: config),
+          if (auth.equipeId != null && auth.equipeId!.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Material(
+              color: Colors.orange.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.work_off, size: 20, color: Colors.orange[800]),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        tr(context, 'pointage_team_not_working'),
+                        style: TextStyle(fontSize: 13, color: Colors.orange[900]),
+                      ),
+                    ),
+                    Switch(
+                      value: pointageProvider.isEquipeNonWorking(auth.equipeId!),
+                      onChanged: (value) async {
+                        await pointageProvider.setEquipeNonWorkingForDate(DateTime.now(), auth.equipeId!, value);
+                        if (context.mounted) setState(() {});
+                      },
+                      activeColor: Colors.orange,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           Text(
             '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
@@ -1109,6 +1298,33 @@ class _PointagePageState extends State<PointagePage> {
             )
           else
             ...workers.map((e) => buildWorkerCard(e)),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final presentNames = workers.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+              final absentNames = workers.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+              final filePath = await PointageExportService.shareDailyReportPdf(
+                date: DateTime.now(),
+                title: trOf(context, 'report_presence_title'),
+                presentNames: presentNames,
+                absentNames: absentNames,
+                signatureLabel: trOf(context, 'pointage_signature_chef'),
+                personName: auth.currentUser?.nom ?? '',
+                equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
+                    backgroundColor: Colors.green,
+                    behavior: SnackBarBehavior.fixed,
+                    duration: const Duration(seconds: 5),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.download, size: 20),
+            label: Text(tr(context, 'pointage_download_report')),
+          ),
           SizedBox(height: mobile ? 16 : 24),
           SizedBox(
             height: mobile ? 48 : 52,
@@ -1578,6 +1794,78 @@ class _PointageAnalysisSection extends StatelessWidget {
         style: TextStyle(fontSize: 13, fontWeight: bold ? FontWeight.bold : FontWeight.normal),
         overflow: TextOverflow.ellipsis,
       ),
+    );
+  }
+}
+
+class _ExcelDateRangeDialog extends StatefulWidget {
+  final DateTime initialStart;
+  final DateTime initialEnd;
+
+  const _ExcelDateRangeDialog({required this.initialStart, required this.initialEnd});
+
+  @override
+  State<_ExcelDateRangeDialog> createState() => _ExcelDateRangeDialogState();
+}
+
+class _ExcelDateRangeDialogState extends State<_ExcelDateRangeDialog> {
+  late DateTime _start;
+  late DateTime _end;
+
+  @override
+  void initState() {
+    super.initState();
+    _start = widget.initialStart;
+    _end = widget.initialEnd;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(tr(context, 'pointage_excel_date_range')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(tr(context, 'pointage_excel_from')),
+            subtitle: Text('${_start.day}/${_start.month}/${_start.year}'),
+            trailing: const Icon(Icons.calendar_today),
+            onTap: () async {
+              final p = await showDatePicker(
+                context: context,
+                initialDate: _start,
+                firstDate: DateTime(2020),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+              );
+              if (p != null) setState(() => _start = p);
+            },
+          ),
+          ListTile(
+            title: Text(tr(context, 'pointage_excel_to')),
+            subtitle: Text('${_end.day}/${_end.month}/${_end.year}'),
+            trailing: const Icon(Icons.calendar_today),
+            onTap: () async {
+              final p = await showDatePicker(
+                context: context,
+                initialDate: _end,
+                firstDate: _start,
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+              );
+              if (p != null) setState(() => _end = p);
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, (start: _start, end: _end)),
+          child: Text(MaterialLocalizations.of(context).okButtonLabel),
+        ),
+      ],
     );
   }
 }

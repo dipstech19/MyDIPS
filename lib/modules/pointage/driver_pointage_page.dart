@@ -12,6 +12,7 @@ import 'pointage_data.dart';
 import 'pointage_provider.dart';
 import 'pointage_hours_config.dart';
 import 'models/pointage_model.dart';
+import 'services/pointage_export_service.dart';
 
 /// Pointage chauffeur: حاضر | غائب | في المركبة (سيارة/دراجة). بعد الإرسال لا يمكن التعديل.
 class DriverPointagePage extends StatefulWidget {
@@ -23,6 +24,7 @@ class DriverPointagePage extends StatefulWidget {
 
 class _DriverPointagePageState extends State<DriverPointagePage> {
   String? _selectedEquipeId;
+  bool _nonWorkingLoadRequested = false;
 
   static AttendanceState _driverStatusToState(DriverPointageStatus s) {
     switch (s) {
@@ -57,7 +59,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(tr(context, 'report_sent')),
+          content: Text(trOf(context, 'report_sent')),
           backgroundColor: AppColors.green,
           behavior: SnackBarBehavior.fixed,
         ),
@@ -65,7 +67,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(tr(context, 'pointage_hours_cannot_mark')),
+          content: Text(trOf(context, 'pointage_hours_cannot_mark')),
           backgroundColor: Colors.orange,
           behavior: SnackBarBehavior.fixed,
         ),
@@ -81,7 +83,19 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final auth = context.watch<AuthProvider>();
     final isRtl = locale.isArabic;
     final mobile = isMobile(context);
-    final teams = getAllTeamsWithWorkers(emp.equipes, emp.employes);
+    if (!_nonWorkingLoadRequested) {
+      _nonWorkingLoadRequested = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        pointageProvider.ensureNonWorkingLoadedForDate(DateTime.now());
+      });
+    }
+    final allTeams = getAllTeamsWithWorkers(emp.equipes, emp.employes);
+    final teams = allTeams.where((t) => !pointageProvider.isEquipeNonWorking(t.equipeId)).toList();
+    if (_selectedEquipeId != null && !teams.any((t) => t.equipeId == _selectedEquipeId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedEquipeId = null);
+      });
+    }
     final selectedTeam = teams.where((t) => t.equipeId == _selectedEquipeId).toList();
     final team = selectedTeam.isEmpty ? null : selectedTeam.first;
     final workers = team?.workers ?? <Employe>[];
@@ -179,6 +193,47 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 ],
               ),
             ),
+            if (teams.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final equipes = <({String equipeName, List<String> presentNames, List<String> absentNames})>[];
+                  for (final t in teams) {
+                    final presentNames = t.workers.where((e) {
+                      final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
+                      return s == AttendanceState.present || s == AttendanceState.notInVehicle;
+                    }).map((e) => e.nom).toList();
+                    // كل من ليس حاضراً أو في المركبة يظهر في الغائبين (بما فيه unmarked) لضمان ظهور كل العمال
+                    final absentNames = t.workers.where((e) {
+                      final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
+                      return s != AttendanceState.present && s != AttendanceState.notInVehicle;
+                    }).map((e) => e.nom).toList();
+                    equipes.add((
+                      equipeName: t.equipeName,
+                      presentNames: presentNames,
+                      absentNames: absentNames,
+                    ));
+                  }
+                  final filePath = await PointageExportService.shareDailyReportPdfForDriver(
+                    date: DateTime.now(),
+                    title: trOf(context, 'report_presence_title'),
+                    signatureLabel: trOf(context, 'pointage_signature_driver'),
+                    personName: auth.currentUser?.nom ?? '',
+                    equipes: equipes,
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
+                        backgroundColor: Colors.green,
+                        behavior: SnackBarBehavior.fixed,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.download, size: 20),
+                label: Text(tr(context, 'pointage_download_report')),
+              ),
             SizedBox(height: mobile ? 10 : 16),
             SafeArea(
               child: SizedBox(
@@ -286,7 +341,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   );
                   if (!ok && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                     );
                   }
                 },
@@ -306,7 +361,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   );
                   if (!ok && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                     );
                   }
                 },
@@ -319,7 +374,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   );
                   if (!ok && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                     );
                   }
                 },
