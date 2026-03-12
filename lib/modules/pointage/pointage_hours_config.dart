@@ -1,4 +1,5 @@
 import '../employees/models/equipe_model.dart';
+import '../shifts/models/shift_models.dart';
 
 /// أوقات فتح وإقفال البوانتاج: لا يمكن التسجيل خارج هذا النافذة.
 /// بعد وقت الإقفال يُعتبر من لم يسجّل غائباً.
@@ -63,6 +64,18 @@ class PointageHoursConfig {
   String endTimeFormatted() => '${endHour.toString().padLeft(2, '0')}:${endMinute.toString().padLeft(2, '0')}';
   String arrivalWindowFormatted() => '${startTimeFormatted()} — ${((_arrivalEndMinutes ~/ 60) % 24).toString().padLeft(2, '0')}:${(_arrivalEndMinutes % 60).toString().padLeft(2, '0')}';
   String departureWindowFormatted() => '${endTimeFormatted()} — ${((_departureEndMinutes ~/ 60) % 24).toString().padLeft(2, '0')}:${(_departureEndMinutes % 60).toString().padLeft(2, '0')}';
+
+  /// وردية ليلية (22→06): التقرير يُربط بيوم الدخول وليس يوم الخروج.
+  bool get isNightShift => startHour == 22 && endHour == 6;
+}
+
+/// تاريخ البوانتاج لاستخدامه في الحفظ والتقارير: لوردية الليل قبل 07:00 = يوم الدخول (أمس).
+DateTime getPointageDateForConfig(PointageHoursConfig config, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  if (config.isNightShift && now.hour < 7) {
+    return today.subtract(const Duration(days: 1));
+  }
+  return today;
 }
 
 /// إرجاع إعداد الساعات لفريق: إن وُجدت ساعات مخصّصة للفريق تُستخدم، وإلا الإعداد العام.
@@ -81,6 +94,20 @@ PointageHoursConfig getConfigForEquipe(Equipe? equipe) {
     );
   }
   return PointageHoursConfig.instance;
+}
+
+/// إرجاع إعداد الساعات لفريق في تاريخ معيّن: إن وُجدت وردية (صباحية/مسائية/ليلية) تُستخدم أوقاتها الفعلية، وإلا إعداد الفريق أو العام.
+PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, ShiftType? shift) {
+  if (shift == ShiftType.morning) {
+    return PointageHoursConfig(startHour: 6, startMinute: 0, endHour: 14, endMinute: 0);
+  }
+  if (shift == ShiftType.evening) {
+    return PointageHoursConfig(startHour: 14, startMinute: 0, endHour: 22, endMinute: 0);
+  }
+  if (shift == ShiftType.night) {
+    return PointageHoursConfig(startHour: 22, startMinute: 0, endHour: 6, endMinute: 0);
+  }
+  return getConfigForEquipe(equipe);
 }
 
 enum PointageHoursStatus {

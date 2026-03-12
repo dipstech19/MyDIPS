@@ -11,6 +11,8 @@ import '../../modules/employees/employees_provider.dart';
 import 'pointage_data.dart';
 import 'pointage_provider.dart';
 import 'pointage_hours_config.dart';
+import '../shifts/shifts_provider.dart';
+import '../shifts/models/shift_models.dart';
 import 'models/pointage_model.dart';
 import 'services/pointage_export_service.dart';
 
@@ -90,7 +92,12 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       });
     }
     final allTeams = getAllTeamsWithWorkers(emp.equipes, emp.employes);
-    final teams = allTeams.where((t) => !pointageProvider.isEquipeNonWorking(t.equipeId)).toList();
+    var teams = allTeams.where((t) => !pointageProvider.isEquipeNonWorking(t.equipeId)).toList();
+    final shiftsProvider = context.watch<ShiftsProvider>();
+    final today = DateTime.now();
+    if (shiftsProvider.hasConfig) {
+      teams = teams.where((t) => shiftsProvider.getShiftForEquipe(t.equipeId, today) != ShiftType.rest).toList();
+    }
     if (_selectedEquipeId != null && !teams.any((t) => t.equipeId == _selectedEquipeId)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() => _selectedEquipeId = null);
@@ -99,17 +106,26 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final selectedTeam = teams.where((t) => t.equipeId == _selectedEquipeId).toList();
     final team = selectedTeam.isEmpty ? null : selectedTeam.first;
     final workers = team?.workers ?? <Employe>[];
+    // Ne pas afficher les travailleurs en formation (ils sont considérés présents dans les rapports)
+    final workersDisplay = workers.where((e) {
+      final r = pointageProvider.getRecordForEmployee(e.id);
+      return r?.adminFinalStatus != AttendanceStatus.training;
+    }).toList();
     final borderColor = Colors.grey.shade300;
     final padding = pagePadding(context);
     final selectedEquipeList = emp.equipes.where((e) => e.id == _selectedEquipeId).toList();
     final selectedEquipe = selectedEquipeList.isEmpty ? null : selectedEquipeList.first;
-    final config = getConfigForEquipe(selectedEquipe);
+    final shiftForEquipe = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, today) : null;
+    final config = getConfigForEquipeAndDate(selectedEquipe, today, shiftForEquipe);
     final now = DateTime.now();
     final hoursStatus = getPointageHoursStatus(now, config);
     final isWithinArrival = config.canMarkArrivalNow(now);
     final isWithinDeparture = config.canMarkDepartureNow(now);
+    final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
+    final yesterday = today.subtract(const Duration(days: 1));
 
-    return Directionality(
+    Widget buildBody(PointageRecord? Function(String)? getRecordOverride) {
+      return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
       child: Padding(
         padding: EdgeInsets.all(padding),
@@ -132,7 +148,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             if (mobile) const SizedBox(height: 12),
             Expanded(
               child: mobile
-                  ? _buildMobileWorkersSection(context, team, workers, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config)
+                  ? _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride)
                   : Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -188,7 +204,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   const SizedBox(width: 16),
                   Expanded(
                     flex: 2,
-                    child: _buildMobileWorkersSection(context, team, workers, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config),
+                    child: _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride),
                   ),
                 ],
               ),
@@ -198,12 +214,12 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 onPressed: () async {
                   final equipes = <({String equipeName, List<String> presentNames, List<String> absentNames})>[];
                   for (final t in teams) {
-                    final presentNames = t.workers.where((e) {
+                    final workersForExport = t.workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus != AttendanceStatus.training).toList();
+                    final presentNames = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
                       return s == AttendanceState.present || s == AttendanceState.notInVehicle;
                     }).map((e) => e.nom).toList();
-                    // كل من ليس حاضراً أو في المركبة يظهر في الغائبين (بما فيه unmarked) لضمان ظهور كل العمال
-                    final absentNames = t.workers.where((e) {
+                    final absentNames = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
                       return s != AttendanceState.present && s != AttendanceState.notInVehicle;
                     }).map((e) => e.nom).toList();
@@ -250,6 +266,20 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       ),
     );
   }
+  if (isNightShiftBefore7) {
+    return FutureBuilder<List<PointageRecord>>(
+      future: pointageProvider.getPointageRecordsForDate(yesterday),
+      builder: (context, snap) {
+        final list = snap.data ?? [];
+        PointageRecord? getRecord(String id) {
+          try { return list.firstWhere((r) => r.employeId == id); } catch (_) { return null; }
+        }
+        return buildBody(getRecord);
+      },
+    );
+  }
+  return buildBody(null);
+  }
 
   Widget _buildMobileChefSelector(BuildContext context, List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams) {
     if (teams.isEmpty) {
@@ -286,6 +316,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     bool isWithinArrival,
     bool isWithinDeparture,
     PointageHoursConfig pointageConfig,
+    PointageRecord? Function(String)? getRecordOverride,
   ) {
     if (team == null) {
       return Center(child: Text(tr(context, 'select_chef'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
@@ -293,6 +324,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     if (workers.isEmpty) {
       return Center(child: Text(tr(context, 'no_workers'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
     }
+    PointageRecord? getRecord(String id) => getRecordOverride?.call(id) ?? pointageProvider.getRecordForEmployee(id);
     final titleLabel = '${tr(context, 'workers_of')} ${team.equipeName} (${team.chefName})';
     return Container(
       decoration: BoxDecoration(
@@ -307,10 +339,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
           Text(titleLabel, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
           const SizedBox(height: 10),
           ...workers.map((e) {
-            final driverStatus = pointageProvider.getDriverStatusForEmployee(e.id);
-            final state = _driverStatusToState(driverStatus);
-            final locked = pointageProvider.isDriverLockedForEmployee(e.id);
-            final record = pointageProvider.getRecordForEmployee(e.id) ??
+            final record = getRecord(e.id) ??
                 PointageRecord(
                   id: '',
                   employeId: e.id,
@@ -323,6 +352,9 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   date: DateTime.now(),
                   createdAt: DateTime.now(),
                 );
+            final driverStatus = record.driverStatus;
+            final state = _driverStatusToState(driverStatus);
+            final locked = record.driverLocked;
             Widget chipsWidget;
             if (isWithinArrival) {
               chipsWidget = DriverStatusChips(
@@ -573,7 +605,9 @@ class _PointageHoursBanner extends StatelessWidget {
       msg = tr(this.context, 'pointage_hours_not_yet').replaceFirst('%s', config.startTimeFormatted());
       bg = Colors.orange.shade100;
     } else {
-      msg = tr(this.context, 'pointage_hours_closed').replaceFirst('%s', config.endTimeFormatted());
+      msg = config.isNightShift
+          ? tr(this.context, 'pointage_night_shift_closed')
+          : tr(this.context, 'pointage_hours_closed').replaceFirst('%s', config.endTimeFormatted());
       bg = Colors.red.shade50;
     }
     return Container(

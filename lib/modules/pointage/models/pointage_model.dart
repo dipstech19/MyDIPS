@@ -7,8 +7,8 @@ enum ChefPointageStatus { present, absent, unset }
 /// نتيجة المندقية: مؤكد حاضر | مؤكد غائب | خلل | في الانتظار
 enum ReconciledStatus { confirmedPresent, confirmedAbsent, discrepancy, pending }
 
-/// للتوافق مع الكود القديم
-enum AttendanceStatus { present, absent, notInVehicle, unmarked }
+/// للتوافق مع الكود القديم — training = في دورة تكوينية (حاضر لكن لا يظهر للشاف/السائق)
+enum AttendanceStatus { present, absent, notInVehicle, unmarked, training }
 
 /// حالة الخروج: لم يُسجّل | لا يزال يعمل | انتهى من العمل
 enum DepartureStatus { unset, stillWorking, finished }
@@ -79,10 +79,10 @@ class PointageRecord {
   /// الشاف لا يستطيع التعديل بعد الإرسال
   bool get chefLocked => submittedByChefAt != null;
 
-  /// نتيجة المندقية حسب القواعد
+  /// نتيجة المندقية حسب القواعد. training = في تكويني يُعتبر حاضر.
   ReconciledStatus get reconciledStatus {
     if (adminFinalStatus != null) {
-      return adminFinalStatus == AttendanceStatus.present
+      return (adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training)
           ? ReconciledStatus.confirmedPresent
           : ReconciledStatus.confirmedAbsent;
     }
@@ -109,9 +109,9 @@ class PointageRecord {
     return ReconciledStatus.pending;
   }
 
-  /// الحضور النهائي المعروض (أدمن > منديقية)
+  /// الحضور النهائي المعروض (أدمن > منديقية). training يُعتبر حاضر.
   bool get isFinalPresent {
-    if (adminFinalStatus != null) return adminFinalStatus == AttendanceStatus.present;
+    if (adminFinalStatus != null) return adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training;
     switch (reconciledStatus) {
       case ReconciledStatus.confirmedPresent:
         return true;
