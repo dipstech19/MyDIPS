@@ -62,6 +62,17 @@ class PointageRepository {
     return PointageRecord.fromMap({...doc.data()!, 'id': doc.id});
   }
 
+  /// جلب كل سجلات البوانتاج ليوم معيّن (للسائق في وردية ليلية قبل 07:00).
+  Future<List<PointageRecord>> getPointageForDate(DateTime date) async {
+    final day = DateTime(date.year, date.month, date.day);
+    final snap = await _firestore
+        .collection(_pointageCollection)
+        .where('date', isGreaterThanOrEqualTo: day.toIso8601String())
+        .where('date', isLessThan: day.add(const Duration(days: 1)).toIso8601String())
+        .get();
+    return snap.docs.map((d) => PointageRecord.fromMap({...d.data(), 'id': d.id})).toList();
+  }
+
   /// إنشاء أو تحديث سجل نقطاج (للتوافق القديم وللأدمن عند الحاجة)
   Future<void> markAttendance(PointageRecord record) async {
     final docId = _docId(record.employeId, record.date);

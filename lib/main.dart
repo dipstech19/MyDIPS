@@ -13,6 +13,7 @@ import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
 import 'modules/pointage/pointage_provider.dart';
+import 'modules/shifts/shifts_provider.dart';
 import 'modules/magasin/magasin_provider.dart';
 import 'modules/employees/conges_provider.dart';
 import 'firebase_options.dart';
@@ -37,6 +38,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),
         ChangeNotifierProvider(create: (_) => PointageProvider()),
+        ChangeNotifierProvider(create: (_) => ShiftsProvider()),
         ChangeNotifierProvider(create: (_) => MagasinProvider()),
         ChangeNotifierProvider(create: (_) => CongesProvider()),
       ],

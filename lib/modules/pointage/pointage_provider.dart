@@ -143,6 +143,22 @@ class PointageProvider extends ChangeNotifier {
     return list.isEmpty ? null : list.first;
   }
 
+  /// جلب سجلات يوم معيّن (للسائق عندما الفريق في وردية ليلية قبل 07:00).
+  Future<List<PointageRecord>> getPointageRecordsForDate(DateTime date) async {
+    if (!_firebaseAvailable || _repo == null) return [];
+    return _repo!.getPointageForDate(date);
+  }
+
+  /// سجل نقطاج لموظف في تاريخ معيّن (للتحقق من «في تكويني» في الحوار)
+  Future<PointageRecord?> getRecordForEmployeeForDate(String employeId, DateTime date) async {
+    if (!_firebaseAvailable || _repo == null) return null;
+    final day = DateTime(date.year, date.month, date.day);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (day == today) return getRecordForEmployee(employeId);
+    return _repo!.getByEmployeAndDate(employeId, day);
+  }
+
   /// للحصول على الحالة المعروضة حسب الدور (للتوافق مع الواجهة الحالية)
   AttendanceStatus getStatusForEmployee(String employeId) {
     final record = getRecordForEmployee(employeId);
@@ -257,7 +273,9 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkArrivalNow(DateTime.now())) return false;
+    final now = DateTime.now();
+    if (!config.canMarkArrivalNow(now)) return false;
+    final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
       employeId: employeId,
@@ -267,8 +285,8 @@ class PointageProvider extends ChangeNotifier {
       equipeName: equipeName,
       chefName: chefName,
       status: AttendanceStatus.unmarked,
-      date: DateTime.now(),
-      createdAt: DateTime.now(),
+      date: pointageDate,
+      createdAt: now,
       driverStatus: driverStatus,
     );
     await _repo!.setDriverStatus(record, driverStatus, driverId);
@@ -290,7 +308,9 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkArrivalNow(DateTime.now())) return false;
+    final now = DateTime.now();
+    if (!config.canMarkArrivalNow(now)) return false;
+    final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
       employeId: employeId,
@@ -300,8 +320,8 @@ class PointageProvider extends ChangeNotifier {
       equipeName: equipeName,
       chefName: chefName,
       status: AttendanceStatus.unmarked,
-      date: DateTime.now(),
-      createdAt: DateTime.now(),
+      date: pointageDate,
+      createdAt: now,
       chefStatus: chefStatus,
     );
     await _repo!.setChefStatus(record, chefStatus, chefId);
@@ -313,8 +333,10 @@ class PointageProvider extends ChangeNotifier {
   Future<bool> submitDriverReport({PointageHoursConfig? configOverride}) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkArrivalNow(DateTime.now())) return false;
-    await _repo!.submitDriverReport(DateTime.now());
+    final now = DateTime.now();
+    if (!config.canMarkArrivalNow(now)) return false;
+    final pointageDate = getPointageDateForConfig(config, now);
+    await _repo!.submitDriverReport(pointageDate);
     return true;
   }
 
@@ -323,8 +345,10 @@ class PointageProvider extends ChangeNotifier {
   Future<bool> submitChefReport(String equipeId, {PointageHoursConfig? configOverride}) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkArrivalNow(DateTime.now())) return false;
-    await _repo!.submitChefReport(equipeId, DateTime.now());
+    final now = DateTime.now();
+    if (!config.canMarkArrivalNow(now)) return false;
+    final pointageDate = getPointageDateForConfig(config, now);
+    await _repo!.submitChefReport(equipeId, pointageDate);
     return true;
   }
 
@@ -348,7 +372,7 @@ class PointageProvider extends ChangeNotifier {
     await _repo!.setAdminOverride(pointageDocId, status);
   }
 
-  /// تعيين الحضور النهائي من الأدمن (يُنشئ سجلاً إن لم يكن موجوداً)
+  /// تعيين الحضور النهائي من الأدمن (يُنشئ سجلاً إن لم يكن موجوداً). يدعم أي تاريخ [viewDate].
   Future<void> setAdminOverrideForEmployee({
     required String employeId,
     required String employeNom,
@@ -361,7 +385,13 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable) return;
     final date = viewDate ?? DateTime.now();
-    final existing = viewDate == null ? getRecordForEmployee(employeId) : null;
+    final DateTime day = DateTime(date.year, date.month, date.day);
+    PointageRecord? existing;
+    if (viewDate == null) {
+      existing = getRecordForEmployee(employeId);
+    } else {
+      existing = await _repo!.getByEmployeAndDate(employeId, day);
+    }
     if (existing != null) {
       await _repo!.setAdminOverride(existing.id, status);
     } else {
@@ -374,7 +404,7 @@ class PointageProvider extends ChangeNotifier {
         equipeName: equipeName,
         chefName: chefName,
         status: status,
-        date: date,
+        date: day,
         createdAt: DateTime.now(),
         adminFinalStatus: status,
       );

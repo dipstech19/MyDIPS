@@ -14,6 +14,7 @@ import '../../modules/employees/employees_provider.dart';
 import 'pointage_data.dart';
 import 'pointage_provider.dart';
 import 'pointage_hours_config.dart';
+import '../shifts/shifts_provider.dart';
 import 'models/pointage_model.dart';
 import 'services/pointage_export_service.dart';
 
@@ -123,6 +124,8 @@ class _PointagePageState extends State<PointagePage> {
         return AttendanceState.notInVehicle;
       case AttendanceStatus.unmarked:
         return AttendanceState.unmarked;
+      case AttendanceStatus.training:
+        return AttendanceState.present; // en formation = considéré présent pour l'affichage
     }
   }
 
@@ -361,6 +364,18 @@ class _PointagePageState extends State<PointagePage> {
                   },
                   child: const Text('Aujourd\'hui'),
                 ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () => _showFormationDialog(
+                  context,
+                  pointageProvider: pointageProvider,
+                  teams: teams,
+                  initialDate: _reportViewDate ?? now,
+                  onSuccess: () => setState(() {}),
+                ),
+                icon: const Icon(Icons.school, size: 18),
+                label: Text(tr(context, 'pointage_formation_btn')),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -670,6 +685,7 @@ class _PointagePageState extends State<PointagePage> {
             final record = getRecord(e.id);
             final reconciled = record?.reconciledStatus ?? ReconciledStatus.pending;
             final isPresent = record?.isFinalPresent ?? false;
+            final isAlreadyFormation = record?.adminFinalStatus == AttendanceStatus.training;
             return Card(
               margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
               child: Padding(
@@ -767,6 +783,42 @@ class _PointagePageState extends State<PointagePage> {
                                 child: Text(tr(context, 'absent'), style: TextStyle(fontSize: mobile ? 12 : 11, color: Colors.red.shade800)),
                               ),
                             ),
+                            SizedBox(width: mobile ? 8 : 6),
+                            InkWell(
+                              onTap: isAlreadyFormation
+                                  ? null
+                                  : () async {
+                                      if (record != null) {
+                                        await pointageProvider.setAdminOverride(record.id, AttendanceStatus.training);
+                                      } else {
+                                        await pointageProvider.setAdminOverrideForEmployee(
+                                          employeId: e.id,
+                                          employeNom: e.nom,
+                                          employeCin: e.cin,
+                                          equipeId: team.equipeId,
+                                          equipeName: team.equipeName,
+                                          chefName: team.chefName,
+                                          status: AttendanceStatus.training,
+                                          viewDate: _reportViewDate,
+                                        );
+                                      }
+                                      if (mounted) setState(() {});
+                                    },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 8, vertical: mobile ? 6 : 4),
+                                decoration: BoxDecoration(
+                                  color: isAlreadyFormation ? Colors.grey.shade200 : Colors.blue.shade100,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  tr(context, isAlreadyFormation ? 'pointage_formation_already' : 'pointage_formation_short'),
+                                  style: TextStyle(
+                                    fontSize: mobile ? 11 : 10,
+                                    color: isAlreadyFormation ? Colors.grey.shade600 : Colors.blue.shade800,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -778,6 +830,182 @@ class _PointagePageState extends State<PointagePage> {
           }),
         ],
       ),
+    );
+  }
+
+  static Future<void> _showFormationDialog(
+    BuildContext context, {
+    required PointageProvider pointageProvider,
+    required List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams,
+    required DateTime initialDate,
+    VoidCallback? onSuccess,
+  }) async {
+    DateTime selectedDateStart = DateTime(initialDate.year, initialDate.month, initialDate.day);
+    DateTime selectedDateEnd = DateTime(initialDate.year, initialDate.month, initialDate.day);
+    String? selectedEquipeId = teams.isNotEmpty ? teams.first.equipeId : null;
+    final Set<String> selectedEmployeIds = {};
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final matching = teams.where((t) => t.equipeId == selectedEquipeId).toList();
+            final team = matching.isEmpty ? null : matching.first;
+            final workers = team?.workers ?? <Employe>[];
+            if (selectedDateEnd.isBefore(selectedDateStart)) selectedDateEnd = selectedDateStart;
+
+            return AlertDialog(
+              title: Text(tr(context, 'pointage_formation_dialog_title')),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(tr(context, 'pointage_formation_date'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(tr(context, 'pointage_formation_date_from'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                              TextButton.icon(
+                                onPressed: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: selectedDateStart,
+                                    firstDate: DateTime(now.year - 1),
+                                    lastDate: today.add(const Duration(days: 365)),
+                                  );
+                                  if (picked != null) {
+                                    setDialogState(() {
+                                      selectedDateStart = DateTime(picked.year, picked.month, picked.day);
+                                      if (selectedDateEnd.isBefore(selectedDateStart)) selectedDateEnd = selectedDateStart;
+                                    });
+                                  }
+                                },
+                                icon: const Icon(Icons.calendar_today, size: 18),
+                                label: Text('${selectedDateStart.day}/${selectedDateStart.month}/${selectedDateStart.year}'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(tr(context, 'pointage_formation_date_to'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                              TextButton.icon(
+                                onPressed: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: selectedDateEnd.isBefore(selectedDateStart) ? selectedDateStart : selectedDateEnd,
+                                    firstDate: selectedDateStart,
+                                    lastDate: today.add(const Duration(days: 365)),
+                                  );
+                                  if (picked != null) setDialogState(() => selectedDateEnd = DateTime(picked.year, picked.month, picked.day));
+                                },
+                                icon: const Icon(Icons.calendar_today, size: 18),
+                                label: Text('${selectedDateEnd.day}/${selectedDateEnd.month}/${selectedDateEnd.year}'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(tr(context, 'pointage_formation_equipe'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<String>(
+                      value: selectedEquipeId,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                      items: teams.map((t) => DropdownMenuItem(value: t.equipeId, child: Text('${t.equipeName} — ${t.chefName}'))).toList(),
+                      onChanged: (v) => setDialogState(() { selectedEquipeId = v; selectedEmployeIds.clear(); }),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(tr(context, 'pointage_formation_person'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    FutureBuilder<Set<String>>(
+                      key: ValueKey('formation-$selectedDateStart-$selectedDateEnd-${workers.map((e) => e.id).join('-')}'),
+                      future: () async {
+                        final ids = <String>{};
+                        for (final e in workers) {
+                          final r = await pointageProvider.getRecordForEmployeeForDate(e.id, selectedDateStart);
+                          if (r?.adminFinalStatus == AttendanceStatus.training) ids.add(e.id);
+                        }
+                        return ids;
+                      }(),
+                      builder: (context, snap) {
+                        final inFormationIds = snap.data ?? <String>{};
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ...workers.map((e) {
+                              final alreadyFormation = inFormationIds.contains(e.id);
+                              return CheckboxListTile(
+                                value: selectedEmployeIds.contains(e.id),
+                                onChanged: alreadyFormation ? null : (v) => setDialogState(() {
+                                  if (v == true) selectedEmployeIds.add(e.id); else selectedEmployeIds.remove(e.id);
+                                }),
+                                title: Text(e.nom, style: TextStyle(color: alreadyFormation ? Colors.grey : null)),
+                                subtitle: alreadyFormation ? Text(tr(context, 'pointage_formation_already'), style: TextStyle(fontSize: 11, color: Colors.grey.shade600)) : null,
+                                controlAffinity: ListTileControlAffinity.leading,
+                                dense: true,
+                              );
+                            }),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(tr(context, 'pointage_formation_hint'), style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(MaterialLocalizations.of(context).cancelButtonLabel)),
+                FilledButton.icon(
+                  onPressed: selectedEmployeIds.isEmpty || team == null
+                      ? null
+                      : () async {
+                          for (var d = DateTime(selectedDateStart.year, selectedDateStart.month, selectedDateStart.day);
+                              !d.isAfter(DateTime(selectedDateEnd.year, selectedDateEnd.month, selectedDateEnd.day));
+                              d = d.add(const Duration(days: 1))) {
+                            final viewDay = DateTime(d.year, d.month, d.day);
+                            for (final id in selectedEmployeIds) {
+                              final e = workers.firstWhere((w) => w.id == id);
+                              await pointageProvider.setAdminOverrideForEmployee(
+                                employeId: e.id,
+                                employeNom: e.nom,
+                                employeCin: e.cin,
+                                equipeId: team.equipeId,
+                                equipeName: team.equipeName,
+                                chefName: team.chefName,
+                                status: AttendanceStatus.training,
+                                viewDate: viewDay,
+                              );
+                            }
+                          }
+                          pointageProvider.selectReportDate(selectedDateStart);
+                          onSuccess?.call();
+                          if (context.mounted) Navigator.of(context).pop();
+                        },
+                  icon: const Icon(Icons.school, size: 18),
+                  label: Text(tr(context, 'pointage_formation_mark')),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -901,8 +1129,15 @@ class _PointagePageState extends State<PointagePage> {
     List<Employe> employes,
     PointageProvider pointageProvider,
   ) {
+    final shiftsProvider = context.watch<ShiftsProvider>();
     final workers = getWorkersForEquipe(equipes, employes, auth.equipeId);
-    AttendanceState getState(String id) => _chefStatusToState(pointageProvider.getChefStatusForEmployee(id));
+    // Afficher tous les travailleurs ; ceux en formation sont en « présent — en formation » sans choix présent/absent
+    final workersDisplay = workers;
+    final workersInTraining = workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
+    AttendanceState getState(String id) {
+      if (pointageProvider.getRecordForEmployee(id)?.adminFinalStatus == AttendanceStatus.training) return AttendanceState.present;
+      return _chefStatusToState(pointageProvider.getChefStatusForEmployee(id));
+    }
     final reportSentMsgChef = tr(context, 'report_sent');
     final equipeForTitle = equipes.where((e) => e.id == auth.equipeId).toList();
     final equipeNameForTitle = equipeForTitle.isNotEmpty ? equipeForTitle.first.nom : '';
@@ -924,7 +1159,7 @@ class _PointagePageState extends State<PointagePage> {
 
       int presentCount = 0;
       int absentCount = 0;
-      for (final w in workers) {
+      for (final w in workersDisplay) {
         final s = getState(w.id);
         if (s == AttendanceState.present) presentCount++;
         else if (s == AttendanceState.absent) absentCount++;
@@ -932,7 +1167,9 @@ class _PointagePageState extends State<PointagePage> {
 
       final equipe = equipes.where((e) => e.id == equipeId).toList();
       final equipeName = equipe.isNotEmpty ? equipe.first.nom : '';
-      final pointageConfig = getConfigForEquipe(equipe.isEmpty ? null : equipe.first);
+      final today = DateTime.now();
+      final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
+      final pointageConfig = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, today, shiftForEquipe);
       try {
         final ok = await pointageProvider.submitChefReport(equipeId, configOverride: pointageConfig);
         if (!ok && context.mounted) {
@@ -950,7 +1187,7 @@ class _PointagePageState extends State<PointagePage> {
           equipeName: equipeName,
           chefId: auth.currentUser?.id ?? '',
           chefName: auth.currentUser?.nom ?? '',
-          totalEmployees: workers.length,
+          totalEmployees: workersDisplay.length,
           presentCount: presentCount,
           absentCount: absentCount,
           notInVehicleCount: 0,
@@ -980,7 +1217,9 @@ class _PointagePageState extends State<PointagePage> {
     final padding = pagePadding(context);
     final chefEquipeList = equipes.where((e) => e.id == auth.equipeId).toList();
     final chefEquipe = chefEquipeList.isEmpty ? null : chefEquipeList.first;
-    final config = getConfigForEquipe(chefEquipe);
+    final today = DateTime.now();
+    final shiftForChef = chefEquipe != null ? shiftsProvider.getShiftForEquipe(chefEquipe.id, today) : null;
+    final config = getConfigForEquipeAndDate(chefEquipe, today, shiftForChef);
     final now = DateTime.now();
     final hoursStatus = getPointageHoursStatus(now, config);
     final isWithinArrival = config.canMarkArrivalNow(now);
@@ -988,10 +1227,51 @@ class _PointagePageState extends State<PointagePage> {
     final mobile = isMobile(context);
 
     Widget buildWorkerCard(Employe e) {
+      final record = pointageProvider.getRecordForEmployee(e.id);
+      final isInTraining = record?.adminFinalStatus == AttendanceStatus.training;
+      if (isInTraining) {
+        return Card(
+          margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : 12, vertical: mobile ? 14 : 10),
+            child: Row(
+              children: [
+                SmartAvatar(
+                  imageUrl: e.photoUrl,
+                  fallbackText: e.nom,
+                  radius: mobile ? 22 : 18,
+                ),
+                SizedBox(width: mobile ? 14 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.school, size: 16, color: Colors.teal.shade700),
+                      SizedBox(width: 6),
+                      Text(tr(context, 'pointage_chef_training_badge'), style: TextStyle(fontSize: mobile ? 11 : 12, fontWeight: FontWeight.w600, color: Colors.teal.shade800)),
+                    ],
+                  ),
+                  backgroundColor: Colors.teal.shade50,
+                  side: BorderSide(color: Colors.teal.shade200),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
       final locked = pointageProvider.isChefLockedForEmployee(e.id);
       final equipe = equipes.where((eq) => eq.id == auth.equipeId).toList();
       final equipeName = equipe.isNotEmpty ? equipe.first.nom : '';
-      final record = pointageProvider.getRecordForEmployee(e.id) ??
+      final recordOrPlaceholder = record ??
           PointageRecord(
             id: '',
             employeId: e.id,
@@ -1024,11 +1304,11 @@ class _PointagePageState extends State<PointagePage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
-                    if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
+                    if (recordOrPlaceholder.departureStatus != DepartureStatus.unset && recordOrPlaceholder.overtimeMinutes != null && recordOrPlaceholder.overtimeMinutes! > 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(record.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(recordOrPlaceholder.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
                           style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                         ),
                       ),
@@ -1065,11 +1345,11 @@ class _PointagePageState extends State<PointagePage> {
               ),
               if (canMarkDeparture)
                 _DepartureChips(
-                  record: record,
+                  record: recordOrPlaceholder,
                   config: config,
                   onStillWorking: () async {
                     final ok = await pointageProvider.setDepartureStatus(
-                      record: record,
+                      record: recordOrPlaceholder,
                       status: DepartureStatus.stillWorking,
                       configOverride: config,
                     );
@@ -1081,7 +1361,7 @@ class _PointagePageState extends State<PointagePage> {
                   },
                   onFinished: (int? overtimeMinutes) async {
                     final ok = await pointageProvider.setDepartureStatus(
-                      record: record,
+                      record: recordOrPlaceholder,
                       status: DepartureStatus.finished,
                       overtimeMinutes: overtimeMinutes,
                       configOverride: config,
@@ -1101,7 +1381,7 @@ class _PointagePageState extends State<PointagePage> {
                 _wrapIfDisabled(
                   disabled: true,
                   child: _DepartureChips(
-                    record: record,
+                    record: recordOrPlaceholder,
                     config: config,
                     onStillWorking: () {},
                     onFinished: (_) {},
@@ -1117,7 +1397,7 @@ class _PointagePageState extends State<PointagePage> {
       );
     }
 
-    if (mobile && workers.isNotEmpty) {
+    if (mobile && workersDisplay.isNotEmpty) {
       return Padding(
         padding: EdgeInsets.all(padding),
         child: Column(
@@ -1172,24 +1452,58 @@ class _PointagePageState extends State<PointagePage> {
                 ),
               ),
             ],
+            if (chefEquipe != null) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => _ChefPointageHoursDialog.show(context, chefEquipe),
+                icon: const Icon(Icons.schedule, size: 18),
+                label: Text(tr(context, 'pointage_chef_hours_btn')),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  alignment: Alignment.centerLeft,
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             Text(
               '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
+            if (workersInTraining.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Material(
+                color: Colors.teal.shade50,
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 22, color: Colors.teal.shade700),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          tr(context, 'pointage_chef_training_banner').replaceAll('%s', '${workersInTraining.length}'),
+                          style: TextStyle(fontSize: 13, color: Colors.teal.shade900),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.only(bottom: 8),
-                itemCount: workers.length,
-                itemBuilder: (context, i) => buildWorkerCard(workers[i]),
+                itemCount: workersDisplay.length,
+                itemBuilder: (context, i) => buildWorkerCard(workersDisplay[i]),
               ),
             ),
             SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () async {
-                final presentNames = workers.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
-                final absentNames = workers.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+                final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+                final absentNames = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
                 final filePath = await PointageExportService.shareDailyReportPdf(
                   date: DateTime.now(),
                   title: trOf(context, 'report_presence_title'),
@@ -1277,6 +1591,18 @@ class _PointagePageState extends State<PointagePage> {
                     ),
                   ],
                 ),
+                ),
+              ),
+            ],
+          if (chefEquipe != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => _ChefPointageHoursDialog.show(context, chefEquipe),
+              icon: const Icon(Icons.schedule, size: 18),
+              label: Text(tr(context, 'pointage_chef_hours_btn')),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                alignment: Alignment.centerLeft,
               ),
             ),
           ],
@@ -1285,8 +1611,30 @@ class _PointagePageState extends State<PointagePage> {
             '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
+          if (workersInTraining.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Material(
+              color: Colors.teal.shade50,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 22, color: Colors.teal.shade700),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        tr(context, 'pointage_chef_training_banner').replaceAll('%s', '${workersInTraining.length}'),
+                        style: TextStyle(fontSize: 13, color: Colors.teal.shade900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
-          if (workers.isEmpty)
+          if (workersDisplay.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 24),
               child: Center(
@@ -1297,11 +1645,11 @@ class _PointagePageState extends State<PointagePage> {
               ),
             )
           else
-            ...workers.map((e) => buildWorkerCard(e)),
+            ...workersDisplay.map((e) => buildWorkerCard(e)),
           OutlinedButton.icon(
             onPressed: () async {
-              final presentNames = workers.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
-              final absentNames = workers.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+              final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+              final absentNames = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
               final filePath = await PointageExportService.shareDailyReportPdf(
                 date: DateTime.now(),
                 title: trOf(context, 'report_presence_title'),
@@ -1422,6 +1770,118 @@ class _DepartureChips extends StatelessWidget {
   }
 }
 
+/// حوار يسمح للشاف بتحديد أوقات عمل فريقه (فتح/إقفال البوانتاج).
+class _ChefPointageHoursDialog extends StatelessWidget {
+  final Equipe equipe;
+
+  const _ChefPointageHoursDialog({required this.equipe});
+
+  static Future<void> show(BuildContext context, Equipe eq) {
+    return showDialog(
+      context: context,
+      builder: (_) => _ChefPointageHoursDialog(equipe: eq),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool useCustomHours = equipe.pointageStartHour != null && equipe.pointageEndHour != null;
+    int startHour = equipe.pointageStartHour ?? 6;
+    int startMinute = equipe.pointageStartMinute ?? 0;
+    int endHour = equipe.pointageEndHour ?? 10;
+    int endMinute = equipe.pointageEndMinute ?? 0;
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          title: Text(tr(context, 'pointage_chef_hours_title')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CheckboxListTile(
+                  value: useCustomHours,
+                  onChanged: (v) => setState(() => useCustomHours = v ?? false),
+                  title: Text(tr(context, 'pointage_chef_hours_custom'), style: const TextStyle(fontSize: 13)),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+                if (useCustomHours) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      SizedBox(width: 80, child: Text(tr(context, 'pointage_chef_hours_open'), style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: startHour.clamp(0, 23),
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
+                          onChanged: (v) => setState(() => startHour = v ?? 6),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: [0, 15, 30, 45].contains(startMinute) ? startMinute : 0,
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
+                          onChanged: (v) => setState(() => startMinute = v ?? 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      SizedBox(width: 80, child: Text(tr(context, 'pointage_chef_hours_close'), style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: endHour.clamp(0, 23),
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
+                          onChanged: (v) => setState(() => endHour = v ?? 10),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: [0, 15, 30, 45].contains(endMinute) ? endMinute : 0,
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
+                          onChanged: (v) => setState(() => endMinute = v ?? 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(tr(context, 'cancel'))),
+            ElevatedButton(
+              onPressed: () async {
+                final updated = equipe.copyWith(
+                  pointageStartHour: useCustomHours ? startHour : null,
+                  pointageStartMinute: useCustomHours ? startMinute : null,
+                  pointageEndHour: useCustomHours ? endHour : null,
+                  pointageEndMinute: useCustomHours ? endMinute : null,
+                );
+                await context.read<EmployeesProvider>().updateEquipe(updated);
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _PointageHoursBanner extends StatelessWidget {
   final BuildContext context;
   final PointageHoursStatus status;
@@ -1445,7 +1905,9 @@ class _PointageHoursBanner extends StatelessWidget {
       msg = tr(this.context, 'pointage_hours_not_yet').replaceFirst('%s', config.startTimeFormatted());
       bg = Colors.orange.shade100;
     } else {
-      msg = tr(this.context, 'pointage_hours_closed').replaceFirst('%s', config.endTimeFormatted());
+      msg = config.isNightShift
+          ? tr(this.context, 'pointage_night_shift_closed')
+          : tr(this.context, 'pointage_hours_closed').replaceFirst('%s', config.endTimeFormatted());
       bg = Colors.red.shade50;
     }
     return Container(
