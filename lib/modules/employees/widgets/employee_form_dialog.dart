@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../../core/auth/auth_provider.dart';
+import '../../../core/site/site_model.dart';
+import '../../../core/site/site_provider.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
@@ -46,7 +49,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   String _dept = '';
   String _contrat = 'CDI';
   String _chefId = '';
+  String _siteId = SiteId.jadida;
   EmployeStatut _statut = EmployeStatut.enService;
+  bool _siteIdInitialized = false;
   
   // Photo de profil
   String? _photoPath;
@@ -59,6 +64,18 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final site = context.watch<SiteProvider>();
+    if (!_siteIdInitialized) {
+      _siteIdInitialized = true;
+      final allowed = auth.currentUser?.allowedSiteIds;
+      if (allowed != null && allowed.isNotEmpty && allowed.first != SiteId.all) {
+        _siteId = allowed.first;
+      } else {
+        _siteId = site.selectedSiteId ?? SiteId.jadida;
+        if (_siteId == SiteId.all) _siteId = SiteId.jadida;
+      }
+    }
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
     final posteNames = postesProv.postes.map((p) => p.nom).toList();
@@ -139,6 +156,21 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       _row2(
                         _dropdownPoste(posteNames),
                         _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _siteId,
+                        decoration: InputDecoration(
+                          labelText: 'Zone (الموقع) *',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          isDense: true,
+                        ),
+                        items: [
+                          DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                          DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+                        ],
+                        onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
                       ),
                       const SizedBox(height: 12),
                       _row2(
@@ -334,6 +366,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         statut: _statut,
         documents: documents,
         photoUrl: photoUrl ?? '',
+        siteId: _siteId,
       );
       
       debugPrint('EmployeeFormDialog: Saving employee with photoUrl: ${newEmployee.photoUrl}');

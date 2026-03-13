@@ -1,7 +1,6 @@
 import '../employees/models/employe_model.dart';
 import '../employees/models/equipe_model.dart';
 
-/// عمال فريق واحد (بيانات من القاعدة عبر القوائم المُمرَّرة)
 List<Employe> getWorkersForEquipe(
   List<Equipe> equipes,
   List<Employe> employes,
@@ -15,13 +14,11 @@ List<Employe> getWorkersForEquipe(
   return employes.where((e) => ids.contains(e.id)).toList();
 }
 
-/// اسم الشاف من id الموظف
 String getChefName(List<Employe> employes, String chefId) {
   final list = employes.where((emp) => emp.id == chefId).toList();
   return list.isEmpty ? chefId : list.first.nom;
 }
 
-/// عمال الفرق الأخرى فقط (لشاشة إضافة عامل)
 List<({Employe e, String chefName})> getOtherTeamsWorkers(
   List<Equipe> equipes,
   List<Employe> employes,
@@ -40,7 +37,6 @@ List<({Employe e, String chefName})> getOtherTeamsWorkers(
   return list;
 }
 
-/// قائمة الشافات (لاختيار مرسل التقرير)
 List<({String chefId, String chefName})> getChefsForReport(
   List<Equipe> equipes,
   List<Employe> employes,
@@ -55,7 +51,6 @@ List<({String chefId, String chefName})> getChefsForReport(
   return list;
 }
 
-/// كل الفرق مع اسم الفريق واسم الشاف وقائمة العمال (لشاشة قائمة اليوم)
 List<({String equipeId, String equipeName, String chefName, List<Employe> workers})>
 getAllTeamsWithWorkers(List<Equipe> equipes, List<Employe> employes) {
   final list = <({String equipeId, String equipeName, String chefName, List<Employe> workers})>[];

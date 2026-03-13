@@ -1,104 +1,63 @@
-import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'models/shift_models.dart';
-import 'data/shifts_repository.dart';
 
 class ShiftsProvider extends ChangeNotifier {
-  final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
-  ShiftsRepository? _repo;
-  StreamSubscription<RotationConfig?>? _sub;
-
   RotationConfig? _config;
-  bool _loading = true;
-  String? _error;
+  final Map<String, Map<String, ShiftType>> _overrides = {};
+
+  bool get loading => false;
+  String? get error => null;
+
+  bool get hasConfig => _config != null && _config!.equipeIds.any((id) => id.isNotEmpty);
 
   RotationConfig? get config => _config;
-  bool get loading => _loading;
-  String? get error => _error;
-  bool get hasConfig => _config != null && _config!.equipeIds.every((id) => id.isNotEmpty);
 
-  ShiftsProvider() {
-    if (!_firebaseAvailable) {
-      _loading = false;
-      notifyListeners();
-      return;
+  /// يوم في الدورة (0–3) حسب تاريخ البداية
+  int dayInCycle(DateTime day) {
+    if (_config == null) return 0;
+    final start = _config!.startDay;
+    final d = DateTime(day.year, day.month, day.day);
+    final diff = d.difference(start).inDays;
+    return diff >= 0 ? diff % 4 : 0;
+  }
+
+  ShiftType getShiftForEquipe(String equipeId, DateTime date) {
+    if (_config == null) return ShiftType.rest;
+    final pos = _config!.equipeIds.indexOf(equipeId);
+    if (pos < 0) return ShiftType.rest;
+    final key = '${date.year}-${date.month}-${date.day}';
+    if (_overrides[key] != null && _overrides[key]![equipeId] != null) {
+      return _overrides[key]![equipeId]!;
     }
-    _repo = ShiftsRepository();
-    _subscribe();
+    return ShiftRotationLogic.shiftForPosition(pos, dayInCycle(date));
   }
 
-  void _subscribe() {
-    _sub?.cancel();
-    _loading = true;
-    _error = null;
-    notifyListeners();
-    _repo!.watchConfig().listen(
-      (c) {
-        _config = c;
-        _loading = false;
-        _error = null;
-        notifyListeners();
-      },
-      onError: (e) {
-        _error = e.toString();
-        _loading = false;
-        notifyListeners();
-      },
-    );
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  Future<void> setConfig(RotationConfig config) async {
-    if (!_firebaseAvailable || _repo == null) return;
-    _error = null;
-    notifyListeners();
-    try {
-      await _repo!.setConfig(config);
-      _config = config;
-      notifyListeners();
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-    }
-  }
-
-  /// وردية فريق في تاريخ معيّن
-  ShiftType? getShiftForEquipe(String equipeId, DateTime date) {
-    final c = _config;
-    if (c == null) return null;
-    return ShiftRotationLogic.shiftForEquipe(c, equipeId, date);
-  }
-
-  /// يوم في الدورة 0..7 لتاريخ معيّن
-  int dayInCycle(DateTime date) {
-    final c = _config;
-    if (c == null) return 0;
-    return ShiftRotationLogic.dayInCycle(c.startDay, date);
-  }
-
-  /// جدول أيام قادمة: قائمة (تاريخ, قائمة (equipeId, shift))
-  List<({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe})> getScheduleForDays(DateTime from, int dayCount) {
-    final c = _config;
-    if (c == null || c.equipeIds.every((id) => id.isEmpty)) return [];
+  /// جدول الأيام: لكل يوم قائمة (equipeId, shift)
+  List<({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe})> getScheduleForDays(DateTime startDay, int dayCount) {
     final list = <({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe})>[];
     for (var i = 0; i < dayCount; i++) {
-      final d = from.add(Duration(days: i));
-      final day = DateTime(d.year, d.month, d.day);
-      final cycle = ShiftRotationLogic.dayInCycle(c.startDay, day);
+      final date = startDay.add(Duration(days: i));
       final perEquipe = <({String equipeId, ShiftType shift})>[];
-      for (var pos = 0; pos < 4; pos++) {
-        final eid = c.equipeIds[pos];
-        if (eid.isEmpty) continue;
-        perEquipe.add((equipeId: eid, shift: ShiftRotationLogic.shiftForPosition(pos, cycle)));
+      if (_config != null) {
+        for (var j = 0; j < _config!.equipeIds.length; j++) {
+          final eid = _config!.equipeIds[j];
+          perEquipe.add((equipeId: eid, shift: getShiftForEquipe(eid, date)));
+        }
       }
-      list.add((date: day, perEquipe: perEquipe));
+      list.add((date: date, perEquipe: perEquipe));
     }
     return list;
+  }
+
+  Future<void> setShiftOverride(DateTime date, String equipeId, ShiftType shift) async {
+    final key = '${date.year}-${date.month}-${date.day}';
+    _overrides[key] ??= {};
+    _overrides[key]![equipeId] = shift;
+    notifyListeners();
+  }
+
+  Future<void> setConfig(RotationConfig c) async {
+    _config = c;
+    notifyListeners();
   }
 }

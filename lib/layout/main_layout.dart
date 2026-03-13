@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/auth_provider.dart';
 import '../core/locale/app_locale.dart';
+import '../core/site/site_model.dart';
+import '../core/site/site_provider.dart';
 import '../core/utils/responsive.dart';
 import '../modules/Paramètres/paramètres.dart';
 import '../modules/Demandes/demandes_page.dart';
@@ -27,12 +29,21 @@ class _MainLayoutState extends State<MainLayout> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  /// السائق: Pointage + Envoyer rapport فقط ؛ غير ذلك: كل القائمة مع Paramètres (من المطور الآخر)
-  List<_NavItem> _navItems(BuildContext context, bool isChauffeur) {
+  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés (اسم/صورة/CIN)، Pointage، Shifts، Paramètres (معلوماته فقط). الأدمن: كل القائمة.
+  List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe) {
     if (isChauffeur) {
       return [
         _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
         _NavItem(icon: Icons.note_add, label: tr(context, 'nav_send_report')),
+      ];
+    }
+    if (isChefEquipe) {
+      return [
+        _NavItem(icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
+        _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
+        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        _NavItem(icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+        _NavItem(icon: Icons.settings, label: tr(context, 'nav_settings')),
       ];
     }
     return [
@@ -65,6 +76,37 @@ class _MainLayoutState extends State<MainLayout> {
                 Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 11)),
               ],
             ),
+          ),
+          Builder(
+            builder: (ctx) {
+              final auth = ctx.watch<AuthProvider>();
+              final site = ctx.watch<SiteProvider>();
+              final isSuperAdmin = auth.currentUser?.isSuperAdmin ?? false;
+              if (!isSuperAdmin) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButton<String>(
+                    value: site.selectedSiteId ?? SiteId.all,
+                    isExpanded: true,
+                    dropdownColor: const Color(0xFF1565C0),
+                    underline: const SizedBox(),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    items: [
+                      DropdownMenuItem(value: SiteId.all, child: Text(tr(ctx, 'site_all'))),
+                      DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                      DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+                    ],
+                    onChanged: (v) => site.setSelectedSite(v),
+                  ),
+                ),
+              );
+            },
           ),
           const Divider(color: Colors.white24),
           Expanded(
@@ -142,7 +184,8 @@ class _MainLayoutState extends State<MainLayout> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final isChauffeur = auth.isChauffeur;
-    final items = _navItems(context, isChauffeur);
+    final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
+    final items = _navItems(context, isChauffeur, isChefEquipe);
     final mobile = isMobile(context);
 
     if (mobile) {
@@ -162,7 +205,7 @@ class _MainLayoutState extends State<MainLayout> {
             builder: (ctx) => _buildSidebar(context, auth, items, onItemTap: () => Navigator.of(ctx).pop()),
           ),
         ),
-        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur)),
+        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe)),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex.clamp(0, items.length - 1),
           onTap: (i) => setState(() => _selectedIndex = i),
@@ -182,7 +225,7 @@ class _MainLayoutState extends State<MainLayout> {
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: 1200),
-                child: _buildPage(context, _selectedIndex, isChauffeur),
+                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe),
               ),
             ),
           ),
@@ -219,11 +262,21 @@ class _MainLayoutState extends State<MainLayout> {
     );
   }
 
-  Widget _buildPage(BuildContext context, int index, bool isChauffeur) {
+  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe) {
     if (isChauffeur) {
       if (index == 0) return const DriverPointagePage();
       if (index == 1) return const ReportPage();
       return const DriverPointagePage();
+    }
+    if (isChefEquipe) {
+      switch (index) {
+        case 0: return const _DashboardPage();
+        case 1: return const EmployeesPage();
+        case 2: return const PointagePage();
+        case 3: return const ShiftsPage();
+        case 4: return const ParametresPage();
+        default: return const _DashboardPage();
+      }
     }
     switch (index) {
       case 0:
@@ -317,14 +370,28 @@ class _DashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final site = context.watch<SiteProvider>();
     final emp = context.watch<EmployeesProvider>();
     final pointage = context.watch<PointageProvider>();
     final magasin = context.watch<MagasinProvider>();
     final mobile = isMobile(context);
     final padding = pagePadding(context);
-    final employesCount = emp.employes.length;
+    final filteredEmployes = SiteId.filterBySite(
+      emp.employes,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (e) => e.siteId,
+    );
+    final employesCount = filteredEmployes.length;
+    final filteredProduits = SiteId.filterBySite(
+      magasin.produits,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (p) => p.siteId,
+    );
+    final stockTotal = filteredProduits.fold<int>(0, (s, p) => s + p.total);
     final presentLabel = '${pointage.todayPresentCount}';
-    final stockLabel = '${magasin.totalStock}';
+    final stockLabel = '$stockTotal';
     final rapportsLabel = '${pointage.monthlyReportsCount}';
 
     return SingleChildScrollView(

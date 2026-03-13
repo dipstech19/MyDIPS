@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
+import '../../core/site/site_model.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
 import '../../shared/widgets/shared_widgets.dart';
@@ -13,8 +15,10 @@ import '../../modules/employees/models/equipe_model.dart';
 import '../../modules/employees/employees_provider.dart';
 import 'pointage_data.dart';
 import 'pointage_provider.dart';
+import 'absence_reasons_provider.dart';
 import 'pointage_hours_config.dart';
 import '../shifts/shifts_provider.dart';
+import '../shifts/models/shift_models.dart';
 import 'models/pointage_model.dart';
 import 'services/pointage_export_service.dart';
 
@@ -154,6 +158,19 @@ class _PointagePageState extends State<PointagePage> {
 
     final showDriverList = isDirecteur;
     final isChefOnly = isChefEquipe && !isDirecteur;
+    final site = context.watch<SiteProvider>();
+    final filteredEquipes = SiteId.filterBySite(
+      emp.equipes,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (e) => e.siteId,
+    );
+    final filteredEmployes = SiteId.filterBySite(
+      emp.employes,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (e) => e.siteId,
+    );
     if (isChefOnly) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         pointageProvider.ensureNonWorkingLoadedForDate(DateTime.now());
@@ -163,9 +180,9 @@ class _PointagePageState extends State<PointagePage> {
     return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
       child: isChefOnly
-          ? _buildChefContent(context, auth, emp.equipes, emp.employes, pointageProvider)
+          ? _buildChefContent(context, auth, filteredEquipes, filteredEmployes, pointageProvider)
           : isDirecteur
-              ? _buildAdminContent(context, emp.equipes, emp.employes, pointageProvider)
+              ? _buildAdminContent(context, filteredEquipes, filteredEmployes, pointageProvider)
               : Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
@@ -253,6 +270,17 @@ class _PointagePageState extends State<PointagePage> {
       pointageProvider.ensureNonWorkingLoadedForDate(viewDate);
     });
     final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
+    final shiftsProvider = context.watch<ShiftsProvider>();
+    final effectiveNonWorkingIds = <String>{...nonWorkingIds};
+    if (shiftsProvider.hasConfig) {
+      for (final eid in shiftsProvider.config!.equipeIds) {
+        if (eid.isEmpty) continue;
+        if (shiftsProvider.getShiftForEquipe(eid, viewDate) == ShiftType.rest) {
+          effectiveNonWorkingIds.add(eid);
+        }
+      }
+    }
+    final nonWorkingIdsEffective = effectiveNonWorkingIds.toList();
 
     PointageRecord? getRecord(String employeId) {
       if (isViewingToday) return pointageProvider.getRecordForEmployee(employeId);
@@ -268,7 +296,7 @@ class _PointagePageState extends State<PointagePage> {
     String teamChefKey(String equipeName, String chefName) => '$equipeName — $chefName';
     for (final t in teams) {
       final key = teamChefKey(t.equipeName, t.chefName);
-      final isNonWorking = nonWorkingIds.contains(t.equipeId);
+      final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
       for (final e in t.workers) {
         if (isNonWorking) {
           notWorkingByChef.putIfAbsent(key, () => []).add(e);
@@ -291,7 +319,7 @@ class _PointagePageState extends State<PointagePage> {
       int totalEmployees = 0;
 
       for (final t in teams) {
-        if (nonWorkingIds.contains(t.equipeId)) continue;
+        if (nonWorkingIdsEffective.contains(t.equipeId)) continue;
         for (final e in t.workers) {
           totalEmployees++;
           final record = getRecord(e.id);
@@ -392,7 +420,7 @@ class _PointagePageState extends State<PointagePage> {
                     pointageProvider: pointageProvider,
                     getRecord: getRecord,
                     teams: teams,
-                    nonWorkingIds: nonWorkingIds,
+                    nonWorkingIds: nonWorkingIdsEffective,
                     viewDate: viewDate,
                     presentByChef: presentByChef,
                     absentByChef: absentByChef,
@@ -426,7 +454,7 @@ class _PointagePageState extends State<PointagePage> {
                                   itemBuilder: (context, i) {
                                     final t = teams[i];
                                     final isSelected = _selectedEquipeIdAdmin == t.equipeId;
-                                    final isNonWorking = nonWorkingIds.contains(t.equipeId);
+                                    final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
                                     return Material(
                                       color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.15) : null,
                                       child: ListTile(
@@ -470,7 +498,7 @@ class _PointagePageState extends State<PointagePage> {
                       pointageProvider: pointageProvider,
                       getRecord: getRecord,
                       teams: teams,
-                      nonWorkingIds: nonWorkingIds,
+                      nonWorkingIds: nonWorkingIdsEffective,
                       viewDate: viewDate,
                       presentByChef: presentByChef,
                       absentByChef: absentByChef,
@@ -496,12 +524,15 @@ class _PointagePageState extends State<PointagePage> {
                     if (team == null) return;
                     final key = teamChefKey(team!.equipeName, team!.chefName);
                     final presentNames = (presentByChef[key] ?? []).map((e) => e.nom).toList();
-                    final absentNames = (absentByChef[key] ?? []).map((e) => e.nom).toList();
+                    final absentWorkers = absentByChef[key] ?? [];
+                    final absentNames = absentWorkers.map((e) => e.nom).toList();
+                    final absentReasons = absentWorkers.map((e) => getRecord(e.id)?.absenceReason).toList();
                     final filePath = await PointageExportService.shareDailyReportPdf(
                       date: viewDate,
                       title: trOf(context, 'report_presence_title'),
                       presentNames: presentNames,
                       absentNames: absentNames,
+                      absentReasons: absentReasons,
                       signatureLabel: trOf(context, 'pointage_signature_chef'),
                       personName: team!.chefName,
                       equipeName: team!.equipeName,
@@ -604,22 +635,31 @@ class _PointagePageState extends State<PointagePage> {
       end = t;
     }
     final records = await pointageProvider.getPointageInDateRange(start, end);
-    final employees = <({String id, String nom, String equipeName})>[];
+    final employees = <({String id, String nom, String equipeName, String? equipeId})>[];
     for (final t in teams) {
       for (final w in t.workers) {
-        employees.add((id: w.id, nom: w.nom, equipeName: '${t.equipeName} — ${t.chefName}'));
+        employees.add((id: w.id, nom: w.nom, equipeName: '${t.equipeName} — ${t.chefName}', equipeId: t.equipeId));
       }
     }
+    final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
+    final shiftsProvider = context.read<ShiftsProvider>();
+    final isRestDay = shiftsProvider.hasConfig
+        ? (DateTime date, String equipeId) =>
+            shiftsProvider.getShiftForEquipe(equipeId, date) == ShiftType.rest
+        : null;
     final rows = PointageExportService.computeExcelRows(
       startDate: start,
       endDate: end,
       employees: employees,
       records: records,
+      reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+      isRestDay: isRestDay,
     );
     final filePath = await PointageExportService.saveAndOpenExcel(
       startDate: start,
       endDate: end,
       rows: rows,
+      reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
     );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -762,8 +802,10 @@ class _PointagePageState extends State<PointagePage> {
                             SizedBox(width: mobile ? 8 : 6),
                             InkWell(
                               onTap: () async {
+                                final reasonId = await _showAbsenceReasonDialog(context);
+                                if (reasonId == null || !mounted) return;
                                 if (record != null) {
-                                  await pointageProvider.setAdminOverride(record.id, AttendanceStatus.absent);
+                                  await pointageProvider.setAdminOverride(record.id, AttendanceStatus.absent, absenceReason: reasonId);
                                 } else {
                                   await pointageProvider.setAdminOverrideForEmployee(
                                     employeId: e.id,
@@ -773,9 +815,11 @@ class _PointagePageState extends State<PointagePage> {
                                     equipeName: team.equipeName,
                                     chefName: team.chefName,
                                     status: AttendanceStatus.absent,
+                                    absenceReason: reasonId,
                                     viewDate: _reportViewDate,
                                   );
                                 }
+                                if (mounted) setState(() {});
                               },
                               child: Container(
                                 padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 8, vertical: mobile ? 6 : 4),
@@ -1122,6 +1166,52 @@ class _PointagePageState extends State<PointagePage> {
     }
   }
 
+  static const Map<AbsenceReason, String> _absenceReasonKeys = {
+    AbsenceReason.maladie: 'absence_reason_maladie',
+    AbsenceReason.paternite: 'absence_reason_paternite',
+    AbsenceReason.mariage: 'absence_reason_mariage',
+    AbsenceReason.deces: 'absence_reason_deces',
+    AbsenceReason.autorisee: 'absence_reason_autorisee',
+    AbsenceReason.absenceInjustifiee: 'absence_reason_injustifiee',
+  };
+
+  /// Returns the reason id (dynamic config) or enum name (fallback). Caller stores this in pointage.
+  Future<String?> _showAbsenceReasonDialog(BuildContext context) async {
+    final reasonsProvider = context.read<AbsenceReasonsProvider>();
+    final configs = reasonsProvider.reasons;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr(ctx, 'absence_reason_title')),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: configs.isNotEmpty
+                ? configs.map((c) {
+                    return ListTile(
+                      title: Text(c.label),
+                      subtitle: Text(c.deductFromSalary ? 'Déduit du salaire' : 'Non déduit'),
+                      onTap: () => Navigator.pop(ctx, c.id),
+                    );
+                  }).toList()
+                : AbsenceReason.values.map((r) {
+                    return ListTile(
+                      title: Text(tr(ctx, _absenceReasonKeys[r]!)),
+                      onTap: () => Navigator.pop(ctx, r.name),
+                    );
+                  }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChefContent(
     BuildContext context,
     AuthProvider auth,
@@ -1175,7 +1265,7 @@ class _PointagePageState extends State<PointagePage> {
         if (!ok && context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(tr(context, 'pointage_hours_cannot_mark')),
+              content: Text(trOf(context, 'pointage_hours_cannot_mark')),
               backgroundColor: Colors.orange,
               behavior: SnackBarBehavior.fixed,
             ),
@@ -1322,6 +1412,12 @@ class _PointagePageState extends State<PointagePage> {
                 child: ChefStatusChips(
                   current: getState(e.id),
                   onSelect: canMarkArrival ? (s) async {
+                    String? absenceReason;
+                    if (s == AttendanceState.absent) {
+                      final reasonId = await _showAbsenceReasonDialog(context);
+                      if (reasonId == null || !context.mounted) return;
+                      absenceReason = reasonId;
+                    }
                     final ok = await pointageProvider.markChefAttendance(
                       employeId: e.id,
                       employeNom: e.nom,
@@ -1331,11 +1427,12 @@ class _PointagePageState extends State<PointagePage> {
                       chefName: auth.currentUser?.nom ?? '',
                       chefStatus: _stateToChefStatus(s),
                       chefId: auth.currentUser?.id,
+                      absenceReason: absenceReason,
                       configOverride: config,
                     );
                     if (!ok && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                       );
                     }
                   } : (_) {},
@@ -1355,7 +1452,7 @@ class _PointagePageState extends State<PointagePage> {
                     );
                     if (!ok && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                       );
                     }
                   },
@@ -1368,7 +1465,7 @@ class _PointagePageState extends State<PointagePage> {
                     );
                     if (!ok && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(tr(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                       );
                     }
                   },
@@ -1503,12 +1600,15 @@ class _PointagePageState extends State<PointagePage> {
             OutlinedButton.icon(
               onPressed: () async {
                 final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
-                final absentNames = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+                final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
+                final absentNames = absentWorkers.map((e) => e.nom).toList();
+                final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
                 final filePath = await PointageExportService.shareDailyReportPdf(
                   date: DateTime.now(),
                   title: trOf(context, 'report_presence_title'),
                   presentNames: presentNames,
                   absentNames: absentNames,
+                  absentReasons: absentReasons,
                   signatureLabel: trOf(context, 'pointage_signature_chef'),
                   personName: auth.currentUser?.nom ?? '',
                   equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
@@ -1649,12 +1749,15 @@ class _PointagePageState extends State<PointagePage> {
           OutlinedButton.icon(
             onPressed: () async {
               final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
-              final absentNames = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).map((e) => e.nom).toList();
+              final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
+              final absentNames = absentWorkers.map((e) => e.nom).toList();
+              final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
               final filePath = await PointageExportService.shareDailyReportPdf(
                 date: DateTime.now(),
                 title: trOf(context, 'report_presence_title'),
                 presentNames: presentNames,
                 absentNames: absentNames,
+                absentReasons: absentReasons,
                 signatureLabel: trOf(context, 'pointage_signature_chef'),
                 personName: auth.currentUser?.nom ?? '',
                 equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,

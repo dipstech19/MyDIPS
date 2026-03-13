@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
+import '../../core/site/site_model.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import 'models/employe_model.dart';
@@ -36,18 +38,35 @@ class _EmployeesPageState extends State<EmployeesPage>
     super.dispose();
   }
 
-  List<Employe> _employes(EmployeesProvider prov, AuthProvider auth) {
-    if (auth.isDirecteur) return prov.employes;
-    final eqId = auth.equipeId;
-    if (eqId == null || eqId.isEmpty) return [];
-    final eq = prov.equipes.where((e) => e.id == eqId).toList();
-    if (eq.isEmpty) return [];
-    final ids = [...eq.first.membreIds, eq.first.chefId];
-    return prov.employes.where((e) => ids.contains(e.id)).toList();
+  List<Employe> _employes(EmployeesProvider prov, AuthProvider auth, SiteProvider? site) {
+    List<Employe> base;
+    if (auth.isDirecteur) {
+      base = SiteId.filterBySite(
+        prov.employes,
+        auth.currentUser?.allowedSiteIds,
+        auth.currentUser?.isSuperAdmin == true ? site?.selectedSiteId : null,
+        (e) => e.siteId,
+      );
+    } else {
+      final eqId = auth.equipeId;
+      if (eqId == null || eqId.isEmpty) return [];
+      final eq = prov.equipes.where((e) => e.id == eqId).toList();
+      if (eq.isEmpty) return [];
+      final ids = [...eq.first.membreIds, eq.first.chefId];
+      base = prov.employes.where((e) => ids.contains(e.id)).toList();
+    }
+    return base;
   }
 
-  List<Equipe> _equipes(EmployeesProvider prov, AuthProvider auth) {
-    if (auth.isDirecteur) return prov.equipes;
+  List<Equipe> _equipes(EmployeesProvider prov, AuthProvider auth, SiteProvider? site) {
+    if (auth.isDirecteur) {
+      return SiteId.filterBySite(
+        prov.equipes,
+        auth.currentUser?.allowedSiteIds,
+        auth.currentUser?.isSuperAdmin == true ? site?.selectedSiteId : null,
+        (e) => e.siteId,
+      );
+    }
     final eqId = auth.equipeId;
     if (eqId == null || eqId.isEmpty) return [];
     return prov.equipes.where((e) => e.id == eqId).toList();
@@ -122,9 +141,10 @@ class _EmployeesPageState extends State<EmployeesPage>
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final site = context.watch<SiteProvider>();
     final prov = context.watch<EmployeesProvider>();
-    final employes = _employes(prov, auth);
-    final equipes = _equipes(prov, auth);
+    final employes = _employes(prov, auth, site);
+    final equipes = _equipes(prov, auth, site);
     final filtered = _filtered(employes);
 
     final padding = pagePadding(context);
@@ -366,6 +386,7 @@ class _EmployeesPageState extends State<EmployeesPage>
 
   Widget _employesTable(BuildContext context, List<Employe> employes, List<Employe> filtered, bool isDirecteur, EmployeesProvider prov) {
     final mobile = isMobile(context);
+    final isChefOnly = !isDirecteur;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -384,12 +405,17 @@ class _EmployeesPageState extends State<EmployeesPage>
             ),
             child: Row(children: [
               const Expanded(flex: 3, child: Text('Employé', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              const Expanded(flex: 2, child: Text('Poste / Magasin', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              const Expanded(flex: 2, child: Text('Contrat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              if (isDirecteur) const Expanded(flex: 1, child: Text('Salaire', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              if (!isChefOnly) ...[
+                const Expanded(flex: 2, child: Text('Poste / Magasin', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                const Expanded(flex: 2, child: Text('Contrat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                if (isDirecteur) const Expanded(flex: 1, child: Text('Salaire', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              ],
               const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              SizedBox(width: mobile ? 140 : 160, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              if (isChefOnly)
+                const SizedBox(width: 60, child: Text('', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+              if (!isChefOnly)
+                SizedBox(width: mobile ? 140 : 160, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
             ]),
           ),
           const Divider(height: 1),
@@ -425,31 +451,33 @@ class _EmployeesPageState extends State<EmployeesPage>
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 12 : 13)),
-                                  Text(e.cin, style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
+                                  Text('CIN: ${e.cin}', style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
                                 ]),
                           ),
                         ])),
-                        Expanded(flex: 2, child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(e.poste, style: TextStyle(fontSize: mobile ? 12 : 13)),
-                              Text(e.magasin, style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
-                            ])),
-                        Expanded(flex: 2, child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: e.typeContrat == 'CDI' ? Colors.blue.shade50 : Colors.orange.shade50,
-                                  borderRadius: BorderRadius.circular(4),
+                        if (!isChefOnly) ...[
+                          Expanded(flex: 2, child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(e.poste, style: TextStyle(fontSize: mobile ? 12 : 13)),
+                                Text(e.magasin, style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
+                              ])),
+                          Expanded(flex: 2, child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: e.typeContrat == 'CDI' ? Colors.blue.shade50 : Colors.orange.shade50,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? Colors.blue : Colors.orange, fontWeight: FontWeight.bold)),
                                 ),
-                                child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? Colors.blue : Colors.orange, fontWeight: FontWeight.bold)),
-                              ),
-                              Text('Depuis ${e.dateDebut}', style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
-                            ])),
-                        Expanded(flex: 2, child: Text(_getChefNom(e.chefDirectId, employes), style: TextStyle(fontSize: mobile ? 12 : 13))),
-                        if (isDirecteur) Expanded(flex: 1, child: Text('${e.salaireBase.toInt()} DH', style: TextStyle(fontSize: mobile ? 12 : 13, fontWeight: FontWeight.w600))),
+                                Text('Depuis ${e.dateDebut}', style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
+                              ])),
+                          Expanded(flex: 2, child: Text(_getChefNom(e.chefDirectId, employes), style: TextStyle(fontSize: mobile ? 12 : 13))),
+                          if (isDirecteur) Expanded(flex: 1, child: Text('${e.salaireBase.toInt()} DH', style: TextStyle(fontSize: mobile ? 12 : 13, fontWeight: FontWeight.w600))),
+                        ],
                         Expanded(flex: 2, child: Container(
                           padding: EdgeInsets.symmetric(horizontal: mobile ? 6 : 10, vertical: 4),
                           decoration: BoxDecoration(
@@ -465,6 +493,9 @@ class _EmployeesPageState extends State<EmployeesPage>
                             ],
                           ),
                         )),
+                        if (isChefOnly)
+                          const SizedBox(width: 60),
+                        if (!isChefOnly)
                         SizedBox(
                           width: mobile ? 140 : 160,
                           child: isDirecteur

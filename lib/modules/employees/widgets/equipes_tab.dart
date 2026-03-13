@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
+import '../../../core/site/site_model.dart';
+import '../../../core/site/site_provider.dart';
 import '../models/equipe_model.dart';
 import '../models/employe_model.dart';
 
@@ -342,6 +344,14 @@ class _EquipesTabState extends State<EquipesTab> {
   // DIALOG - Ajouter Équipe
   void _showAddEquipeDialog(BuildContext context) {
     final nomCtrl = TextEditingController();
+    final auth = context.read<AuthProvider>();
+    final site = context.read<SiteProvider>();
+    String selectedSiteId = auth.currentUser?.allowedSiteIds != null &&
+            auth.currentUser!.allowedSiteIds!.isNotEmpty &&
+            auth.currentUser!.allowedSiteIds!.first != SiteId.all
+        ? auth.currentUser!.allowedSiteIds!.first
+        : (site.selectedSiteId ?? SiteId.jadida);
+    if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
     String selectedMagasin = 'El Jadida #1';
     String selectedChefId = widget.employes.isNotEmpty
         ? widget.employes.first.id
@@ -395,6 +405,22 @@ class _EquipesTabState extends State<EquipesTab> {
                       setStateD(() => selectedMagasin = v!),
                 ),
                 const SizedBox(height: 14),
+                // Zone
+                DropdownButtonFormField<String>(
+                  value: selectedSiteId,
+                  decoration: InputDecoration(
+                    labelText: 'Zone (الموقع) *',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                  ),
+                  items: [
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+                  ],
+                  onChanged: (v) => setStateD(() => selectedSiteId = v ?? SiteId.jadida),
+                ),
+                const SizedBox(height: 14),
                 // Chef
                 DropdownButtonFormField<String>(
                   value: selectedChefId,
@@ -428,6 +454,7 @@ class _EquipesTabState extends State<EquipesTab> {
                     nom: nomCtrl.text,
                     magasin: selectedMagasin,
                     chefId: selectedChefId,
+                    siteId: selectedSiteId,
                   ));
                   Navigator.pop(context);
                 }

@@ -8,6 +8,7 @@ import 'package:excel/excel.dart' as excel;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/pointage_model.dart';
+import '../models/absence_reason_config.dart';
 
 class PointageExportRow {
   final String employeId;
@@ -18,6 +19,8 @@ class PointageExportRow {
   final double totalHours;
   final double overtimeHours;
   final Map<DateTime, String> hoursByDay;
+  /// لكل يوم غياب، معرف السبب (للتلوين في Excel).
+  final Map<DateTime, String?> absenceReasonIdByDay;
 
   const PointageExportRow({
     required this.employeId,
@@ -28,12 +31,16 @@ class PointageExportRow {
     required this.totalHours,
     required this.overtimeHours,
     required this.hoursByDay,
+    this.absenceReasonIdByDay = const {},
   });
 }
 
 class PointageExportService {
   static final _dateFormat = DateFormat('dd/MM/yyyy');
   static final _timeFormat = DateFormat('HH:mm');
+
+  /// عدد ساعات العمل المعتمدة لكل يوم (لاحتساب Total heures في Excel).
+  static const double hoursPerDay = 8.0;
 
   // ═══════════════════════════════════════════════════════════════════════
   // PDF
@@ -44,6 +51,7 @@ class PointageExportService {
     required String title,
     required List<String> presentNames,
     required List<String> absentNames,
+    List<String?>? absentReasons,
     required String signatureLabel,
     String? personName,
     String? equipeName,
@@ -96,7 +104,7 @@ class PointageExportService {
             style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
           ),
           pw.SizedBox(height: 8),
-          _buildPresenceTable(presentNames, absentNames),
+          _buildPresenceTable(presentNames, absentNames, absentReasons ?? List.filled(absentNames.length, null)),
           pw.SizedBox(height: 8),
           pw.Text(
             'Présents: ${presentNames.length}    Absents: ${absentNames.length}',
@@ -124,14 +132,17 @@ class PointageExportService {
     return pdf.save();
   }
 
-  /// جدول واحد يحتوي على كل الأسماء مع خانة حاضر/غائب.
+  /// جدول واحد يحتوي على كل الأسماء مع خانة حاضر/غائب وسبب الغياب.
   static pw.Widget _buildPresenceTable(
     List<String> presentNames,
     List<String> absentNames,
+    List<String?> absentReasons,
   ) {
     final rows = <pw.TableRow>[];
+    if (absentReasons.length != absentNames.length) {
+      absentReasons = List.filled(absentNames.length, null);
+    }
 
-    // رأس الجدول
     rows.add(
       pw.TableRow(
         decoration: const pw.BoxDecoration(color: PdfColors.grey300),
@@ -140,13 +151,12 @@ class PointageExportService {
           _presenceCell('Nom', header: true),
           _presenceCell('Présent', header: true, align: pw.TextAlign.center),
           _presenceCell('Absent', header: true, align: pw.TextAlign.center),
+          _presenceCell('Raison absence', header: true),
         ],
       ),
     );
 
     int index = 1;
-
-    // الحاضرون
     for (final name in presentNames) {
       rows.add(
         pw.TableRow(
@@ -155,27 +165,27 @@ class PointageExportService {
             _presenceCell(name),
             _presenceCell('X', align: pw.TextAlign.center),
             _presenceCell('', align: pw.TextAlign.center),
+            _presenceCell(''),
           ],
         ),
       );
       index++;
     }
-
-    // الغائبون
-    for (final name in absentNames) {
+    for (int i = 0; i < absentNames.length; i++) {
+      final reason = i < absentReasons.length ? getAbsenceReasonLabel(absentReasons[i]) : '';
       rows.add(
         pw.TableRow(
           children: [
             _presenceCell('$index', align: pw.TextAlign.center),
-            _presenceCell(name),
+            _presenceCell(absentNames[i]),
             _presenceCell('', align: pw.TextAlign.center),
             _presenceCell('X', align: pw.TextAlign.center),
+            _presenceCell(reason),
           ],
         ),
       );
       index++;
     }
-
     if (presentNames.isEmpty && absentNames.isEmpty) {
       rows.add(
         pw.TableRow(
@@ -184,6 +194,7 @@ class PointageExportService {
             _presenceCell('Aucune donnée'),
             _presenceCell('', align: pw.TextAlign.center),
             _presenceCell('', align: pw.TextAlign.center),
+            _presenceCell(''),
           ],
         ),
       );
@@ -193,9 +204,10 @@ class PointageExportService {
       border: pw.TableBorder.all(width: 0.3),
       columnWidths: {
         0: const pw.FixedColumnWidth(24),
-        1: const pw.FlexColumnWidth(3),
-        2: const pw.FixedColumnWidth(55),
-        3: const pw.FixedColumnWidth(55),
+        1: const pw.FlexColumnWidth(2),
+        2: const pw.FixedColumnWidth(45),
+        3: const pw.FixedColumnWidth(45),
+        4: const pw.FlexColumnWidth(2),
       },
       defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
       children: rows,
@@ -278,7 +290,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> absentNames})> equipes,
+    required List<({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     if (equipes.isEmpty) return Uint8List(0);
     final logo = await _loadLogo();
@@ -324,7 +336,7 @@ class PointageExportService {
               style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
             ),
             pw.SizedBox(height: 8),
-            _buildPresenceTable(eq.presentNames, eq.absentNames),
+            _buildPresenceTable(eq.presentNames, eq.absentNames, eq.absentReasons),
             pw.SizedBox(height: 8),
             pw.Text(
               'Présents: ${eq.presentNames.length}    Absents: ${eq.absentNames.length}',
@@ -359,7 +371,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> absentNames})> equipes,
+    required List<({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     final bytes = await buildDailyReportPdfMulti(
       date: date,
@@ -379,6 +391,7 @@ class PointageExportService {
     required String title,
     required List<String> presentNames,
     required List<String> absentNames,
+    List<String?>? absentReasons,
     required String signatureLabel,
     String? personName,
     String? equipeName,
@@ -388,6 +401,7 @@ class PointageExportService {
       title: title,
       presentNames: presentNames,
       absentNames: absentNames,
+      absentReasons: absentReasons,
       signatureLabel: signatureLabel,
       personName: personName,
       equipeName: equipeName,
@@ -409,6 +423,7 @@ class PointageExportService {
     required DateTime startDate,
     required DateTime endDate,
     required List<PointageExportRow> rows,
+    List<AbsenceReasonConfig>? reasonConfigs,
   }) async {
     final start = DateTime(startDate.year, startDate.month, startDate.day);
     final end = DateTime(endDate.year, endDate.month, endDate.day);
@@ -458,45 +473,96 @@ class PointageExportService {
             'Du ${_dateFormat.format(start)} au ${_dateFormat.format(end)}'),
       );
 
-      // رؤوس الأعمدة
+      // رؤوس الأعمدة (منسّقة بشكل أوضح)
       int col = 0;
       const headerRow = 3;
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Employe'));
-      for (final d in days) {
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-            excel.TextCellValue(_dateFormat.format(d)));
-      }
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Jours travailles'));
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Jours absents'));
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Total heures'));
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Heures sup.'));
-      sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-          excel.TextCellValue('Total'));
+      final headerStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+        bottomBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        topBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        leftBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        rightBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+      );
 
-      // بيانات الموظفين
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
+        excel.TextCellValue('Employe'),
+      );
+      sheet
+          .cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: headerRow))
+          .cellStyle = headerStyle;
+      for (final d in days) {
+        final idx =
+            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idx, excel.TextCellValue(_dateFormat.format(d)));
+        sheet.cell(idx).cellStyle = headerStyle;
+      }
+      void _setHeader(String label) {
+        final idx =
+            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idx, excel.TextCellValue(label));
+        sheet.cell(idx).cellStyle = headerStyle;
+      }
+
+      _setHeader('Jours travailles');
+      _setHeader('Jours absents');
+      _setHeader('Total heures');
+      _setHeader('Heures sup.');
+      _setHeader('Total');
+
+      // بيانات الموظفين + تنسيق خلايا الأيام
       int rowIndex = headerRow + 1;
       for (final r in teamRows) {
         col = 0;
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
             excel.TextCellValue(r.employeNom));
+        int dayCol = 1;
         for (final d in days) {
           final val = r.hoursByDay[d] ?? '-';
-          sheet.updateCell(
-              excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-              excel.TextCellValue(val));
+          final cellIndex = excel.CellIndex.indexByColumnRow(columnIndex: dayCol, rowIndex: rowIndex);
+          sheet.updateCell(cellIndex, excel.TextCellValue(val));
+          // تلوين حسب الحالة:
+          // - "repos" (راحة): رمادي
+          // - "✓" (حضور): أخضر
+          // - "x" أو "x ..." (غياب): أحمر
+          final baseStyle = excel.CellStyle(
+            horizontalAlign: excel.HorizontalAlign.Center,
+            leftBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            rightBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            topBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            bottomBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+          );
+
+          final cell = sheet.cell(cellIndex);
+          cell.cellStyle = baseStyle;
+          dayCol++;
+          col = dayCol;
         }
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
@@ -537,9 +603,10 @@ class PointageExportService {
     required DateTime startDate,
     required DateTime endDate,
     required List<PointageExportRow> rows,
+    List<AbsenceReasonConfig>? reasonConfigs,
   }) async {
     final bytes = await buildPointageExcel(
-        startDate: startDate, endDate: endDate, rows: rows);
+        startDate: startDate, endDate: endDate, rows: rows, reasonConfigs: reasonConfigs);
     final name =
         'pointage_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
     return _saveAndOpen(bytes, name);
@@ -584,8 +651,10 @@ class PointageExportService {
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String nom, String equipeName})> employees,
+    required List<({String id, String nom, String equipeName, String? equipeId})> employees,
     required List<PointageRecord> records,
+    List<AbsenceReasonConfig>? reasonConfigs,
+    bool Function(DateTime date, String equipeId)? isRestDay,
   }) {
     final start = DateTime(startDate.year, startDate.month, startDate.day);
     final end = DateTime(endDate.year, endDate.month, endDate.day);
@@ -608,32 +677,38 @@ class PointageExportService {
       };
 
       int daysWorked = 0;
+      int restDaysCount = 0;
       double totalHours = 0;
       double overtimeHours = 0;
       final hoursByDay = <DateTime, String>{};
+      final absenceReasonIdByDay = <DateTime, String?>{};
 
       for (final d in days) {
+        if (emp.equipeId != null && isRestDay != null && isRestDay(d, emp.equipeId!)) {
+          hoursByDay[d] = 'repos';
+          restDaysCount++;
+          continue;
+        }
         final r = byDate[d];
         if (r != null && r.isFinalPresent) {
           daysWorked++;
-          double h = 0;
-          if (r.arrivalMarkedAt != null && r.departureMarkedAt != null) {
-            final minutes =
-                r.departureMarkedAt!.difference(r.arrivalMarkedAt!).inMinutes;
-            h = minutes / 60.0;
-            totalHours += h;
-          }
+          totalHours += hoursPerDay;
           final ot = (r.overtimeMinutes ?? 0) / 60.0;
           overtimeHours += ot;
-          hoursByDay[d] = h > 0
-              ? h.toStringAsFixed(1).replaceAll('.', ',')
-              : (ot > 0 ? '${ot.toStringAsFixed(1)} (sup.)' : '-');
+          hoursByDay[d] = '✓';
         } else {
-          hoursByDay[d] = '-';
+          final reasonLabel = r != null ? getAbsenceReasonLabel(r.absenceReason, reasonConfigs) : '';
+          hoursByDay[d] = reasonLabel.isEmpty ? 'x' : 'x $reasonLabel';
+          if (r != null && r.absenceReason != null) {
+            absenceReasonIdByDay[d] = r.absenceReason;
+            if (!isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs)) {
+              totalHours += hoursPerDay;
+            }
+          }
         }
       }
 
-      final daysAbsent = days.length - daysWorked;
+      final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
       rows.add(PointageExportRow(
         employeId: emp.id,
         employeNom: emp.nom,
@@ -643,6 +718,7 @@ class PointageExportService {
         totalHours: totalHours,
         overtimeHours: overtimeHours,
         hoursByDay: hoursByDay,
+        absenceReasonIdByDay: absenceReasonIdByDay,
       ));
     }
 
