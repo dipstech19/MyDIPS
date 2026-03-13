@@ -122,7 +122,8 @@ class PointageRepository {
   }
 
   /// تحديث حالة الشاف فقط (إن لم يكن التقرير مُرسلاً). يُسجّل وقت الدخول عند أول حضور.
-  Future<void> setChefStatus(PointageRecord record, ChefPointageStatus status, String? chefId) async {
+  /// [absenceReason] مطلوب عند الغياب (من الشاف أو الأدمن).
+  Future<void> setChefStatus(PointageRecord record, ChefPointageStatus status, String? chefId, {String? absenceReason}) async {
     final docId = _docId(record.employeId, record.date);
     final existing = await getByEmployeAndDate(record.employeId, record.date);
     if (existing != null && existing.chefLocked) return;
@@ -133,6 +134,7 @@ class PointageRepository {
       final updates = <String, dynamic>{
         'chefStatus': status.name,
         'markedByChefId': chefId,
+        'absenceReason': status == ChefPointageStatus.absent ? absenceReason : null,
       };
       if (setArrival) updates['arrivalMarkedAt'] = now;
       await _firestore.collection(_pointageCollection).doc(docId).update(updates);
@@ -141,6 +143,7 @@ class PointageRepository {
         chefStatus: status,
         markedByChefId: chefId,
         arrivalMarkedAt: setArrival ? DateTime.now() : null,
+        absenceReason: status == ChefPointageStatus.absent ? absenceReason : null,
       ).toMap();
       await _firestore.collection(_pointageCollection).doc(docId).set(map);
     }
@@ -212,11 +215,15 @@ class PointageRepository {
     }
   }
 
-  /// تعديل الأدمن النهائي (يمكن تغيير التقرير بعد إرسال الشاف والسائق)
-  Future<void> setAdminOverride(String docId, AttendanceStatus? status) async {
-    await _firestore.collection(_pointageCollection).doc(docId).update({
+  /// تعديل الأدمن النهائي (يمكن تغيير التقرير بعد إرسال الشاف والسائق).
+  /// [absenceReason] يُسجّل عند تعيين status = absent.
+  Future<void> setAdminOverride(String docId, AttendanceStatus? status, {String? absenceReason}) async {
+    final updates = <String, dynamic>{
       'adminFinalStatus': status?.name,
-    });
+      if (status == AttendanceStatus.absent) 'absenceReason': absenceReason,
+      if (status != AttendanceStatus.absent) 'absenceReason': null,
+    };
+    await _firestore.collection(_pointageCollection).doc(docId).update(updates);
   }
 
   /// إنشاء سجل نقطاج بتعديل أدمن فقط (عند عدم وجود سجل)

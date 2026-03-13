@@ -1,12 +1,10 @@
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
+/// Stub when FlutterFire CLI has not been run. Run `flutterfire configure` to generate real values.
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
-    if (kIsWeb) {
-      return web;
-    }
+    if (kIsWeb) return web;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
@@ -19,61 +17,55 @@ class DefaultFirebaseOptions {
       case TargetPlatform.linux:
         return linux;
       default:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions are not supported for this platform.',
-        );
+        return android;
     }
   }
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
-    appId: '1:581884367090:android:afa92063ebd997da35406b',
-    messagingSenderId: '581884367090',
-    projectId: 'dips-management',
-    storageBucket: 'dips-management.firebasestorage.app',
-  );
-
   static const FirebaseOptions web = FirebaseOptions(
-      apiKey: "AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4",
-      authDomain: "dips-management.firebaseapp.com",
-      projectId: "dips-management",
-      storageBucket: "dips-management.firebasestorage.app",
-      messagingSenderId: "581884367090",
-      appId: "1:581884367090:web:105605eb69c3032d35406b",
-      measurementId: "G-GZY5S9Y9ZE"
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    authDomain: 'stub',
+    storageBucket: 'stub',
   );
-
+  static const FirebaseOptions android = FirebaseOptions(
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    storageBucket: 'stub',
+  );
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
-    appId: '1:581884367090:ios:dips-management-ios',
-    messagingSenderId: '581884367090',
-    projectId: 'dips-management',
-    storageBucket: 'dips-management.firebasestorage.app',
-    iosBundleId: 'com.dipsmanagment.dipsmanagment',
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    storageBucket: 'stub',
+    iosBundleId: 'stub',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
-    appId: '1:581884367090:macos:dips-management-macos',
-    messagingSenderId: '581884367090',
-    projectId: 'dips-management',
-    storageBucket: 'dips-management.firebasestorage.app',
-    iosBundleId: 'com.dipsmanagment.dipsmanagment',
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    storageBucket: 'stub',
+    iosBundleId: 'stub',
   );
-
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
-    appId: '1:581884367090:web:dips-management-windows',
-    messagingSenderId: '581884367090',
-    projectId: 'dips-management',
-    storageBucket: 'dips-management.firebasestorage.app',
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    authDomain: 'stub',
+    storageBucket: 'stub',
   );
-
   static const FirebaseOptions linux = FirebaseOptions(
-    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
-    appId: '1:581884367090:web:dips-management-linux',
-    messagingSenderId: '581884367090',
-    projectId: 'dips-management',
-    storageBucket: 'dips-management.firebasestorage.app',
+    apiKey: 'stub',
+    appId: 'stub',
+    messagingSenderId: 'stub',
+    projectId: 'stub',
+    authDomain: 'stub',
+    storageBucket: 'stub',
   );
 }

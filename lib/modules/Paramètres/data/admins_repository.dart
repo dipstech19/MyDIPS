@@ -11,6 +11,8 @@ class AdminUser {
   bool actif;
   List<String> permissions;
   DateTime dateCreation;
+  List<String> siteIds;
+  String password;
 
   AdminUser({
     required this.id,
@@ -22,6 +24,8 @@ class AdminUser {
     required this.actif,
     required this.permissions,
     required this.dateCreation,
+    this.siteIds = const ['all'],
+    this.password = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -42,6 +46,7 @@ class AdminUser {
     DateTime dateCreation = DateTime.now();
     if (dc is Timestamp) dateCreation = dc.toDate();
     final perms = map['permissions'];
+    final sIds = map['siteIds'];
     return AdminUser(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
@@ -54,6 +59,10 @@ class AdminUser {
           ? perms.map((e) => e.toString()).toList()
           : [],
       dateCreation: dateCreation,
+      siteIds: sIds is List<dynamic>
+          ? sIds.map((e) => e.toString()).toList()
+          : ['all'],
+      password: map['password'] as String? ?? '',
     );
   }
 }

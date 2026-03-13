@@ -8,6 +8,7 @@ class AppUser {
   final UserRole role;
   final String? equipeId;
   final String? photoUrl;
+  final List<String>? siteIds;
 
   AppUser({
     required this.id,
@@ -17,7 +18,12 @@ class AppUser {
     required this.role,
     this.equipeId,
     this.photoUrl,
+    this.siteIds,
   });
+
+  bool get isSuperAdmin =>
+      siteIds != null && (siteIds!.contains('all') || siteIds!.isEmpty);
+  List<String>? get allowedSiteIds => siteIds;
 }
 
 /// المستخدمون الثابتون (Admin و Chefs)
@@ -28,6 +34,7 @@ final List<AppUser> appUsers = [
     username: 'admin',
     password: '1234',
     role: UserRole.directeur,
+    siteIds: ['all'],
   ),
   AppUser(
     id: 'u2',

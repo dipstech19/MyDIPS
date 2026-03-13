@@ -1,6 +1,8 @@
 import 'dart:io' as dart_io;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/auth_provider.dart';
+import '../../core/locale/app_locale.dart';
 import '../../core/utils/responsive.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import '../employees/data/postes_repository.dart';
@@ -14,6 +16,9 @@ import 'chauffeurs_provider.dart';
 import 'chef_comptes_provider.dart';
 import 'models/chauffeur_model.dart';
 import 'models/chef_compte_model.dart';
+import '../pointage/absence_reasons_provider.dart';
+import '../pointage/models/absence_reason_config.dart';
+import '../../core/site/site_model.dart';
 
 // Modèles locaux pour l'UI Chefs (affichage dérivé de Equipe + Employe)
 class _ChefEquipeView {
@@ -107,6 +112,7 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
+    _SettingsSection(icon: Icons.cancel_presentation_outlined, label: 'Raisons d\'absence'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
     _SettingsSection(icon: Icons.security, label: 'Sécurité'),
@@ -116,6 +122,10 @@ class _ParametresPageState extends State<ParametresPage> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    if (auth.isChefEquipe && !auth.isDirecteur) {
+      return const _ChefOnlyParametresView();
+    }
     final padding = pagePadding(context);
     final mobile = isMobile(context);
     return Column(
@@ -301,14 +311,130 @@ class _ParametresPageState extends State<ParametresPage> {
       case 2:  return const _ChefComptesSection();
       case 3:  return const _ChauffeursSection();
       case 4:  return const _PostesSection();
-      case 5:  return const _GeneralSection();
-      case 6:  return const _NotificationsSection();
-      case 7:  return const _SecuriteSection();
-      case 8:  return const _DatabaseSection();
-      case 9:  return const _AboutSection();
+      case 5:  return const _AbsenceReasonsSection();
+      case 6:  return const _GeneralSection();
+      case 7:  return const _NotificationsSection();
+      case 8:  return const _SecuriteSection();
+      case 9:  return const _DatabaseSection();
+      case 10: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
+}
+
+/// صفحة الإعدادات للشاف: اسمه، اللغة، تسجيل الخروج فقط.
+class _ChefOnlyParametresView extends StatelessWidget {
+  const _ChefOnlyParametresView();
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final locale = context.watch<LocaleProvider>();
+    final padding = pagePadding(context);
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(padding),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.settings_rounded, color: const Color(0xFF328EEE), size: 28),
+              const SizedBox(width: 12),
+              const Text(
+                'Paramètres',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1A2340)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Informations Chef d\'équipe',
+            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 4))],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _row('Nom', auth.currentUser?.nom ?? '—'),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    SizedBox(width: 120, child: Text('Langue', style: TextStyle(color: Colors.grey[600], fontSize: 13))),
+                    TextButton(
+                      onPressed: () => locale.setLocale('fr'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: locale.locale == 'fr' ? const Color(0xFF328EEE) : Colors.grey,
+                        textStyle: TextStyle(fontWeight: locale.locale == 'fr' ? FontWeight.bold : FontWeight.normal),
+                      ),
+                      child: Text(tr(context, 'french')),
+                    ),
+                    Text(' | ', style: TextStyle(color: Colors.grey[400])),
+                    TextButton(
+                      onPressed: () => locale.setLocale('ar'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: locale.locale == 'ar' ? const Color(0xFF328EEE) : Colors.grey,
+                        textStyle: TextStyle(fontWeight: locale.locale == 'ar' ? FontWeight.bold : FontWeight.normal),
+                      ),
+                      child: Text(tr(context, 'arabic')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: Text(tr(context, 'logout')),
+                        content: Text(tr(context, 'logout_confirm')),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(context), child: Text(tr(context, 'cancel'))),
+                          ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              context.read<AuthProvider>().logout();
+                            },
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                            child: Text(tr(context, 'disconnect')),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.logout, size: 18),
+                  label: Text(tr(context, 'logout')),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 120, child: Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 13))),
+        Expanded(child: Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
+      ],
+    ),
+  );
 }
 
 class _SuperAdminBadge extends StatelessWidget {
@@ -844,6 +970,7 @@ class _AdminsSectionState extends State<_AdminsSection> {
                         Expanded(flex: 3, child: _TH('NOM COMPLET')),
                         Expanded(flex: 2, child: _TH('TÉLÉPHONE')),
                         Expanded(flex: 2, child: _TH('RÔLE')),
+                        Expanded(flex: 2, child: _TH('ZONE')),
                         Expanded(flex: 2, child: _TH('STATUT')),
                         SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
                       ]),
@@ -1051,6 +1178,17 @@ class _AdminTableRowState extends State<_AdminTableRow> {
                   ),
                 ),
               ),
+              // ZONE
+              Expanded(
+                flex: 2,
+                child: Text(
+                  a.siteIds.isEmpty || a.siteIds.contains(SiteId.all)
+                      ? SiteId.labelFr(SiteId.all)
+                      : SiteId.labelFr(a.siteIds.first),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               // STATUT
               Expanded(
                 flex: 2,
@@ -1231,6 +1369,8 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   List<String> _perms = [];
   bool _actif = true;
   bool _showPwd = false;
+  /// Zone: 'all' = الكل، 'jadida' أو 'safi' = موقع واحد
+  String _siteId = SiteId.all;
 
   final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage'];
   final _allPerms = ['Employés', 'Pointage', 'Gestion Magasin', 'Rapports', 'Paramètres'];
@@ -1243,10 +1383,15 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     _prenomCtrl = TextEditingController(text: e?.prenom ?? '');
     _emailCtrl = TextEditingController(text: e?.email ?? '');
     _telCtrl   = TextEditingController(text: e?.telephone ?? '');
-    _pwdCtrl   = TextEditingController();
+    _pwdCtrl   = TextEditingController(text: '');
     _role  = e?.role ?? 'Admin RH';
     _perms = List.from(e?.permissions ?? []);
     _actif = e?.actif ?? true;
+    if (e?.siteIds != null && e!.siteIds.isNotEmpty && e.siteIds.first != SiteId.all) {
+      _siteId = e.siteIds.first;
+    } else {
+      _siteId = SiteId.all;
+    }
   }
 
   @override
@@ -1259,6 +1404,8 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     final isNew = widget.existing == null;
+    final siteIds = _siteId == SiteId.all ? [SiteId.all] : [_siteId];
+    final pwd = isNew ? _pwdCtrl.text : (widget.existing!.password);
     widget.onSave(AdminUser(
       id: isNew ? '' : widget.existing!.id,
       nom: _nomCtrl.text.trim(),
@@ -1268,6 +1415,8 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       role: _role,
       actif: _actif,
       permissions: _perms,
+      siteIds: siteIds,
+      password: pwd,
       dateCreation: widget.existing?.dateCreation ?? DateTime.now(),
     ));
     Navigator.of(context).pop();
@@ -1302,6 +1451,25 @@ class _AdminDrawerState extends State<_AdminDrawer> {
             const SizedBox(height: 12),
             _DrawerField(label: 'Téléphone *', controller: _telCtrl, hint: '06xx xx xx xx',
                 keyboardType: TextInputType.phone),
+            const SizedBox(height: 12),
+            _DrawerSection(label: 'ZONE / الموقع'),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<String>(
+              value: _siteId,
+              decoration: const InputDecoration(
+                labelText: 'Zone (الجديدة / آسفي / الكل)',
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                filled: true,
+                fillColor: Color(0xFFF8FAFC),
+              ),
+              items: [
+                DropdownMenuItem(value: SiteId.all, child: Text(SiteId.labelFr(SiteId.all))),
+                DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+              ],
+              onChanged: (v) => setState(() => _siteId = v ?? SiteId.all),
+            ),
             if (!isEdit) ...[
               const SizedBox(height: 12),
               // Password with eye toggle
@@ -3439,6 +3607,200 @@ void _confirmDeletePoste(BuildContext context, PostesProvider prov, Poste p) {
           style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
           onPressed: () async {
             await prov.deletePoste(p.id);
+            if (context.mounted) Navigator.pop(context);
+          },
+          child: const Text('Supprimer'),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────
+//  SECTION: RAISONS D'ABSENCE
+// ─────────────────────────────────────────────
+
+class _AbsenceReasonsSection extends StatelessWidget {
+  const _AbsenceReasonsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<AbsenceReasonsProvider>();
+    final list = prov.reasons;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(
+            title: 'Raisons d\'absence',
+            subtitle: 'Définir les motifs d\'absence et indiquer si chacun est déduit du salaire ou non.',
+          ),
+          const SizedBox(height: 20),
+          if (!prov.firebaseAvailable)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(
+                'Firebase indisponible. Les raisons ne peuvent pas être enregistrées.',
+                style: TextStyle(fontSize: 13, color: Colors.orange[800]),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text('Ajouter une raison'),
+                onPressed: () => _showAbsenceReasonDialog(context, prov, null),
+              ),
+            ),
+          if (prov.loading)
+            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+          else if (list.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Aucune raison d\'absence. Ajoutez-en pour que le chef et l\'admin puissent les choisir lors d\'un pointage absent (ex: Maladie, Paternité, Mariage).',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final r = list[i];
+                return Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: r.deductFromSalary ? Colors.red.withOpacity(0.12) : Colors.green.withOpacity(0.12),
+                      child: Icon(
+                        r.deductFromSalary ? Icons.remove_circle_outline : Icons.check_circle_outline,
+                        color: r.deductFromSalary ? Colors.red : Colors.green,
+                        size: 22,
+                      ),
+                    ),
+                    title: Text(r.label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: Text(
+                      r.deductFromSalary ? 'Déduit du salaire' : 'Non déduit (ex: congé payé)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          onPressed: () => _showAbsenceReasonDialog(context, prov, r),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[400]),
+                          onPressed: () => _confirmDeleteAbsenceReason(context, prov, r),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showAbsenceReasonDialog(BuildContext context, AbsenceReasonsProvider prov, AbsenceReasonConfig? existing) {
+  final labelCtrl = TextEditingController(text: existing?.label ?? '');
+  bool deductFromSalary = existing?.deductFromSalary ?? true;
+  final navigator = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  showDialog(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (ctx, setDialogState) => AlertDialog(
+        title: Text(existing == null ? 'Nouvelle raison d\'absence' : 'Modifier la raison'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: labelCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Libellé',
+                  hintText: 'Ex: Maladie, Paternité, Mariage',
+                ),
+                autofocus: true,
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Déduire du salaire'),
+                subtitle: const Text('Si activé, les heures/salaire sont déduits pour ce motif. Sinon, congé payé.'),
+                value: deductFromSalary,
+                onChanged: (v) => setDialogState(() => deductFromSalary = v),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => navigator.pop(), child: const Text('Annuler')),
+          ElevatedButton(
+            onPressed: () async {
+              final label = labelCtrl.text.trim();
+              if (label.isEmpty) {
+                messenger.showSnackBar(const SnackBar(content: Text('Entrez un libellé')));
+                return;
+              }
+              try {
+                if (existing == null) {
+                  await prov.add(AbsenceReasonConfig(
+                    id: '',
+                    label: label,
+                    deductFromSalary: deductFromSalary,
+                    order: prov.reasons.length,
+                  ));
+                } else {
+                  await prov.update(existing.copyWith(label: label, deductFromSalary: deductFromSalary));
+                }
+                if (dialogContext.mounted) navigator.pop();
+                if (context.mounted) {
+                  messenger.showSnackBar(SnackBar(
+                    content: Text(existing == null ? 'Raison « $label » ajoutée.' : 'Raison mise à jour.'),
+                  ));
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  messenger.showSnackBar(SnackBar(
+                    content: Text('Erreur: ${e.toString().replaceFirst(RegExp(r'^\[[\w-]+/\w+\]\s*'), '')}'),
+                    backgroundColor: Colors.red,
+                  ));
+                }
+              }
+            },
+            child: const Text('Enregistrer'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+void _confirmDeleteAbsenceReason(BuildContext context, AbsenceReasonsProvider prov, AbsenceReasonConfig r) {
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Supprimer la raison'),
+      content: Text("Supprimer « ${r.label} » ? Les pointages déjà enregistrés avec ce motif garderont l'historique."),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+          onPressed: () async {
+            await prov.delete(r.id);
             if (context.mounted) Navigator.pop(context);
           },
           child: const Text('Supprimer'),

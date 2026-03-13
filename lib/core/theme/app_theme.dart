@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-/// Design system colors — light theme
 class AppColors {
-  static const Color bg = Color(0xFFF8FAFC);
-  static const Color surface = Colors.white;
-  static const Color surface2 = Color(0xFFF1F5F9);
-  static const Color border = Color(0xFFE2E8F0);
+  // ثيم فاتح — خلفيات فاتحة ونص داكن
+  static const Color bg = Color(0xFFF5F7FA);
+  static const Color surface = Color(0xFFFFFFFF);
+  static const Color surface2 = Color(0xFFEEF1F5);
+  static const Color border = Color(0xFFD1D5DB);
   static const Color accent = Color(0xFF1565C0);
   static const Color accentPurple = Color(0xFF7C3AED);
   static const Color green = Color(0xFF10B981);
@@ -15,13 +15,12 @@ class AppColors {
   static const Color textMuted = Color(0xFF64748B);
 }
 
-/// App theme — light theme
 ThemeData get appTheme => ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.bg,
       primaryColor: AppColors.accent,
-      colorScheme: ColorScheme.light(
+      colorScheme: const ColorScheme.light(
         primary: AppColors.accent,
         secondary: AppColors.accentPurple,
         surface: AppColors.surface,
@@ -32,14 +31,14 @@ ThemeData get appTheme => ThemeData(
         onError: Colors.white,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
       ),
       cardTheme: CardThemeData(
-        color: Colors.white,
-        elevation: 1,
+        color: AppColors.surface2,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: const BorderSide(color: AppColors.border, width: 1),
@@ -47,7 +46,7 @@ ThemeData get appTheme => ThemeData(
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.surface2,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -68,3 +67,11 @@ ThemeData get appTheme => ThemeData(
         titleLarge: TextStyle(color: AppColors.textPrimary),
       ),
     );
+
+TextScaler textScaler(BuildContext context) {
+  final data = MediaQuery.of(context);
+  final scale = data.textScaler.scale(1.0);
+  if (scale > 1.3) return TextScaler.linear(1.3);
+  if (scale < 0.9) return TextScaler.linear(0.9);
+  return data.textScaler;
+}
