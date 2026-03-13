@@ -54,6 +54,8 @@ class Employe {
   final EmployeStatut statut;
   final List<Document> documents;
   final String photoUrl;
+  /// موقع العمل: jadida | safi (الجدية / آسفي)
+  final String siteId;
 
   Employe({
     required this.id,
@@ -77,6 +79,7 @@ class Employe {
     required this.statut,
     this.documents = const [],
     this.photoUrl = '',
+    this.siteId = 'jadida',
   });
 
   Map<String, dynamic> toMap() {
@@ -100,6 +103,7 @@ class Employe {
       'dateCnss': dateCnss,
       'statut': statut.name,
       'photoUrl': photoUrl,
+      'siteId': siteId,
       'documents': documents.map((d) => {
             'id': d.id,
             'nom': d.nom,
@@ -170,6 +174,7 @@ class Employe {
       statut: statut,
       documents: documentList,
       photoUrl: map['photoUrl'] as String? ?? '',
+      siteId: map['siteId'] as String? ?? 'jadida',
     );
   }
 
@@ -195,6 +200,7 @@ class Employe {
     EmployeStatut? statut,
     List<Document>? documents,
     String? photoUrl,
+    String? siteId,
   }) {
     return Employe(
       id: id ?? this.id,
@@ -218,6 +224,7 @@ class Employe {
       statut: statut ?? this.statut,
       documents: documents ?? this.documents,
       photoUrl: photoUrl ?? this.photoUrl,
+      siteId: siteId ?? this.siteId,
     );
   }
 }

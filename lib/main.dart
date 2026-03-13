@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'core/auth/auth_provider.dart';
 import 'core/auth/login_page.dart';
 import 'core/locale/app_locale.dart';
+import 'core/site/site_model.dart';
+import 'core/site/site_provider.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/responsive.dart';
 import 'layout/main_layout.dart';
@@ -13,6 +15,7 @@ import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
 import 'modules/pointage/pointage_provider.dart';
+import 'modules/pointage/absence_reasons_provider.dart';
 import 'modules/shifts/shifts_provider.dart';
 import 'modules/magasin/magasin_provider.dart';
 import 'modules/employees/conges_provider.dart';
@@ -31,6 +34,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => SiteProvider()),
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => EmployeesProvider()),
         ChangeNotifierProvider(create: (_) => PostesProvider()),
@@ -38,6 +42,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),
         ChangeNotifierProvider(create: (_) => PointageProvider()),
+        ChangeNotifierProvider(create: (_) => AbsenceReasonsProvider()),
         ChangeNotifierProvider(create: (_) => ShiftsProvider()),
         ChangeNotifierProvider(create: (_) => MagasinProvider()),
         ChangeNotifierProvider(create: (_) => CongesProvider()),

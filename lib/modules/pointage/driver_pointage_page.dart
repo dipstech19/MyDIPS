@@ -212,21 +212,24 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             if (teams.isNotEmpty)
               OutlinedButton.icon(
                 onPressed: () async {
-                  final equipes = <({String equipeName, List<String> presentNames, List<String> absentNames})>[];
+                  final equipes = <({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})>[];
                   for (final t in teams) {
                     final workersForExport = t.workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus != AttendanceStatus.training).toList();
                     final presentNames = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
                       return s == AttendanceState.present || s == AttendanceState.notInVehicle;
                     }).map((e) => e.nom).toList();
-                    final absentNames = workersForExport.where((e) {
+                    final absentWorkers = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
                       return s != AttendanceState.present && s != AttendanceState.notInVehicle;
-                    }).map((e) => e.nom).toList();
+                    }).toList();
+                    final absentNames = absentWorkers.map((e) => e.nom).toList();
+                    final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
                     equipes.add((
                       equipeName: t.equipeName,
                       presentNames: presentNames,
                       absentNames: absentNames,
+                      absentReasons: absentReasons,
                     ));
                   }
                   final filePath = await PointageExportService.shareDailyReportPdfForDriver(

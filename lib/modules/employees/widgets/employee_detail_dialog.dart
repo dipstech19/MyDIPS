@@ -34,6 +34,63 @@ class EmployeeDetailDialog extends StatelessWidget {
     final e = employe;
     final maxWidth = MediaQuery.sizeOf(context).width * 0.95;
     final dialogWidth = (640 > maxWidth) ? maxWidth : 640.0;
+    if (!isDirecteur) {
+      return Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: dialogWidth,
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  SmartAvatar(
+                    imageUrl: e.photoUrl,
+                    fallbackText: e.nom,
+                    radius: 32,
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.nom, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, maxLines: 1),
+                        const SizedBox(height: 4),
+                        Text('CIN: ${e.cin}', style: TextStyle(color: Colors.grey[600], fontSize: 14), overflow: TextOverflow.ellipsis, maxLines: 1),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: e.statut.color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(e.statut.icon, color: e.statut.color, size: 14),
+                              const SizedBox(width: 6),
+                              Text(e.statut.label, style: TextStyle(color: e.statut.color, fontWeight: FontWeight.w600, fontSize: 12), overflow: TextOverflow.ellipsis),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 22),
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
@@ -45,7 +102,6 @@ class EmployeeDetailDialog extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // HEADER
               Row(
                 children: [
                   SmartAvatar(
@@ -99,22 +155,20 @@ class EmployeeDetailDialog extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  if (isDirecteur)
-                    IconButton(
-                      onPressed: () => _editEmployee(context),
-                      icon: const Icon(Icons.edit, color: Colors.green, size: 22),
-                      tooltip: 'Modifier',
-                      padding: const EdgeInsets.all(6),
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                  if (isDirecteur)
-                    IconButton(
-                      onPressed: () => _downloadPdf(context),
-                      icon: const Icon(Icons.picture_as_pdf, color: Colors.red, size: 22),
-                      tooltip: 'Télécharger PDF',
-                      padding: const EdgeInsets.all(6),
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
+                  IconButton(
+                    onPressed: () => _editEmployee(context),
+                    icon: const Icon(Icons.edit, color: Colors.green, size: 22),
+                    tooltip: 'Modifier',
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                  IconButton(
+                    onPressed: () => _downloadPdf(context),
+                    icon: const Icon(Icons.picture_as_pdf, color: Colors.red, size: 22),
+                    tooltip: 'Télécharger PDF',
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close, size: 22),
@@ -124,8 +178,6 @@ class EmployeeDetailDialog extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-
-              // TABS
               TabBar(
                 labelColor: const Color(0xFF1565C0),
                 unselectedLabelColor: Colors.grey,
@@ -138,12 +190,9 @@ class EmployeeDetailDialog extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-
-              // TAB CONTENT
               Expanded(
                 child: TabBarView(
                   children: [
-                    // TAB 1 - IDENTITÉ
                     SingleChildScrollView(
                       child: Column(children: [
                         _card(children: [
@@ -161,8 +210,6 @@ class EmployeeDetailDialog extends StatelessWidget {
                         ]),
                       ]),
                     ),
-
-                    // TAB 2 - CONTRAT
                     SingleChildScrollView(
                       child: Column(children: [
                         _card(children: [
@@ -177,24 +224,18 @@ class EmployeeDetailDialog extends StatelessWidget {
                           _row('Date début', e.dateDebut),
                           if (e.finContrat.isNotEmpty)
                             _row('Fin contrat', e.finContrat),
-                          if (isDirecteur)
-                            _row('Salaire base',
-                                '${e.salaireBase.toInt()} DH'),
+                          _row('Salaire base', '${e.salaireBase.toInt()} DH'),
                         ]),
                         const SizedBox(height: 12),
-                        _PresenceLeaveCard(employe: e, isDirecteur: isDirecteur),
+                        _PresenceLeaveCard(employe: e, isDirecteur: true),
                       ]),
                     ),
-
-                    // TAB 3 - CNSS
                     SingleChildScrollView(
                       child: _card(children: [
                         _row('Numéro CNSS', e.cnss),
                         _row('Date inscription', e.dateCnss),
                       ]),
                     ),
-
-                    // TAB 4 - DOCUMENTS
                     DocumentsTab(employe: e),
                   ],
                 ),

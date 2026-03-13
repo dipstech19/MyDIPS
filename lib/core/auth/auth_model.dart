@@ -8,6 +8,8 @@ class AppUser {
   final UserRole role;
   final String? equipeId;
   final String? photoUrl;
+  /// للمشرفين: null أو ["all"] = أدمن عام (كل المواقع)، ["jadida"] أو ["safi"] = مشرف موقع واحد
+  final List<String>? siteIds;
 
   AppUser({
     required this.id,
@@ -17,7 +19,16 @@ class AppUser {
     required this.role,
     this.equipeId,
     this.photoUrl,
+    this.siteIds,
   });
+
+  /// أدمن عام يرى كل المواقع ويمكنه الفلترة
+  bool get isSuperAdmin =>
+      role == UserRole.directeur && (siteIds == null || siteIds!.isEmpty || siteIds!.contains('all'));
+
+  /// المواقع المسموح بها للمشرف (null = الكل، غير null = قائمة المواقع فقط)
+  List<String>? get allowedSiteIds =>
+      (siteIds == null || siteIds!.isEmpty || siteIds!.contains('all')) ? null : siteIds;
 }
 
 /// المستخدمون الثابتون (Admin و Chefs)

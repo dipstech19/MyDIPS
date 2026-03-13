@@ -9,6 +9,8 @@ class Equipe {
   final int? pointageStartMinute;
   final int? pointageEndHour;
   final int? pointageEndMinute;
+  /// موقع الفريق: jadida | safi
+  final String siteId;
 
   Equipe({
     required this.id,
@@ -16,6 +18,7 @@ class Equipe {
     required this.magasin,
     required this.chefId,
     this.membreIds = const [],
+    this.siteId = 'jadida',
     this.pointageStartHour,
     this.pointageStartMinute,
     this.pointageEndHour,
@@ -31,6 +34,7 @@ class Equipe {
     int? pointageStartMinute,
     int? pointageEndHour,
     int? pointageEndMinute,
+    String? siteId,
   }) {
     return Equipe(
       id: id,
@@ -38,6 +42,7 @@ class Equipe {
       magasin: magasin ?? this.magasin,
       chefId: chefId ?? this.chefId,
       membreIds: membreIds ?? this.membreIds,
+      siteId: siteId ?? this.siteId,
       pointageStartHour: pointageStartHour ?? this.pointageStartHour,
       pointageStartMinute: pointageStartMinute ?? this.pointageStartMinute,
       pointageEndHour: pointageEndHour ?? this.pointageEndHour,
@@ -51,6 +56,7 @@ class Equipe {
       'magasin': magasin,
       'chefId': chefId,
       'membreIds': membreIds,
+      'siteId': siteId,
     };
     if (pointageStartHour != null) m['pointageStartHour'] = pointageStartHour;
     if (pointageStartMinute != null) m['pointageStartMinute'] = pointageStartMinute;
@@ -70,6 +76,7 @@ class Equipe {
       nom: map['nom'] as String? ?? '',
       magasin: map['magasin'] as String? ?? '',
       chefId: map['chefId'] as String? ?? '',
+      siteId: map['siteId'] as String? ?? 'jadida',
       membreIds: membreIds is List<dynamic>
           ? membreIds.map((e) => e.toString()).toList()
           : const [],

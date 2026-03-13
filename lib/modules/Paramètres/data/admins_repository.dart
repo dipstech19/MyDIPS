@@ -10,6 +10,9 @@ class AdminUser {
   String role;
   bool actif;
   List<String> permissions;
+  /// المواقع المسموح بها: [] أو ["all"] = الكل، ["jadida"] أو ["safi"] = موقع واحد
+  List<String> siteIds;
+  String password;
   DateTime dateCreation;
 
   AdminUser({
@@ -21,11 +24,13 @@ class AdminUser {
     required this.role,
     required this.actif,
     required this.permissions,
+    this.siteIds = const [],
+    this.password = '',
     required this.dateCreation,
   });
 
   Map<String, dynamic> toMap() {
-    return {
+    final m = <String, dynamic>{
       'nom': nom,
       'prenom': prenom,
       'email': email,
@@ -33,8 +38,11 @@ class AdminUser {
       'role': role,
       'actif': actif,
       'permissions': permissions,
+      'siteIds': siteIds,
       'dateCreation': Timestamp.fromDate(dateCreation),
     };
+    if (password.isNotEmpty) m['password'] = password;
+    return m;
   }
 
   static AdminUser fromMap(Map<String, dynamic> map) {
@@ -42,6 +50,7 @@ class AdminUser {
     DateTime dateCreation = DateTime.now();
     if (dc is Timestamp) dateCreation = dc.toDate();
     final perms = map['permissions'];
+    final sites = map['siteIds'];
     return AdminUser(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
@@ -53,6 +62,10 @@ class AdminUser {
       permissions: perms is List<dynamic>
           ? perms.map((e) => e.toString()).toList()
           : [],
+      siteIds: sites is List<dynamic>
+          ? sites.map((e) => e.toString()).toList()
+          : [],
+      password: map['password'] as String? ?? '',
       dateCreation: dateCreation,
     );
   }

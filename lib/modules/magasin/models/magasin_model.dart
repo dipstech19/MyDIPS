@@ -32,6 +32,8 @@ class Produit {
   final List<VarianteStock> variantes;
   final DateTime createdAt;
   final DateTime updatedAt;
+  /// موقع التخزين: jadida | safi (الجدية / آسفي)
+  final String siteId;
 
   Produit({
     required this.id,
@@ -45,6 +47,7 @@ class Produit {
     required this.variantes,
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.siteId = 'jadida',
   })  : createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -66,6 +69,7 @@ class Produit {
     'variantes': variantes.map((v) => v.toMap()).toList(),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
+    'siteId': siteId,
   };
 
   factory Produit.fromMap(Map<String, dynamic> map) => Produit(
@@ -82,6 +86,7 @@ class Produit {
         .toList() ?? [],
     createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
     updatedAt: DateTime.tryParse(map['updatedAt'] ?? '') ?? DateTime.now(),
+    siteId: map['siteId'] ?? 'jadida',
   );
 
   Produit copyWith({
@@ -96,6 +101,7 @@ class Produit {
     List<VarianteStock>? variantes,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? siteId,
   }) => Produit(
     id: id ?? this.id,
     nom: nom ?? this.nom,
@@ -108,6 +114,7 @@ class Produit {
     variantes: variantes ?? this.variantes,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
+    siteId: siteId ?? this.siteId,
   );
 }
 
@@ -142,6 +149,7 @@ class Mouvement {
   final List<LigneMouvement> lignes;
   final DateTime date;
   final String? preneurNom;
+  final String siteId;
 
   Mouvement({
     required this.id,
@@ -157,6 +165,7 @@ class Mouvement {
     required this.lignes,
     required this.date,
     this.preneurNom,
+    this.siteId = 'jadida',
   });
 
   int get totalQte => aVariantes 
@@ -176,6 +185,7 @@ class Mouvement {
     'lignes': lignes.map((l) => l.toMap()).toList(),
     'date': date.toIso8601String(),
     'preneurNom': preneurNom,
+    'siteId': siteId,
   };
 
   factory Mouvement.fromMap(Map<String, dynamic> map) => Mouvement(
@@ -194,6 +204,7 @@ class Mouvement {
         .toList() ?? [],
     date: DateTime.tryParse(map['date'] ?? '') ?? DateTime.now(),
     preneurNom: map['preneurNom'],
+    siteId: map['siteId'] ?? 'jadida',
   );
 }
 

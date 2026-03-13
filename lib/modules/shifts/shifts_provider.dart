@@ -68,6 +68,20 @@ class ShiftsProvider extends ChangeNotifier {
     }
   }
 
+  /// تعديل وردية فريق في تاريخ معيّن (تعديل يدوي في الـ Planning).
+  Future<void> setShiftOverride(DateTime date, String equipeId, ShiftType shift) async {
+    final c = _config;
+    if (c == null || !_firebaseAvailable || _repo == null) return;
+    final key = _dateKey(date);
+    final newOverrides = Map<String, Map<String, String>>.from(c.overrides);
+    newOverrides[key] = Map<String, String>.from(newOverrides[key] ?? {});
+    newOverrides[key]![equipeId] = ShiftRotationLogic.shiftToKey(shift);
+    await setConfig(c.copyWithOverrides(newOverrides));
+  }
+
+  static String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   /// وردية فريق في تاريخ معيّن
   ShiftType? getShiftForEquipe(String equipeId, DateTime date) {
     final c = _config;
@@ -83,19 +97,20 @@ class ShiftsProvider extends ChangeNotifier {
   }
 
   /// جدول أيام قادمة: قائمة (تاريخ, قائمة (equipeId, shift))
+  /// يُنشئ التواريخ صراحةً (يوم 1..dayCount) لتجنّب أي خلل بسبب التوقيت أو DST.
   List<({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe})> getScheduleForDays(DateTime from, int dayCount) {
     final c = _config;
     if (c == null || c.equipeIds.every((id) => id.isEmpty)) return [];
     final list = <({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe})>[];
+    final year = from.year;
+    final month = from.month;
     for (var i = 0; i < dayCount; i++) {
-      final d = from.add(Duration(days: i));
-      final day = DateTime(d.year, d.month, d.day);
-      final cycle = ShiftRotationLogic.dayInCycle(c.startDay, day);
+      final day = DateTime(year, month, i + 1);
       final perEquipe = <({String equipeId, ShiftType shift})>[];
       for (var pos = 0; pos < 4; pos++) {
         final eid = c.equipeIds[pos];
-        if (eid.isEmpty) continue;
-        perEquipe.add((equipeId: eid, shift: ShiftRotationLogic.shiftForPosition(pos, cycle)));
+        final shift = eid.isEmpty ? ShiftType.rest : ShiftRotationLogic.shiftForEquipe(c, eid, day) ?? ShiftType.rest;
+        perEquipe.add((equipeId: eid, shift: shift));
       }
       list.add((date: day, perEquipe: perEquipe));
     }

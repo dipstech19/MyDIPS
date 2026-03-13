@@ -374,6 +374,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         statut: _statut,
         documents: allDocs,
         photoUrl: photoUrl,
+        siteId: widget.employe.siteId,
       ));
       
       if (mounted) {
