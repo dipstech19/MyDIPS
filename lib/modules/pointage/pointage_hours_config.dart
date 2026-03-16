@@ -25,19 +25,15 @@ class PointageHoursConfig {
   static const PointageHoursConfig instance = PointageHoursConfig();
 
   /// يمكن تسجيل الدخول الآن؟
+  /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
   bool canMarkArrivalNow(DateTime now) {
-    final t = now.hour * 60 + now.minute;
-    final start = startHour * 60 + startMinute;
-    final end = endHour * 60 + endMinute;
-    return t >= start && t <= end;
+    return true;
   }
 
   /// يمكن تسجيل الخروج الآن؟
+  /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
   bool canMarkDepartureNow(DateTime now) {
-    final t = now.hour * 60 + now.minute;
-    final earliest = departureEarliestHour * 60 + departureEarliestMinute;
-    final latest = departureLatestHour * 60 + departureLatestMinute;
-    return t >= earliest && t <= latest;
+    return true;
   }
 
   /// هل الوقت الحالي ضمن نافذة الدخول (وليس نافذة الخروج فقط)؟
@@ -86,11 +82,8 @@ DateTime getPointageDateForConfig(PointageHoursConfig config, DateTime now) {
 }
 
 PointageHoursStatus getPointageHoursStatus(DateTime now, PointageHoursConfig config) {
-  if (config.canMarkArrivalNow(now) || config.canMarkDepartureNow(now)) return PointageHoursStatus.open;
-  final t = now.hour * 60 + now.minute;
-  final start = config.startHour * 60 + config.startMinute;
-  if (t < start) return PointageHoursStatus.notYetOpen;
-  return PointageHoursStatus.closed;
+  // وضع الاختبار: نعتبر نافذة البوانتاج دائماً مفتوحة لعرض الشيفت فقط.
+  return PointageHoursStatus.open;
 }
 
 /// يُرجع إعداد الساعات للفريق والتاريخ والوردية (إن وُجدت)

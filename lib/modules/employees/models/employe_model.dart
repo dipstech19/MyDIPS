@@ -51,6 +51,10 @@ class Employe {
   final String chefDirectId;
   final String cnss;
   final String dateCnss;
+  /// بطاقة الدخول إلى الـ Site: مفعّلة أم لا
+  final bool badgeActif;
+  /// تاريخ انتهاء صلاحية البطاقة (صيغة نصية dd/MM/yyyy مثلاً). يمكن أن تكون فارغة.
+  final String badgeExpiration;
   final EmployeStatut statut;
   final List<Document> documents;
   final String photoUrl;
@@ -75,6 +79,8 @@ class Employe {
     this.chefDirectId = '',
     required this.cnss,
     required this.dateCnss,
+    this.badgeActif = false,
+    this.badgeExpiration = '',
     required this.statut,
     this.documents = const [],
     this.photoUrl = '',
@@ -103,6 +109,8 @@ class Employe {
       'chefDirectId': chefDirectId,
       'cnss': cnss,
       'dateCnss': dateCnss,
+      'badgeActif': badgeActif,
+      'badgeExpiration': badgeExpiration,
       'statut': statut.name,
       'photoUrl': photoUrl,
       if (_siteId != null) 'siteId': _siteId,
@@ -173,6 +181,8 @@ class Employe {
       chefDirectId: map['chefDirectId'] as String? ?? '',
       cnss: map['cnss'] as String? ?? '',
       dateCnss: map['dateCnss'] as String? ?? '',
+      badgeActif: map['badgeActif'] as bool? ?? false,
+      badgeExpiration: map['badgeExpiration'] as String? ?? '',
       statut: statut,
       documents: documentList,
       photoUrl: map['photoUrl'] as String? ?? '',
@@ -199,6 +209,8 @@ class Employe {
     String? chefDirectId,
     String? cnss,
     String? dateCnss,
+    bool? badgeActif,
+    String? badgeExpiration,
     EmployeStatut? statut,
     List<Document>? documents,
     String? photoUrl,
@@ -223,6 +235,8 @@ class Employe {
       chefDirectId: chefDirectId ?? this.chefDirectId,
       cnss: cnss ?? this.cnss,
       dateCnss: dateCnss ?? this.dateCnss,
+      badgeActif: badgeActif ?? this.badgeActif,
+      badgeExpiration: badgeExpiration ?? this.badgeExpiration,
       statut: statut ?? this.statut,
       documents: documents ?? this.documents,
       photoUrl: photoUrl ?? this.photoUrl,

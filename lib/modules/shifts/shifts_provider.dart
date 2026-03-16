@@ -1,24 +1,59 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'data/shifts_repository.dart';
 import 'models/shift_models.dart';
 
 class ShiftsProvider extends ChangeNotifier {
+  final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
+  ShiftsRepository? _repo;
   RotationConfig? _config;
-  final Map<String, Map<String, ShiftType>> _overrides = {};
+  Map<String, Map<String, ShiftType>> _overrides = {};
+  bool _loading = true;
+  String? _error;
 
-  bool get loading => false;
-  String? get error => null;
+  ShiftsProvider() {
+    if (_firebaseAvailable) {
+      _repo = ShiftsRepository();
+      _loadAll();
+    } else {
+      _loading = false;
+      notifyListeners();
+    }
+  }
 
+  bool get loading => _loading;
+  String? get error => _error;
   bool get hasConfig => _config != null && _config!.equipeIds.any((id) => id.isNotEmpty);
-
   RotationConfig? get config => _config;
 
-  /// يوم في الدورة (0–3) حسب تاريخ البداية
+  Future<void> _loadAll() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final data = await _repo!.loadAll();
+      _config = data.config;
+      _overrides = data.overrides;
+    } catch (e) {
+      _error = e.toString();
+    }
+    _loading = false;
+    notifyListeners();
+  }
+
+  /// إعادة تحميل الإعداد من Firestore (مثلاً بعد زر التحديث)
+  Future<void> refresh() async {
+    if (_repo == null) return;
+    await _loadAll();
+  }
+
+  /// يوم في الدورة (0–7) حسب تاريخ البداية — دورة 8 أيام (يومان راحة)
   int dayInCycle(DateTime day) {
     if (_config == null) return 0;
     final start = _config!.startDay;
     final d = DateTime(day.year, day.month, day.day);
     final diff = d.difference(start).inDays;
-    return diff >= 0 ? diff % 4 : 0;
+    return diff >= 0 ? diff % ShiftRotationLogic.cycleDays : 0;
   }
 
   ShiftType getShiftForEquipe(String equipeId, DateTime date) {
@@ -53,11 +88,21 @@ class ShiftsProvider extends ChangeNotifier {
     final key = '${date.year}-${date.month}-${date.day}';
     _overrides[key] ??= {};
     _overrides[key]![equipeId] = shift;
+    if (_repo != null) {
+      try {
+        await _repo!.setShiftOverride(date, equipeId, shift);
+      } catch (_) {}
+    }
     notifyListeners();
   }
 
   Future<void> setConfig(RotationConfig c) async {
     _config = c;
+    if (_repo != null) {
+      try {
+        await _repo!.setConfig(c);
+      } catch (_) {}
+    }
     notifyListeners();
   }
 }

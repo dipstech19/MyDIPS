@@ -45,13 +45,14 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _dateCnssCtrl = TextEditingController();
 
   String _poste = '';
-  String _magasin = '';
   String _dept = '';
   String _contrat = 'CDI';
   String _chefId = '';
   String _siteId = SiteId.jadida;
   EmployeStatut _statut = EmployeStatut.enService;
   bool _siteIdInitialized = false;
+  bool _badgeActif = false;
+  final _badgeExpiryCtrl = TextEditingController();
   
   // Photo de profil
   String? _photoPath;
@@ -78,8 +79,10 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     }
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
-    final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final magasins = _uniqueMagasins(empProv);
+    final posteNames = postesProv.postes
+        .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
+        .map((p) => p.nom)
+        .toList();
     final depts = _uniqueDepartements(empProv);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
@@ -153,15 +156,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       const SizedBox(height: 20),
                       _sectionTitle('💼 Travail'),
                       const SizedBox(height: 12),
-                      _row2(
-                        _dropdownPoste(posteNames),
-                        _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
-                      ),
+                      _dropdownPoste(posteNames),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: _siteId,
                         decoration: InputDecoration(
-                          labelText: 'Zone (الموقع) *',
+                          labelText: 'Site (الموقع) *',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           isDense: true,
@@ -232,6 +232,27 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       ),
                       
                       const SizedBox(height: 20),
+                      _sectionTitle('🎫 Badge d\'accès (Site)'),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Switch(
+                            value: _badgeActif,
+                            onChanged: (v) => setState(() => _badgeActif = v),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Badge activé',
+                              style: TextStyle(fontSize: 13, color: _badgeActif ? Colors.green[700] : Colors.grey[700], fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _dateField(_badgeExpiryCtrl, 'Date d\'expiration du badge'),
+                      
+                      const SizedBox(height: 20),
                       _sectionTitle('📁 Documents'),
                       const SizedBox(height: 12),
                       _buildDocumentsSection(),
@@ -296,10 +317,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final magasins = _uniqueMagasins(empProv);
       final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
       final employeeId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -354,7 +373,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         adresse: _adresseCtrl.text,
         email: _emailCtrl.text,
         poste: poste,
-        magasin: magasin,
+        magasin: '',
         departement: dept,
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
@@ -363,6 +382,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         chefDirectId: _chefId,
         cnss: _cnssCtrl.text,
         dateCnss: _dateCnssCtrl.text,
+        badgeActif: _badgeActif,
+        badgeExpiration: _badgeExpiryCtrl.text,
         statut: _statut,
         documents: documents,
         photoUrl: photoUrl ?? '',
@@ -468,14 +489,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueMagasins(EmployeesProvider prov) {
-    final set = <String>{};
-    for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   List<String> _uniqueDepartements(EmployeesProvider prov) {

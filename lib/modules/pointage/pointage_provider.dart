@@ -354,18 +354,26 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية).
+  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية واختيار وردية الساعات الإضافية).
   /// يُرجع true إذا تم التسجيل، false إذا كان خارج نافذة الخروج.
   Future<bool> setDepartureStatus({
     required PointageRecord record,
     required DepartureStatus status,
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
     PointageHoursConfig? configOverride,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     if (!config.canMarkDepartureNow(DateTime.now())) return false;
-    await _repo!.setDepartureStatus(record, status, overtimeMinutes: overtimeMinutes);
+    await _repo!.setDepartureStatus(
+      record,
+      status,
+      overtimeMinutes: overtimeMinutes,
+      overtimeTargetEquipeId: overtimeTargetEquipeId,
+      overtimeTargetEquipeName: overtimeTargetEquipeName,
+    );
     return true;
   }
 

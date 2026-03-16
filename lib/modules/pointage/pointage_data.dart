@@ -1,5 +1,6 @@
 import '../employees/models/employe_model.dart';
 import '../employees/models/equipe_model.dart';
+import 'models/pointage_model.dart';
 
 List<Employe> getWorkersForEquipe(
   List<Equipe> equipes,
@@ -62,4 +63,47 @@ getAllTeamsWithWorkers(List<Equipe> equipes, List<Employe> employes) {
     list.add((equipeId: eq.id, equipeName: eq.nom, chefName: chefName, workers: workers));
   }
   return list;
+}
+
+/// عمال يعملون ساعات إضافية في الفريق [equipeId] في [date] (لا يزال يعمل + overtimeTargetEquipeId = equipeId).
+/// يُرجع (الموظف، اسم الشاف الأصلي) للعرض.
+List<({Employe e, String chefName})> getOvertimeWorkersForEquipe(
+  String equipeId,
+  DateTime date,
+  List<PointageRecord> pointageRecords,
+  List<Employe> employes,
+) {
+  final day = DateTime(date.year, date.month, date.day);
+  final overtime = pointageRecords.where((r) {
+    final rDay = DateTime(r.date.year, r.date.month, r.date.day);
+    return rDay == day &&
+        r.departureStatus == DepartureStatus.stillWorking &&
+        (r.overtimeTargetEquipeId ?? '').isNotEmpty &&
+        r.overtimeTargetEquipeId == equipeId;
+  }).toList();
+  final list = <({Employe e, String chefName})>[];
+  for (final r in overtime) {
+    final empList = employes.where((e) => e.id == r.employeId).toList();
+    if (empList.isNotEmpty) list.add((e: empList.first, chefName: r.chefName));
+  }
+  return list;
+}
+
+/// قائمة عرض عمال الفريق مع إضافة من يعمل ساعات إضافية في هذا الفريق (الشاف الأصلي للعرض).
+List<({Employe e, String? overtimeChefName})> getWorkersDisplayForEquipe(
+  List<Equipe> equipes,
+  List<Employe> employes,
+  String? equipeId,
+  List<PointageRecord> pointageRecordsForDate,
+  DateTime date,
+) {
+  final base = getWorkersForEquipe(equipes, employes, equipeId);
+  final result = <({Employe e, String? overtimeChefName})>[
+    for (final e in base) (e: e, overtimeChefName: null),
+  ];
+  final overtime = getOvertimeWorkersForEquipe(equipeId ?? '', date, pointageRecordsForDate, employes);
+  for (final o in overtime) {
+    if (!result.any((w) => w.e.id == o.e.id)) result.add((e: o.e, overtimeChefName: o.chefName));
+  }
+  return result;
 }
