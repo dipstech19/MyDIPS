@@ -22,19 +22,20 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'stub',
-    appId: 'stub',
-    messagingSenderId: 'stub',
-    projectId: 'stub',
-    authDomain: 'stub',
-    storageBucket: 'stub',
+      apiKey: "AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4",
+      authDomain: "dips-management.firebaseapp.com",
+      projectId: "dips-management",
+      storageBucket: "dips-management.firebasestorage.app",
+      messagingSenderId: "581884367090",
+      appId: "1:581884367090:web:105605eb69c3032d35406b",
+      measurementId: "G-GZY5S9Y9ZE"
   );
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'stub',
-    appId: 'stub',
-    messagingSenderId: 'stub',
-    projectId: 'stub',
-    storageBucket: 'stub',
+    apiKey: 'AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4',
+    appId: '1:581884367090:android:afa92063ebd997da35406b',
+    messagingSenderId: '581884367090',
+    projectId: 'dips-management',
+    storageBucket: 'dips-management.firebasestorage.app',
   );
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'stub',
@@ -53,19 +54,21 @@ class DefaultFirebaseOptions {
     iosBundleId: 'stub',
   );
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'stub',
-    appId: 'stub',
-    messagingSenderId: 'stub',
-    projectId: 'stub',
-    authDomain: 'stub',
-    storageBucket: 'stub',
+      apiKey: "AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4",
+      authDomain: "dips-management.firebaseapp.com",
+      projectId: "dips-management",
+      storageBucket: "dips-management.firebasestorage.app",
+      messagingSenderId: "581884367090",
+      appId: "1:581884367090:web:105605eb69c3032d35406b",
+      measurementId: "G-GZY5S9Y9ZE"
   );
   static const FirebaseOptions linux = FirebaseOptions(
-    apiKey: 'stub',
-    appId: 'stub',
-    messagingSenderId: 'stub',
-    projectId: 'stub',
-    authDomain: 'stub',
-    storageBucket: 'stub',
+      apiKey: "AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4",
+      authDomain: "dips-management.firebaseapp.com",
+      projectId: "dips-management",
+      storageBucket: "dips-management.firebasestorage.app",
+      messagingSenderId: "581884367090",
+      appId: "1:581884367090:web:105605eb69c3032d35406b",
+      measurementId: "G-GZY5S9Y9ZE"
   );
 }

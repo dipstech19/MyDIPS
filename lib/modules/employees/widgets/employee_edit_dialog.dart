@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../../core/site/site_model.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
@@ -44,7 +45,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   late TextEditingController _dateCnssCtrl;
 
   late String _poste;
-  late String _magasin;
   late String _dept;
   late String _contrat;
   late String _chefId;
@@ -56,6 +56,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   
   late List<Document> _documents;
   final List<_TempDocument> _newDocuments = [];
+  bool _badgeActif = false;
+  late TextEditingController _badgeExpiryCtrl;
 
   static const _contrats = ['CDI', 'CDD', 'Anapec'];
 
@@ -77,13 +79,14 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _dateCnssCtrl = TextEditingController(text: e.dateCnss);
     
     _poste = e.poste;
-    _magasin = e.magasin;
     _dept = e.departement;
     _contrat = _contrats.contains(e.typeContrat) ? e.typeContrat : 'CDI';
     _chefId = e.chefDirectId;
     _statut = e.statut;
     _existingPhotoUrl = e.photoUrl;
     _documents = List.from(e.documents);
+    _badgeActif = e.badgeActif;
+    _badgeExpiryCtrl = TextEditingController(text: e.badgeExpiration);
   }
 
   @override
@@ -100,6 +103,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _finContratCtrl.dispose();
     _cnssCtrl.dispose();
     _dateCnssCtrl.dispose();
+    _badgeExpiryCtrl.dispose();
     super.dispose();
   }
 
@@ -107,8 +111,11 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   Widget build(BuildContext context) {
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
-    final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final magasins = _uniqueMagasins(empProv);
+    final siteId = widget.employe.siteId;
+    final posteNames = postesProv.postes
+        .where((p) => p.siteId == siteId || p.siteId == SiteId.all)
+        .map((p) => p.nom)
+        .toList();
     final depts = _uniqueDepartements(empProv);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
@@ -183,10 +190,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                         const SizedBox(height: 20),
                         _sectionTitle('💼 Travail'),
                         const SizedBox(height: 12),
-                        _row2(
-                          _dropdownPoste(posteNames),
-                          _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
-                        ),
+                        _dropdownPoste(posteNames),
                         const SizedBox(height: 12),
                         _row2(
                           _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
@@ -245,6 +249,27 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                           _field(_cnssCtrl, 'Numéro CNSS'),
                           _dateField(_dateCnssCtrl, 'Date inscription CNSS'),
                         ),
+                        
+                        const SizedBox(height: 20),
+                        _sectionTitle('🎫 Badge d\'accès (Site)'),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Switch(
+                              value: _badgeActif,
+                              onChanged: (v) => setState(() => _badgeActif = v),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Badge activé',
+                                style: TextStyle(fontSize: 13, color: _badgeActif ? Colors.green[700] : Colors.grey[700], fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _dateField(_badgeExpiryCtrl, 'Date d\'expiration du badge'),
                         
                         const SizedBox(height: 20),
                         _sectionTitle('📁 Documents'),
@@ -306,10 +331,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final magasins = _uniqueMagasins(empProv);
       final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
       final employeeId = widget.employe.id;
@@ -362,7 +385,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         adresse: _adresseCtrl.text,
         email: _emailCtrl.text,
         poste: poste,
-        magasin: magasin,
+        magasin: '',
         departement: dept,
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
@@ -371,6 +394,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         chefDirectId: _chefId,
         cnss: _cnssCtrl.text,
         dateCnss: _dateCnssCtrl.text,
+        badgeActif: _badgeActif,
+        badgeExpiration: _badgeExpiryCtrl.text,
         statut: _statut,
         documents: allDocs,
         photoUrl: photoUrl,
@@ -473,15 +498,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueMagasins(EmployeesProvider prov) {
-    final set = <String>{};
-    for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    if (_magasin.isNotEmpty) set.add(_magasin);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   List<String> _uniqueDepartements(EmployeesProvider prov) {

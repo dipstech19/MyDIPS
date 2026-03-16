@@ -108,6 +108,9 @@ class PointageRecord {
   final DateTime? departureMarkedAt;
   /// ساعات إضافية (دقائق) عند "انتهى من العمل"
   final int? overtimeMinutes;
+  /// عند "لا يزال يعمل": الوردية/الفريق الذي سيعمل فيه ساعات إضافية
+  final String? overtimeTargetEquipeId;
+  final String? overtimeTargetEquipeName;
   /// سبب الغياب (من الشاف أو الأدمن عند تسجيل غائب)
   final String? absenceReason;
 
@@ -135,6 +138,8 @@ class PointageRecord {
     this.departureStatus = DepartureStatus.unset,
     this.departureMarkedAt,
     this.overtimeMinutes,
+    this.overtimeTargetEquipeId,
+    this.overtimeTargetEquipeName,
     this.absenceReason,
   });
 
@@ -209,6 +214,8 @@ class PointageRecord {
     'departureStatus': departureStatus.name,
     'departureMarkedAt': departureMarkedAt?.toIso8601String(),
     'overtimeMinutes': overtimeMinutes,
+    'overtimeTargetEquipeId': overtimeTargetEquipeId,
+    'overtimeTargetEquipeName': overtimeTargetEquipeName,
     'absenceReason': absenceReason,
   };
 
@@ -268,6 +275,8 @@ class PointageRecord {
     departureStatus: _departureFromMap(map['departureStatus']),
     departureMarkedAt: map['departureMarkedAt'] != null ? DateTime.tryParse(map['departureMarkedAt']) : null,
     overtimeMinutes: map['overtimeMinutes'] is int ? map['overtimeMinutes'] as int : null,
+    overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
+    overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
     absenceReason: map['absenceReason'] as String?,
   );
 
@@ -295,6 +304,8 @@ class PointageRecord {
     DepartureStatus? departureStatus,
     DateTime? departureMarkedAt,
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
     String? absenceReason,
   }) => PointageRecord(
     id: id ?? this.id,
@@ -320,6 +331,8 @@ class PointageRecord {
     departureStatus: departureStatus ?? this.departureStatus,
     departureMarkedAt: departureMarkedAt ?? this.departureMarkedAt,
     overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
+    overtimeTargetEquipeId: overtimeTargetEquipeId ?? this.overtimeTargetEquipeId,
+    overtimeTargetEquipeName: overtimeTargetEquipeName ?? this.overtimeTargetEquipeName,
     absenceReason: absenceReason ?? this.absenceReason,
   );
 }

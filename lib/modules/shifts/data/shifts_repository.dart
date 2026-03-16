@@ -1,0 +1,94 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/shift_models.dart';
+
+class ShiftsRepository {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  static const String _configDoc = 'shifts_config';
+  static const String _overridesCollection = 'shifts_overrides';
+
+  String _dateKey(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  /// جلب إعداد الورديات من Firestore
+  Future<RotationConfig?> getConfig() async {
+    try {
+      final doc = await _firestore.collection('app_config').doc(_configDoc).get();
+      if (doc.data() == null) return null;
+      final data = doc.data()!;
+      final startStamp = data['startDate'];
+      DateTime startDate = DateTime.now();
+      if (startStamp != null) {
+        if (startStamp is Timestamp) {
+          startDate = (startStamp as Timestamp).toDate();
+        } else if (startStamp is String) {
+          startDate = DateTime.tryParse(startStamp) ?? startDate;
+        }
+      }
+      final ids = data['equipeIds'];
+      List<String> equipeIds = [];
+      if (ids is List) {
+        equipeIds = ids.map((e) => e?.toString() ?? '').toList();
+      }
+      return RotationConfig(startDate: startDate, equipeIds: equipeIds);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// حفظ إعداد الورديات في Firestore
+  Future<void> setConfig(RotationConfig config) async {
+    await _firestore.collection('app_config').doc(_configDoc).set({
+      'startDate': config.startDay.toIso8601String(),
+      'equipeIds': config.equipeIds,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// جلب كل التعديلات اليدوية (overrides) للورديات
+  Future<Map<String, Map<String, ShiftType>>> getOverrides() async {
+    final result = <String, Map<String, ShiftType>>{};
+    try {
+      final snap = await _firestore.collection('app_config').doc(_configDoc).collection(_overridesCollection).get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final dateKey = doc.id;
+        final perEquipe = data['overrides'] as Map<String, dynamic>?;
+        if (perEquipe != null) {
+          result[dateKey] = {};
+          perEquipe.forEach((equipeId, shiftName) {
+            if (shiftName is String) {
+              try {
+                final st = ShiftType.values.firstWhere((e) => e.name == shiftName);
+                result[dateKey]![equipeId] = st;
+              } catch (_) {}
+            }
+          });
+        }
+      }
+    } catch (_) {}
+    return result;
+  }
+
+  /// حفظ تعديل يدوي ليوم وفريق معيّن
+  Future<void> setShiftOverride(DateTime date, String equipeId, ShiftType shift) async {
+    final key = _dateKey(date);
+    final ref = _firestore.collection('app_config').doc(_configDoc).collection(_overridesCollection).doc(key);
+    final doc = await ref.get();
+    final Map<String, String> overrides = {};
+    if (doc.data() != null && doc.data()!['overrides'] != null) {
+      (doc.data()!['overrides'] as Map).forEach((k, v) {
+        if (v is String) overrides[k.toString()] = v;
+      });
+    }
+    overrides[equipeId] = shift.name;
+    await ref.set({'overrides': overrides, 'date': key});
+  }
+
+  /// تحميل الإعداد + كل الـ overrides (للاستدعاء عند بدء التطبيق)
+  Future<({RotationConfig? config, Map<String, Map<String, ShiftType>> overrides})> loadAll() async {
+    final config = await getConfig();
+    final overrides = await getOverrides();
+    return (config: config, overrides: overrides);
+  }
+}

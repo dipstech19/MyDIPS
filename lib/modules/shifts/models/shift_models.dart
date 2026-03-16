@@ -27,11 +27,23 @@ class RotationConfig {
 }
 
 class ShiftRotationLogic {
-  /// دورة 4 أيام: صباحي، مسائي، ليلي، راحة. الموضع 0 = أول فريق، إلخ.
+  /// دورة 8 أيام: يومان صباحي، يومان مسائي، يومان ليلي، يومان راحة (كما كان سابقاً).
+  /// الموضع 0 = أول فريق، إلخ. كل فريق يحصل على يومين متتاليين من كل نوع.
+  static const int cycleDays = 8;
+  static const List<ShiftType> _baseOrder = [
+    ShiftType.morning,
+    ShiftType.morning,
+    ShiftType.evening,
+    ShiftType.evening,
+    ShiftType.night,
+    ShiftType.night,
+    ShiftType.rest,
+    ShiftType.rest,
+  ];
+
   static ShiftType shiftForPosition(int position, int dayInCycle) {
-    final cycle = dayInCycle % 4;
-    final order = [ShiftType.morning, ShiftType.evening, ShiftType.night, ShiftType.rest];
-    final idx = (position + cycle) % 4;
-    return order[idx];
+    final d = dayInCycle % cycleDays;
+    final idx = (d + position * 2) % cycleDays;
+    return _baseOrder[idx];
   }
 }

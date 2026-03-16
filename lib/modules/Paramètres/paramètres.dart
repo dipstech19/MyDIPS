@@ -3541,16 +3541,37 @@ class _PostesSection extends StatelessWidget {
 
 void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing) {
   final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+  String siteId = existing?.siteId ?? SiteId.all;
   final navigator = Navigator.of(context);
   final messenger = ScaffoldMessenger.of(context);
   showDialog(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(existing == null ? 'Nouveau poste' : 'Modifier le poste'),
-      content: TextField(
-        controller: nomCtrl,
-        decoration: const InputDecoration(labelText: 'Nom du poste', hintText: 'Ex: Chauffeur, Vendeur'),
-        autofocus: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: nomCtrl,
+            decoration: const InputDecoration(labelText: 'Nom du poste', hintText: 'Ex: Chauffeur, Vendeur'),
+            autofocus: true,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: siteId,
+            decoration: const InputDecoration(
+              labelText: 'Site',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: const [
+              DropdownMenuItem(value: SiteId.all, child: Text('Tous les sites')),
+              DropdownMenuItem(value: SiteId.jadida, child: Text('El Jadida')),
+              DropdownMenuItem(value: SiteId.safi, child: Text('Safi')),
+            ],
+            onChanged: (v) => siteId = v ?? SiteId.all,
+          ),
+        ],
       ),
       actions: [
         TextButton(onPressed: () => navigator.pop(), child: const Text('Annuler')),
@@ -3571,9 +3592,9 @@ void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing
             }
             try {
               if (existing == null) {
-                await prov.addPoste(Poste(id: '', nom: nom));
+                await prov.addPoste(Poste(id: '', nom: nom, siteId: siteId));
               } else {
-                await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre));
+                await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre, siteId: siteId));
               }
               if (dialogContext.mounted) navigator.pop();
               if (context.mounted) {

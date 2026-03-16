@@ -29,6 +29,16 @@ class EquipesTab extends StatefulWidget {
 class _EquipesTabState extends State<EquipesTab> {
   String? _expandedId;
 
+  /// جميع الموظفين المستعملين حالياً في أي فريق (كشاف أو كعضو)
+  Set<String> _usedEmployeeIds() {
+    final set = <String>{};
+    for (final eq in widget.equipes) {
+      if (eq.chefId.isNotEmpty) set.add(eq.chefId);
+      set.addAll(eq.membreIds);
+    }
+    return set;
+  }
+
   String _getNom(String id) {
     final e = widget.employes.where((e) => e.id == id).toList();
     return e.isNotEmpty ? e.first.nom : '—';
@@ -346,6 +356,16 @@ class _EquipesTabState extends State<EquipesTab> {
     final nomCtrl = TextEditingController();
     final auth = context.read<AuthProvider>();
     final site = context.read<SiteProvider>();
+    final usedIds = _usedEmployeeIds();
+    final availableChefs = widget.employes.where((e) => !usedIds.contains(e.id)).toList();
+
+    if (availableChefs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aucun employé disponible pour être chef (tous déjà dans une équipe).')),
+      );
+      return;
+    }
+
     String selectedSiteId = auth.currentUser?.allowedSiteIds != null &&
             auth.currentUser!.allowedSiteIds!.isNotEmpty &&
             auth.currentUser!.allowedSiteIds!.first != SiteId.all
@@ -353,9 +373,7 @@ class _EquipesTabState extends State<EquipesTab> {
         : (site.selectedSiteId ?? SiteId.jadida);
     if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
     String selectedMagasin = 'El Jadida #1';
-    String selectedChefId = widget.employes.isNotEmpty
-        ? widget.employes.first.id
-        : '';
+    String selectedChefId = availableChefs.first.id;
     final magasins = ['El Jadida #1', 'El Jadida #2', 'Entrepôt'];
 
     showDialog(
@@ -430,7 +448,7 @@ class _EquipesTabState extends State<EquipesTab> {
                         borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
-                  items: widget.employes
+                  items: availableChefs
                       .map((e) => DropdownMenuItem(
                       value: e.id,
                       child: Text('${e.nom} (${e.poste})')))
@@ -473,10 +491,17 @@ class _EquipesTabState extends State<EquipesTab> {
 
   // DIALOG - Ajouter Membre
   void _showAddMembreDialog(BuildContext context, Equipe eq) {
-    // فقط الموظفين اللي مازالين مش في الفريق
+    // فقط الموظفين اللي ليسوا في أي فريق آخر (لا كشيف ولا كعضو)
+    final usedIds = _usedEmployeeIds();
     final disponibles = widget.employes
-        .where((e) =>
-    e.id != eq.chefId && !eq.membreIds.contains(e.id))
+        .where((e) {
+          if (usedIds.contains(e.id)) return false;
+          final posteLower = e.poste.toLowerCase();
+          // لا نسمح للـ Chef d'équipe أن يكون تحت Chef آخر
+          if (posteLower.contains('chef')) return false;
+          // نسمح فقط بالـ Operateur Process كأعضاء تحت الشاف (حسب طلبك)
+          return posteLower.contains('operateur process');
+        })
         .toList();
 
     if (disponibles.isEmpty) {

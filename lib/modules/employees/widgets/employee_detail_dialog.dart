@@ -214,9 +214,12 @@ class EmployeeDetailDialog extends StatelessWidget {
                       child: Column(children: [
                         _card(children: [
                           _row('Poste', e.poste),
-                          _row('Magasin', e.magasin),
+                          _row('Site', e.siteId),
                           _row('Département', e.departement),
                           _row('Chef direct', _getChefNom(e.chefDirectId)),
+                          _row('Badge accès', e.badgeActif ? 'Actif' : 'Inactif'),
+                          if (e.badgeExpiration.isNotEmpty)
+                            _row('Expiration badge', e.badgeExpiration),
                         ]),
                         const SizedBox(height: 12),
                         _card(children: [
