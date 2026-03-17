@@ -304,6 +304,7 @@ class PointageProvider extends ChangeNotifier {
     required String chefName,
     required ChefPointageStatus chefStatus,
     String? chefId,
+    String? absenceReason,
     PointageHoursConfig? configOverride,
   }) async {
     if (!_firebaseAvailable) return false;
@@ -323,8 +324,9 @@ class PointageProvider extends ChangeNotifier {
       date: pointageDate,
       createdAt: now,
       chefStatus: chefStatus,
+      absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
     );
-    await _repo!.setChefStatus(record, chefStatus, chefId);
+    await _repo!.setChefStatus(record, chefStatus, chefId, absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null);
     return true;
   }
 
@@ -352,24 +354,32 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية).
+  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية واختيار وردية الساعات الإضافية).
   /// يُرجع true إذا تم التسجيل، false إذا كان خارج نافذة الخروج.
   Future<bool> setDepartureStatus({
     required PointageRecord record,
     required DepartureStatus status,
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
     PointageHoursConfig? configOverride,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     if (!config.canMarkDepartureNow(DateTime.now())) return false;
-    await _repo!.setDepartureStatus(record, status, overtimeMinutes: overtimeMinutes);
+    await _repo!.setDepartureStatus(
+      record,
+      status,
+      overtimeMinutes: overtimeMinutes,
+      overtimeTargetEquipeId: overtimeTargetEquipeId,
+      overtimeTargetEquipeName: overtimeTargetEquipeName,
+    );
     return true;
   }
 
-  Future<void> setAdminOverride(String pointageDocId, AttendanceStatus? status) async {
+  Future<void> setAdminOverride(String pointageDocId, AttendanceStatus? status, {String? absenceReason}) async {
     if (!_firebaseAvailable) return;
-    await _repo!.setAdminOverride(pointageDocId, status);
+    await _repo!.setAdminOverride(pointageDocId, status, absenceReason: status == AttendanceStatus.absent ? absenceReason : null);
   }
 
   /// تعيين الحضور النهائي من الأدمن (يُنشئ سجلاً إن لم يكن موجوداً). يدعم أي تاريخ [viewDate].
@@ -381,6 +391,7 @@ class PointageProvider extends ChangeNotifier {
     required String equipeName,
     required String chefName,
     required AttendanceStatus status,
+    String? absenceReason,
     DateTime? viewDate,
   }) async {
     if (!_firebaseAvailable) return;
@@ -393,7 +404,7 @@ class PointageProvider extends ChangeNotifier {
       existing = await _repo!.getByEmployeAndDate(employeId, day);
     }
     if (existing != null) {
-      await _repo!.setAdminOverride(existing.id, status);
+      await _repo!.setAdminOverride(existing.id, status, absenceReason: status == AttendanceStatus.absent ? absenceReason : null);
     } else {
       final record = PointageRecord(
         id: '',
@@ -407,6 +418,7 @@ class PointageProvider extends ChangeNotifier {
         date: day,
         createdAt: DateTime.now(),
         adminFinalStatus: status,
+        absenceReason: status == AttendanceStatus.absent ? absenceReason : null,
       );
       await _repo!.createRecordWithAdminOverride(record);
     }

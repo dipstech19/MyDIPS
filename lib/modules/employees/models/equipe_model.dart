@@ -9,6 +9,7 @@ class Equipe {
   final int? pointageStartMinute;
   final int? pointageEndHour;
   final int? pointageEndMinute;
+  final String? _siteId;
 
   Equipe({
     required this.id,
@@ -20,7 +21,10 @@ class Equipe {
     this.pointageStartMinute,
     this.pointageEndHour,
     this.pointageEndMinute,
-  });
+    String? siteId,
+  }) : _siteId = siteId;
+
+  String get siteId => _siteId ?? 'all';
 
   Equipe copyWith({
     String? nom,
@@ -31,6 +35,7 @@ class Equipe {
     int? pointageStartMinute,
     int? pointageEndHour,
     int? pointageEndMinute,
+    String? siteId,
   }) {
     return Equipe(
       id: id,
@@ -42,6 +47,7 @@ class Equipe {
       pointageStartMinute: pointageStartMinute ?? this.pointageStartMinute,
       pointageEndHour: pointageEndHour ?? this.pointageEndHour,
       pointageEndMinute: pointageEndMinute ?? this.pointageEndMinute,
+      siteId: siteId ?? _siteId,
     );
   }
 
@@ -52,6 +58,7 @@ class Equipe {
       'chefId': chefId,
       'membreIds': membreIds,
     };
+    if (_siteId != null) m['siteId'] = _siteId;
     if (pointageStartHour != null) m['pointageStartHour'] = pointageStartHour;
     if (pointageStartMinute != null) m['pointageStartMinute'] = pointageStartMinute;
     if (pointageEndHour != null) m['pointageEndHour'] = pointageEndHour;
@@ -77,6 +84,7 @@ class Equipe {
       pointageStartMinute: startM is int ? startM : (startM != null ? int.tryParse(startM.toString()) : null),
       pointageEndHour: endH is int ? endH : (endH != null ? int.tryParse(endH.toString()) : null),
       pointageEndMinute: endM is int ? endM : (endM != null ? int.tryParse(endM.toString()) : null),
+      siteId: map['siteId'] as String?,
     );
   }
 }

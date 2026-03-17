@@ -18,17 +18,62 @@ class AuthProvider extends ChangeNotifier {
     final input = usernameOrEmail.trim();
     final pwd = password;
 
-    // 1. المستخدمون الثابتون (Admin / Chef test)
+    // 1. المستخدمون الثابتون (Admin / Chef test) — أدمن عام بدون موقع
     final staticUser = appUsers.where(
           (u) => u.username == input && u.password == pwd,
     ).toList();
     if (staticUser.isNotEmpty) {
-      _currentUser = staticUser.first;
+      _currentUser = AppUser(
+        id: staticUser.first.id,
+        nom: staticUser.first.nom,
+        username: staticUser.first.username,
+        password: staticUser.first.password,
+        role: staticUser.first.role,
+        equipeId: staticUser.first.equipeId,
+        photoUrl: staticUser.first.photoUrl,
+        siteIds: ['all'],
+      );
       notifyListeners();
       return true;
     }
 
     if (Firebase.apps.isEmpty) return false;
+
+    // 1b. أدمن من Firestore (email + mot de passe) — قد يكون أدمن عام أو مشرف موقع
+    try {
+      final email = input.contains('@') ? input.trim().toLowerCase() : null;
+      if (email != null) {
+        final adminSnap = await FirebaseFirestore.instance
+            .collection('admins')
+            .where('email', isEqualTo: email)
+            .where('actif', isEqualTo: true)
+            .limit(1)
+            .get();
+        if (adminSnap.docs.isNotEmpty) {
+          final data = adminSnap.docs.first.data();
+          final storedPwd = data['password'] as String? ?? '';
+          if (storedPwd == pwd) {
+            final perms = data['siteIds'];
+            List<String> siteIds = ['all'];
+            if (perms is List<dynamic> && perms.isNotEmpty) {
+              siteIds = perms.map((e) => e.toString()).toList();
+            }
+            _currentUser = AppUser(
+              id: adminSnap.docs.first.id,
+              nom: '${data['prenom'] ?? ''} ${data['nom'] ?? ''}'.trim(),
+              username: data['email'] as String? ?? email,
+              password: pwd,
+              role: UserRole.directeur,
+              siteIds: siteIds,
+            );
+            notifyListeners();
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('AuthProvider: Error admin login: $e');
+    }
 
     // 2. السائقون من Firebase (identifiant + mot de passe)
     try {

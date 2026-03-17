@@ -50,8 +50,7 @@ class PdfService {
           
           _buildSection('Informations Professionnelles', [
             _buildInfoRow('Poste', employe.poste),
-            if (employe.magasin.isNotEmpty)
-              _buildInfoRow('Magasin', employe.magasin),
+            _buildInfoRow('Site', employe.siteId),
             if (employe.departement.isNotEmpty)
               _buildInfoRow('Département', employe.departement),
             if (chefNom != null && chefNom.isNotEmpty && chefNom != '—')
@@ -63,6 +62,9 @@ class PdfService {
               _buildInfoRow('Fin de contrat', employe.finContrat),
             _buildInfoRow('Salaire de base', '${employe.salaireBase.toStringAsFixed(2)} DH'),
             _buildInfoRow('Statut', employe.statut.label),
+            _buildInfoRow('Badge accès', employe.badgeActif ? 'Actif' : 'Inactif'),
+            if (employe.badgeExpiration.isNotEmpty)
+              _buildInfoRow('Expiration badge', employe.badgeExpiration),
           ]),
           pw.SizedBox(height: 20),
           
@@ -190,7 +192,7 @@ class PdfService {
                     ),
                   ),
                   pw.Text(
-                    '${employe.poste} - ${employe.magasin}',
+                    '${employe.poste} - ${employe.siteId}',
                     style: const pw.TextStyle(
                       fontSize: 11,
                       color: PdfColors.grey700,

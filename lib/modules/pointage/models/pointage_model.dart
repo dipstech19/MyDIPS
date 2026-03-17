@@ -1,8 +1,69 @@
+import 'absence_reason_config.dart';
+
 /// حالة من السائق: حاضر | غائب | في المركبة (سيارة/دراجة)
 enum DriverPointageStatus { present, absent, enVehicule, unset }
 
 /// حالة من الشاف: حاضر | غائب فقط
 enum ChefPointageStatus { present, absent, unset }
+
+/// سبب الغياب (يُختار عند تسجيل غياب من الشاف أو الأدمن فقط)
+enum AbsenceReason {
+  maladie,
+  paternite,
+  mariage,
+  deces,
+  autorisee,
+  absenceInjustifiee,
+}
+
+extension AbsenceReasonExt on AbsenceReason {
+  String get label {
+    switch (this) {
+      case AbsenceReason.maladie:
+        return 'Maladie';
+      case AbsenceReason.paternite:
+        return 'Paternité';
+      case AbsenceReason.mariage:
+        return 'Mariage';
+      case AbsenceReason.deces:
+        return 'Décès';
+      case AbsenceReason.autorisee:
+        return 'Autorisée';
+      case AbsenceReason.absenceInjustifiee:
+        return 'Absence injustifiée';
+    }
+  }
+}
+
+/// تسمية سبب الغياب من القيمة المخزنة (للتقارير و Excel).
+/// إذا وُجدت [configs] تُستخدم أولاً (مطابقة id)، وإلا التعداد الثابت.
+String getAbsenceReasonLabel(String? reason, [List<AbsenceReasonConfig>? configs]) {
+  if (reason == null || reason.isEmpty) return '';
+  if (configs != null) {
+    final found = configs.where((c) => c.id == reason).toList();
+    if (found.isNotEmpty) return found.first.label;
+  }
+  try {
+    return AbsenceReason.values.firstWhere((e) => e.name == reason).label;
+  } catch (_) {
+    return reason;
+  }
+}
+
+/// هل هذا السبب يقتضي خصمًا من الراتب؟ تُستخدم في Excel (ألوان).
+bool isAbsenceReasonDeductFromSalary(String? reason, [List<AbsenceReasonConfig>? configs]) {
+  if (reason == null || reason.isEmpty) return true;
+  if (configs != null) {
+    final found = configs.where((c) => c.id == reason).toList();
+    if (found.isNotEmpty) return found.first.deductFromSalary;
+  }
+  try {
+    final e = AbsenceReason.values.firstWhere((e) => e.name == reason);
+    return e == AbsenceReason.maladie || e == AbsenceReason.absenceInjustifiee;
+  } catch (_) {
+    return true;
+  }
+}
 
 /// نتيجة المندقية: مؤكد حاضر | مؤكد غائب | خلل | في الانتظار
 enum ReconciledStatus { confirmedPresent, confirmedAbsent, discrepancy, pending }
@@ -47,6 +108,11 @@ class PointageRecord {
   final DateTime? departureMarkedAt;
   /// ساعات إضافية (دقائق) عند "انتهى من العمل"
   final int? overtimeMinutes;
+  /// عند "لا يزال يعمل": الوردية/الفريق الذي سيعمل فيه ساعات إضافية
+  final String? overtimeTargetEquipeId;
+  final String? overtimeTargetEquipeName;
+  /// سبب الغياب (من الشاف أو الأدمن عند تسجيل غائب)
+  final String? absenceReason;
 
   PointageRecord({
     required this.id,
@@ -72,6 +138,9 @@ class PointageRecord {
     this.departureStatus = DepartureStatus.unset,
     this.departureMarkedAt,
     this.overtimeMinutes,
+    this.overtimeTargetEquipeId,
+    this.overtimeTargetEquipeName,
+    this.absenceReason,
   });
 
   /// السائق لا يستطيع التعديل بعد الإرسال
@@ -145,6 +214,9 @@ class PointageRecord {
     'departureStatus': departureStatus.name,
     'departureMarkedAt': departureMarkedAt?.toIso8601String(),
     'overtimeMinutes': overtimeMinutes,
+    'overtimeTargetEquipeId': overtimeTargetEquipeId,
+    'overtimeTargetEquipeName': overtimeTargetEquipeName,
+    'absenceReason': absenceReason,
   };
 
   static DriverPointageStatus _driverFromMap(dynamic v) {
@@ -203,6 +275,9 @@ class PointageRecord {
     departureStatus: _departureFromMap(map['departureStatus']),
     departureMarkedAt: map['departureMarkedAt'] != null ? DateTime.tryParse(map['departureMarkedAt']) : null,
     overtimeMinutes: map['overtimeMinutes'] is int ? map['overtimeMinutes'] as int : null,
+    overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
+    overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
+    absenceReason: map['absenceReason'] as String?,
   );
 
   PointageRecord copyWith({
@@ -229,6 +304,9 @@ class PointageRecord {
     DepartureStatus? departureStatus,
     DateTime? departureMarkedAt,
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
+    String? absenceReason,
   }) => PointageRecord(
     id: id ?? this.id,
     employeId: employeId ?? this.employeId,
@@ -253,6 +331,9 @@ class PointageRecord {
     departureStatus: departureStatus ?? this.departureStatus,
     departureMarkedAt: departureMarkedAt ?? this.departureMarkedAt,
     overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
+    overtimeTargetEquipeId: overtimeTargetEquipeId ?? this.overtimeTargetEquipeId,
+    overtimeTargetEquipeName: overtimeTargetEquipeName ?? this.overtimeTargetEquipeName,
+    absenceReason: absenceReason ?? this.absenceReason,
   );
 }
 

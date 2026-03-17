@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
+import '../../../core/site/site_model.dart';
+import '../../../core/site/site_provider.dart';
+import '../departements_provider.dart';
 import '../models/equipe_model.dart';
 import '../models/employe_model.dart';
 
@@ -26,6 +29,16 @@ class EquipesTab extends StatefulWidget {
 
 class _EquipesTabState extends State<EquipesTab> {
   String? _expandedId;
+
+  /// جميع الموظفين المستعملين حالياً في أي فريق (كشاف أو كعضو)
+  Set<String> _usedEmployeeIds() {
+    final set = <String>{};
+    for (final eq in widget.equipes) {
+      if (eq.chefId.isNotEmpty) set.add(eq.chefId);
+      set.addAll(eq.membreIds);
+    }
+    return set;
+  }
 
   String _getNom(String id) {
     final e = widget.employes.where((e) => e.id == id).toList();
@@ -245,19 +258,28 @@ class _EquipesTabState extends State<EquipesTab> {
                             ),
                             const SizedBox(height: 8),
                             membres.isEmpty
-                                ? Text('Aucun membre',
-                                style: TextStyle(
-                                    color: Colors.grey[400],
-                                    fontSize: 13))
+                                ? Text(
+                                    'Aucun membre',
+                                    style: TextStyle(
+                                        color: Colors.grey[400], fontSize: 13),
+                                  )
                                 : Column(
-                              children: membres
-                                  .map((m) => _membreCard(
-                                nom: m.nom,
-                                poste: m.poste,
-                                isChef: false,
-                              ))
-                                  .toList(),
-                            ),
+                                    children: membres
+                                        .map(
+                                          (m) => _membreCard(
+                                            nom: m.nom,
+                                            poste: m.poste,
+                                            isChef: false,
+                                            onRemove: (widget.isDirecteur ||
+                                                    eq.chefId ==
+                                                        _getCurrentUserId())
+                                                ? () => _removeMembre(
+                                                    eq, m.id)
+                                                : null,
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
                           ],
                         ),
                       ),
@@ -276,6 +298,7 @@ class _EquipesTabState extends State<EquipesTab> {
     required String nom,
     required String poste,
     required bool isChef,
+    VoidCallback? onRemove,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
@@ -334,6 +357,15 @@ class _EquipesTabState extends State<EquipesTab> {
                       fontSize: 11,
                       fontWeight: FontWeight.bold)),
             ),
+          if (!isChef && onRemove != null) ...[
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              color: Colors.red[400],
+              tooltip: 'Retirer du groupe',
+              onPressed: onRemove,
+            ),
+          ],
         ],
       ),
     );
@@ -342,11 +374,28 @@ class _EquipesTabState extends State<EquipesTab> {
   // DIALOG - Ajouter Équipe
   void _showAddEquipeDialog(BuildContext context) {
     final nomCtrl = TextEditingController();
-    String selectedMagasin = 'El Jadida #1';
-    String selectedChefId = widget.employes.isNotEmpty
-        ? widget.employes.first.id
-        : '';
-    final magasins = ['El Jadida #1', 'El Jadida #2', 'Entrepôt'];
+    final auth = context.read<AuthProvider>();
+    final site = context.read<SiteProvider>();
+    final deptsProv = context.read<DepartementsProvider>();
+    final usedIds = _usedEmployeeIds();
+    final availableChefs = widget.employes.where((e) => !usedIds.contains(e.id)).toList();
+
+    if (availableChefs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aucun employé disponible pour être chef (tous déjà dans une équipe).')),
+      );
+      return;
+    }
+
+    String selectedSiteId = auth.currentUser?.allowedSiteIds != null &&
+            auth.currentUser!.allowedSiteIds!.isNotEmpty &&
+            auth.currentUser!.allowedSiteIds!.first != SiteId.all
+        ? auth.currentUser!.allowedSiteIds!.first
+        : (site.selectedSiteId ?? SiteId.jadida);
+    if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
+    final deptNames = deptsProv.departements.map((d) => d.nom).toList();
+    String selectedDepartement = deptNames.isNotEmpty ? deptNames.first : '';
+    String selectedChefId = availableChefs.first.id;
 
     showDialog(
       context: context,
@@ -361,9 +410,13 @@ class _EquipesTabState extends State<EquipesTab> {
               Text('Nouvelle Équipe'),
             ],
           ),
-          content: SizedBox(
-            width: 400,
-            child: Column(
+          content: Builder(
+            builder: (dialogContext) {
+              final screenWidth = MediaQuery.of(dialogContext).size.width;
+              final dialogWidth = screenWidth > 560 ? 520.0 : screenWidth - 40;
+              return SizedBox(
+                width: dialogWidth,
+                child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Nom
@@ -378,21 +431,40 @@ class _EquipesTabState extends State<EquipesTab> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                // Magasin
+                // Site
                 DropdownButtonFormField<String>(
-                  value: selectedMagasin,
+                  value: selectedSiteId,
                   decoration: InputDecoration(
-                    labelText: 'Magasin *',
+                    labelText: 'Site (الموقع) *',
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
-                  items: magasins
-                      .map((m) =>
-                      DropdownMenuItem(value: m, child: Text(m)))
+                  items: [
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+                  ],
+                  onChanged: (v) => setStateD(() => selectedSiteId = v ?? SiteId.jadida),
+                ),
+                const SizedBox(height: 14),
+                // Département
+                DropdownButtonFormField<String>(
+                  // إذا لم يكن هناك أي قسم، نجعل القيمة null لتفادي خطأ Dropdown
+                  value: deptNames.isEmpty ? null : selectedDepartement,
+                  decoration: InputDecoration(
+                    labelText: 'Département *',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                  ),
+                  items: (deptNames.isEmpty ? <String>['—'] : deptNames)
+                      .map((d) => DropdownMenuItem(value: d == '—' ? null : d, child: Text(d)))
                       .toList(),
-                  onChanged: (v) =>
-                      setStateD(() => selectedMagasin = v!),
+                  onChanged: (v) => setStateD(() {
+                    if (v != null) {
+                      selectedDepartement = v;
+                    }
+                  }),
                 ),
                 const SizedBox(height: 14),
                 // Chef
@@ -404,7 +476,7 @@ class _EquipesTabState extends State<EquipesTab> {
                         borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
-                  items: widget.employes
+                  items: availableChefs
                       .map((e) => DropdownMenuItem(
                       value: e.id,
                       child: Text('${e.nom} (${e.poste})')))
@@ -414,6 +486,8 @@ class _EquipesTabState extends State<EquipesTab> {
                 ),
               ],
             ),
+              );
+            },
           ),
           actions: [
             TextButton(
@@ -426,8 +500,9 @@ class _EquipesTabState extends State<EquipesTab> {
                   widget.onAddEquipe(Equipe(
                     id: DateTime.now().millisecondsSinceEpoch.toString(),
                     nom: nomCtrl.text,
-                    magasin: selectedMagasin,
+                    magasin: selectedDepartement,
                     chefId: selectedChefId,
+                    siteId: selectedSiteId,
                   ));
                   Navigator.pop(context);
                 }
@@ -444,12 +519,26 @@ class _EquipesTabState extends State<EquipesTab> {
     );
   }
 
+  void _removeMembre(Equipe eq, String membreId) {
+    final updated = eq.copyWith(
+      membreIds: eq.membreIds.where((id) => id != membreId).toList(),
+    );
+    widget.onAddEquipe(updated);
+  }
+
   // DIALOG - Ajouter Membre
   void _showAddMembreDialog(BuildContext context, Equipe eq) {
-    // فقط الموظفين اللي مازالين مش في الفريق
+    // فقط الموظفين اللي ليسوا في أي فريق آخر (لا كشيف ولا كعضو)
+    final usedIds = _usedEmployeeIds();
     final disponibles = widget.employes
-        .where((e) =>
-    e.id != eq.chefId && !eq.membreIds.contains(e.id))
+        .where((e) {
+          if (usedIds.contains(e.id)) return false;
+          final posteLower = e.poste.toLowerCase();
+          // لا نسمح للـ Chef d'équipe أن يكون تحت Chef آخر
+          if (posteLower.contains('chef')) return false;
+          // نسمح فقط بالـ Operateur Process كأعضاء تحت الشاف (حسب طلبك)
+          return posteLower.contains('operateur process');
+        })
         .toList();
 
     if (disponibles.isEmpty) {

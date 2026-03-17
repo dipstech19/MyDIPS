@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/auth_provider.dart';
+import '../../core/site/site_model.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import 'magasin_provider.dart';
 import 'models/magasin_model.dart';
@@ -116,10 +119,37 @@ class _GestionMagasinFirebaseState extends State<GestionMagasinFirebase>
       ]));
     }
 
-    final rupt   = magasin.ruptureCount;
-    final bas    = magasin.basCount;
-    final totalE = magasin.entrees.fold(0, (s, m) => s + m.totalQte);
-    final totalS = magasin.sorties.fold(0, (s, m) => s + m.totalQte);
+    final auth = context.watch<AuthProvider>();
+    final site = context.watch<SiteProvider>();
+    final filteredProduits = SiteId.filterBySite(
+      magasin.produits,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (p) => p.siteId,
+    );
+    final filteredEntrees = SiteId.filterBySite(
+      magasin.entrees,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (m) => m.siteId,
+    );
+    final filteredSorties = SiteId.filterBySite(
+      magasin.sorties,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (m) => m.siteId,
+    );
+    final effectiveSiteId = auth.currentUser?.allowedSiteIds != null &&
+            auth.currentUser!.allowedSiteIds!.isNotEmpty &&
+            auth.currentUser!.allowedSiteIds!.first != SiteId.all
+        ? auth.currentUser!.allowedSiteIds!.first
+        : (site.selectedSiteId ?? SiteId.jadida);
+    final siteIdForNew = effectiveSiteId == SiteId.all ? SiteId.jadida : effectiveSiteId;
+
+    final rupt = filteredProduits.where((p) => p.rupture).length;
+    final bas = filteredProduits.where((p) => p.bas).length;
+    final totalE = filteredEntrees.fold(0, (s, m) => s + m.totalQte);
+    final totalS = filteredSorties.fold(0, (s, m) => s + m.totalQte);
     final totalH = magasin.entrees.length + magasin.sorties.length;
 
     return Scaffold(
@@ -130,16 +160,16 @@ class _GestionMagasinFirebaseState extends State<GestionMagasinFirebase>
           onTap: (i) => setState(() { _tab = i; _tabCtrl.animateTo(i); }),
           statChips: [
             if (_tab == 0) ...[
-              _StatChip('${magasin.totalProduits} produits', kBlueLt, kBlue),
+              _StatChip('${filteredProduits.length} produits', kBlueLt, kBlue),
               if (rupt > 0) _StatChip('$rupt rupture${rupt > 1 ? "s" : ""}', kRedLt, kRed),
               if (bas  > 0) _StatChip('$bas bas', kOrangeLt, kOrange),
             ],
             if (_tab == 1) ...[
-              _StatChip('${magasin.entrees.length} entrée${magasin.entrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
+              _StatChip('${filteredEntrees.length} entrée${filteredEntrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
               _StatChip('$totalE unités reçues', kBlueLt, kBlue),
             ],
             if (_tab == 2) ...[
-              _StatChip('${magasin.sorties.length} sortie${magasin.sorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
+              _StatChip('${filteredSorties.length} sortie${filteredSorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
               _StatChip('$totalS unités sorties', kBlueLt, kBlue),
             ],
             if (_tab == 3)
@@ -151,9 +181,9 @@ class _GestionMagasinFirebaseState extends State<GestionMagasinFirebase>
             controller: _tabCtrl,
             physics: const NeverScrollableScrollPhysics(),
             children: [
-              _StockPage(magasin: magasin),
-              _EntreesPage(magasin: magasin),
-              _SortiesPage(magasin: magasin),
+              _StockPage(magasin: magasin, produits: filteredProduits),
+              _EntreesPage(magasin: magasin, entrees: filteredEntrees, siteId: siteIdForNew),
+              _SortiesPage(magasin: magasin, sorties: filteredSorties, siteId: siteIdForNew),
               _HistoriquePage(magasin: magasin),
             ],
           ),
@@ -335,8 +365,10 @@ class _StatChip extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════
 class _StockPage extends StatefulWidget {
   final MagasinProvider magasin;
-  const _StockPage({required this.magasin});
-  @override State<_StockPage> createState() => _StockPageState();
+  final List<Produit> produits;
+  const _StockPage({required this.magasin, required this.produits});
+  @override
+  State<_StockPage> createState() => _StockPageState();
 }
 
 class _StockPageState extends State<_StockPage> {
@@ -346,7 +378,7 @@ class _StockPageState extends State<_StockPage> {
 
   List<Produit> get _list {
     final q = _q.toLowerCase();
-    var l = widget.magasin.produits.where((p) {
+    var l = widget.produits.where((p) {
       final mq = q.isEmpty || p.nom.toLowerCase().contains(q) || p.reference.toLowerCase().contains(q);
       return mq && (_cat == 'Toutes' || p.categorie == _cat) && (_mag == 'Tous' || p.magasin == _mag);
     }).toList();
@@ -463,14 +495,17 @@ class _StockPageState extends State<_StockPage> {
 // ══════════════════════════════════════════════════════════════
 class _EntreesPage extends StatefulWidget {
   final MagasinProvider magasin;
-  const _EntreesPage({required this.magasin});
-  @override State<_EntreesPage> createState() => _EntreesPageState();
+  final List<Mouvement> entrees;
+  final String siteId;
+  const _EntreesPage({required this.magasin, required this.entrees, required this.siteId});
+  @override
+  State<_EntreesPage> createState() => _EntreesPageState();
 }
 
 class _EntreesPageState extends State<_EntreesPage> {
   String _cat = 'Toutes', _mag = 'Tous';
 
-  List<Mouvement> get _list => widget.magasin.entrees
+  List<Mouvement> get _list => widget.entrees
       .where((m) => (_cat == 'Toutes' || m.categorie == _cat) && (_mag == 'Tous' || m.magasin == _mag))
       .toList();
 
@@ -498,7 +533,7 @@ class _EntreesPageState extends State<_EntreesPage> {
         onMagChanged: (v) => setState(() => _mag = v),
         btnColor: kGreen,
         btnLabel: 'Nouvelle entrée',
-        onBtnTap: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context)),
+        onBtnTap: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context)),
       ),
       const SizedBox(height: 12),
       Expanded(
@@ -538,14 +573,17 @@ class _EntreesPageState extends State<_EntreesPage> {
 // ══════════════════════════════════════════════════════════════
 class _SortiesPage extends StatefulWidget {
   final MagasinProvider magasin;
-  const _SortiesPage({required this.magasin});
-  @override State<_SortiesPage> createState() => _SortiesPageState();
+  final List<Mouvement> sorties;
+  final String siteId;
+  const _SortiesPage({required this.magasin, required this.sorties, required this.siteId});
+  @override
+  State<_SortiesPage> createState() => _SortiesPageState();
 }
 
 class _SortiesPageState extends State<_SortiesPage> {
   String _cat = 'Toutes', _mag = 'Tous';
 
-  List<Mouvement> get _list => widget.magasin.sorties
+  List<Mouvement> get _list => widget.sorties
       .where((m) => (_cat == 'Toutes' || m.categorie == _cat) && (_mag == 'Tous' || m.magasin == _mag))
       .toList();
 
@@ -573,7 +611,15 @@ class _SortiesPageState extends State<_SortiesPage> {
         onMagChanged: (v) => setState(() => _mag = v),
         btnColor: kOrange,
         btnLabel: 'Nouvelle sortie',
-        onBtnTap: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context)),
+        onBtnTap: () => _showDialog(
+          context,
+          _MouvForm(
+            type: 'sortie',
+            magasin: widget.magasin,
+            siteId: widget.siteId,
+            scaffoldContext: context,
+          ),
+        ),
       ),
       const SizedBox(height: 12),
       Expanded(
@@ -1077,9 +1123,16 @@ class _GlassDropdown extends StatelessWidget {
 class _MouvForm extends StatefulWidget {
   final String type;
   final MagasinProvider magasin;
+  final String siteId;
   final BuildContext? scaffoldContext; // contexte parent pour SnackBar
-  const _MouvForm({required this.type, required this.magasin, this.scaffoldContext});
-  @override State<_MouvForm> createState() => _MouvFormState();
+  const _MouvForm({
+    required this.type,
+    required this.magasin,
+    required this.siteId,
+    this.scaffoldContext,
+  });
+  @override
+  State<_MouvForm> createState() => _MouvFormState();
 }
 
 class _MouvFormState extends State<_MouvForm> {
@@ -1106,10 +1159,11 @@ class _MouvFormState extends State<_MouvForm> {
   bool get _hasVar => _newProdMode ? _newHasVar : (_selProd?.aVariantes ?? false);
 
   List<Produit> get _filteredProduits => widget.magasin.produits.where((p) {
-    final magOk = _selMag == null || p.magasin == _selMag;
-    final catOk = _selCat == null || p.categorie == _selCat;
-    return magOk && catOk;
-  }).toList();
+        if (p.siteId != widget.siteId) return false;
+        final magOk = _selMag == null || p.magasin == _selMag;
+        final catOk = _selCat == null || p.categorie == _selCat;
+        return magOk && catOk;
+      }).toList();
 
   void _validateStockSortie() {
     if (!_isSortie || _selProd == null) { setState(() { _stockError = null; _varStockErrors = {}; }); return; }
@@ -1225,6 +1279,7 @@ class _MouvFormState extends State<_MouvForm> {
         preneurNom: (_isSortie && _preneurC.text.trim().isNotEmpty)
             ? _preneurC.text.trim()
             : null,
+        siteId: prod.siteId,
       );
 
       // ── Si nouveau produit, attendre qu'il apparaisse dans le stream ──────
@@ -1291,7 +1346,7 @@ class _MouvFormState extends State<_MouvForm> {
         const SizedBox(height: 12),
         Row(children: kMagasins.map((mag) {
           final sel       = _selMag == mag;
-          final prodCount = widget.magasin.produits.where((p) => p.magasin == mag).length;
+          final prodCount = widget.magasin.produits.where((p) => p.siteId == widget.siteId && p.magasin == mag).length;
           return Expanded(child: Padding(
             padding: const EdgeInsets.only(right: 8),
             child: InkWell(
@@ -2061,12 +2116,21 @@ class _RowWidgetState extends State<_RowWidget> {
       duration: const Duration(milliseconds: 120),
       color: _hov ? widget.accentColor.withOpacity(0.04) : kSurface,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center,
-          children: List.generate(widget.columns.length, (i) =>
-              Expanded(flex: widget.columns[i].flex,
-                  child: i < widget.row.cells.length
-                      ? OverflowBox(maxWidth: double.infinity, child: Align(alignment: Alignment.centerLeft, child: widget.row.cells[i]))
-                      : const SizedBox.shrink()))),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: List.generate(
+          widget.columns.length,
+          (i) => Expanded(
+            flex: widget.columns[i].flex,
+            child: i < widget.row.cells.length
+                ? Align(
+                    alignment: Alignment.centerLeft,
+                    child: widget.row.cells[i],
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ),
     ),
   );
 }
