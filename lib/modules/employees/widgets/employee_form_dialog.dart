@@ -8,6 +8,7 @@ import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
 import '../../../core/site/site_provider.dart';
 import '../../../core/utils/responsive.dart';
+import '../departements_provider.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
 import '../employees_provider.dart';
@@ -45,7 +46,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _dateCnssCtrl = TextEditingController();
 
   String _poste = '';
-  String _magasin = '';
   String _dept = '';
   String _contrat = 'CDI';
   String _chefId = '';
@@ -79,8 +79,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
     final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final magasins = _uniqueMagasins(empProv);
-    final depts = _uniqueDepartements(empProv);
+    final depts = context.watch<DepartementsProvider>().departements.map((d) => d.nom).toList();
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -155,13 +154,13 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       const SizedBox(height: 12),
                       _row2(
                         _dropdownPoste(posteNames),
-                        _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
+                        const SizedBox(),
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: _siteId,
                         decoration: InputDecoration(
-                          labelText: 'Zone (الموقع) *',
+                          labelText: 'Site *',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           isDense: true,
@@ -175,7 +174,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       const SizedBox(height: 12),
                       _row2(
                         _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
-                        _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
+                        _field(_salaireCtrl, 'Salaire Net (DH) *', required: true, isNumber: true),
                       ),
                       const SizedBox(height: 12),
                       _row2(
@@ -296,10 +295,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final magasins = _uniqueMagasins(empProv);
-      final depts = _uniqueDepartements(empProv);
+      final depts = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
       final employeeId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -354,7 +351,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         adresse: _adresseCtrl.text,
         email: _emailCtrl.text,
         poste: poste,
-        magasin: magasin,
+        magasin: '',
         departement: dept,
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
@@ -468,20 +465,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueMagasins(EmployeesProvider prov) {
-    final set = <String>{};
-    for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
-  }
-
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

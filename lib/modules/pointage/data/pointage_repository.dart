@@ -226,6 +226,10 @@ class PointageRepository {
     await _firestore.collection(_pointageCollection).doc(docId).update(updates);
   }
 
+  Future<void> updatePointageFields(String docId, Map<String, dynamic> updates) async {
+    await _firestore.collection(_pointageCollection).doc(docId).update(updates);
+  }
+
   /// إنشاء سجل نقطاج بتعديل أدمن فقط (عند عدم وجود سجل)
   Future<void> createRecordWithAdminOverride(PointageRecord record) async {
     final docId = _docId(record.employeId, record.date);

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../core/utils/responsive.dart';
+import '../departements_provider.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
 import '../employees_provider.dart';
@@ -44,7 +45,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   late TextEditingController _dateCnssCtrl;
 
   late String _poste;
-  late String _magasin;
   late String _dept;
   late String _contrat;
   late String _chefId;
@@ -77,7 +77,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _dateCnssCtrl = TextEditingController(text: e.dateCnss);
     
     _poste = e.poste;
-    _magasin = e.magasin;
     _dept = e.departement;
     _contrat = _contrats.contains(e.typeContrat) ? e.typeContrat : 'CDI';
     _chefId = e.chefDirectId;
@@ -108,8 +107,11 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
     final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final magasins = _uniqueMagasins(empProv);
-    final depts = _uniqueDepartements(empProv);
+    final provDepts = context.watch<DepartementsProvider>().departements.map((d) => d.nom).toList();
+    final depts = [
+      ...provDepts,
+      if (_dept.isNotEmpty && !provDepts.contains(_dept)) _dept,
+    ];
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -185,12 +187,12 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                         const SizedBox(height: 12),
                         _row2(
                           _dropdownPoste(posteNames),
-                          _dropdown('Magasin *', _magasin, magasins.isEmpty ? ['—'] : magasins, (v) => setState(() => _magasin = v ?? '')),
+                          const SizedBox(),
                         ),
                         const SizedBox(height: 12),
                         _row2(
                           _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
-                          _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
+                          _field(_salaireCtrl, 'Salaire Net (DH) *', required: true, isNumber: true),
                         ),
                         const SizedBox(height: 12),
                         _row2(
@@ -306,10 +308,12 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final magasins = _uniqueMagasins(empProv);
-      final depts = _uniqueDepartements(empProv);
+      final provDepts = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
+      final depts = [
+        ...provDepts,
+        if (_dept.isNotEmpty && !provDepts.contains(_dept)) _dept,
+      ];
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final magasin = _magasin.isEmpty && magasins.isNotEmpty && magasins.first != '—' ? magasins.first : _magasin;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
       final employeeId = widget.employe.id;
@@ -362,7 +366,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         adresse: _adresseCtrl.text,
         email: _emailCtrl.text,
         poste: poste,
-        magasin: magasin,
+        magasin: '',
         departement: dept,
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
@@ -473,22 +477,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueMagasins(EmployeesProvider prov) {
-    final set = <String>{};
-    for (final e in prov.equipes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    for (final e in prov.employes) if (e.magasin.isNotEmpty) set.add(e.magasin);
-    if (_magasin.isNotEmpty) set.add(_magasin);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
-  }
-
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
-    if (_dept.isNotEmpty) set.add(_dept);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

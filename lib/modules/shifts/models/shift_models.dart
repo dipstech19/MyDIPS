@@ -162,4 +162,19 @@ extension ShiftTypeDisplay on ShiftType {
       case ShiftType.rest: return 'راحة';
     }
   }
+
+  /// Heure de fin de la shift pour le jour [date]. Nuit: fin à 06:00 le lendemain.
+  DateTime? getShiftEnd(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    switch (this) {
+      case ShiftType.morning:
+        return d.add(const Duration(hours: 14));
+      case ShiftType.evening:
+        return d.add(const Duration(hours: 22));
+      case ShiftType.night:
+        return d.add(const Duration(days: 1, hours: 6));
+      case ShiftType.rest:
+        return null;
+    }
+  }
 }

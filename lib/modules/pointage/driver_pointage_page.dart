@@ -98,6 +98,11 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     if (shiftsProvider.hasConfig) {
       teams = teams.where((t) => shiftsProvider.getShiftForEquipe(t.equipeId, today) != ShiftType.rest).toList();
     }
+    // Hide ROBO/Repos teams entirely (no pointage on those days)
+    teams = teams.where((t) {
+      final name = t.equipeName.trim().toLowerCase();
+      return !(name.contains('robo') || name.contains('repos') || name.contains('repo'));
+    }).toList();
     if (_selectedEquipeId != null && !teams.any((t) => t.equipeId == _selectedEquipeId)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() => _selectedEquipeId = null);
@@ -119,8 +124,9 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final config = getConfigForEquipeAndDate(selectedEquipe, today, shiftForEquipe);
     final now = DateTime.now();
     final hoursStatus = getPointageHoursStatus(now, config);
-    final isWithinArrival = config.canMarkArrivalNow(now);
-    final isWithinDeparture = config.canMarkDepartureNow(now);
+    final ignoreTime = pointageProvider.ignoreTimeWindowsForTest;
+    final isWithinArrival = ignoreTime || config.canMarkArrivalNow(now);
+    final isWithinDeparture = ignoreTime || config.canMarkDepartureNow(now);
     final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
     final yesterday = today.subtract(const Duration(days: 1));
 
@@ -546,39 +552,7 @@ class _DepartureChips extends StatelessWidget {
         FilterChip(
           label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
           selected: isFinished,
-          onSelected: (_) async {
-            final controller = TextEditingController();
-            final minutes = await showDialog<int?>(
-              context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(overtimeLabel),
-                  content: TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: overtimeHint,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, null),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        final v = int.tryParse(controller.text.trim());
-                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                    ),
-                  ],
-                );
-              },
-            );
-            onFinished(minutes);
-          },
+          onSelected: (_) => onFinished(0),
         ),
       ],
     );

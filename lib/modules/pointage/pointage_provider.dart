@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
 import 'pointage_hours_config.dart';
+import 'services/pointage_export_service.dart';
 
 class PointageProvider extends ChangeNotifier {
   final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
@@ -29,6 +30,14 @@ class PointageProvider extends ChangeNotifier {
   bool get loading => _loading;
   String? get error => _error;
   bool get firebaseAvailable => _firebaseAvailable;
+
+  bool _ignoreTimeWindowsForTest = false;
+  bool get ignoreTimeWindowsForTest => _ignoreTimeWindowsForTest;
+  void setIgnoreTimeWindowsForTest(bool value) {
+    if (_ignoreTimeWindowsForTest == value) return;
+    _ignoreTimeWindowsForTest = value;
+    notifyListeners();
+  }
 
   StreamSubscription? _subPointage;
   StreamSubscription? _subReports;
@@ -274,7 +283,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    if (!_ignoreTimeWindowsForTest && !config.canMarkArrivalNow(now)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -310,7 +319,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    if (!_ignoreTimeWindowsForTest && !config.canMarkArrivalNow(now)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -336,7 +345,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    if (!_ignoreTimeWindowsForTest && !config.canMarkArrivalNow(now)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitDriverReport(pointageDate);
     return true;
@@ -348,7 +357,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    if (!_ignoreTimeWindowsForTest && !config.canMarkArrivalNow(now)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitChefReport(equipeId, pointageDate);
     return true;
@@ -364,8 +373,19 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkDepartureNow(DateTime.now())) return false;
-    await _repo!.setDepartureStatus(record, status, overtimeMinutes: overtimeMinutes);
+    if (!_ignoreTimeWindowsForTest && !config.canMarkDepartureNow(DateTime.now())) return false;
+    int? resolvedOvertime = overtimeMinutes;
+    if (status == DepartureStatus.finished) {
+      final arrival = record.arrivalMarkedAt;
+      if (arrival != null) {
+        final totalMinutes = DateTime.now().difference(arrival).inMinutes;
+        resolvedOvertime = (totalMinutes - (PointageExportService.hoursPerDay * 60).toInt());
+        if (resolvedOvertime < 0) resolvedOvertime = 0;
+      } else {
+        resolvedOvertime = 0;
+      }
+    }
+    await _repo!.setDepartureStatus(record, status, overtimeMinutes: resolvedOvertime);
     return true;
   }
 
@@ -414,6 +434,54 @@ class PointageProvider extends ChangeNotifier {
       );
       await _repo!.createRecordWithAdminOverride(record);
     }
+  }
+
+  /// Affectation temporaire d'un employé vers une autre équipe pour une journée (renfort).
+  /// Crée un record si besoin, sans adminFinalStatus (pointage normal), et pré-remplit overtimeMinutes à 8h (480).
+  Future<void> assignEmployeeTemp({
+    required String employeId,
+    required String employeNom,
+    required String employeCin,
+    required String targetEquipeId,
+    required String targetEquipeName,
+    required String targetChefName,
+    required String originalEquipeId,
+    required DateTime day,
+    String? shiftOverride,
+    int defaultOvertimeMinutes = 0,
+  }) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    final d = DateTime(day.year, day.month, day.day);
+    final existing = await _repo!.getByEmployeAndDate(employeId, d);
+    if (existing != null) {
+      await _repo!.updatePointageFields(existing.id, {
+        'equipeId': targetEquipeId,
+        'equipeName': targetEquipeName,
+        'chefName': targetChefName,
+        'tempAssigned': true,
+        'originalEquipeId': originalEquipeId,
+        'shiftOverride': shiftOverride,
+        'overtimeMinutes': existing.overtimeMinutes ?? defaultOvertimeMinutes,
+      });
+      return;
+    }
+    final record = PointageRecord(
+      id: '',
+      employeId: employeId,
+      employeNom: employeNom,
+      employeCin: employeCin,
+      equipeId: targetEquipeId,
+      equipeName: targetEquipeName,
+      chefName: targetChefName,
+      status: AttendanceStatus.unmarked,
+      date: d,
+      createdAt: DateTime.now(),
+      tempAssigned: true,
+      originalEquipeId: originalEquipeId,
+      shiftOverride: shiftOverride,
+      overtimeMinutes: defaultOvertimeMinutes,
+    );
+    await _repo!.markAttendance(record);
   }
 
   Future<void> submitDailyReport({

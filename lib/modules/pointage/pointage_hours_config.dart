@@ -7,7 +7,7 @@ class PointageHoursConfig {
   PointageHoursConfig({
     this.startHour = 6,
     this.startMinute = 0,
-    this.endHour = 10,
+    this.endHour = 17,
     this.endMinute = 0,
   });
 

@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import '../../shared/widgets/smart_avatar.dart';
+import '../employees/data/departements_repository.dart';
 import '../employees/data/postes_repository.dart';
+import '../employees/departements_provider.dart';
 import '../employees/postes_provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart' as emp;
@@ -39,10 +42,10 @@ class _ParamChefEquipe {
   _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
 }
 
-/// فقط الموظفون الذين منصبهم Chef/Shef — لاستخدامهم في قوائم "Chef (employé)"
-bool _isChefPoste(String poste) {
+/// فقط الموظفون الذين منصبهم "Chef d'équipe" (بدون Chef de zone أو أعلى)
+bool _isChefEquipePoste(String poste) {
   final p = poste.trim().toLowerCase();
-  return p.contains('chef') || p == 'shef';
+  return p == "chef d'équipe" || p == "chef d’equipe" || p == "chef d'equipe" || p == "chef d equipe";
 }
 
 /// قائمة Chef (employé) — تظهر فقط من عندهم منصب Chef/Shef
@@ -50,12 +53,25 @@ class _ChefEquipeDropdown extends StatelessWidget {
   final EmployeesProvider prov;
   final String? chefId;
   final void Function(String?) onChanged;
+  final Set<String> excludedIds;
+  final String? forceIncludeId;
 
-  const _ChefEquipeDropdown({required this.prov, required this.chefId, required this.onChanged});
+  const _ChefEquipeDropdown({
+    required this.prov,
+    required this.chefId,
+    required this.onChanged,
+    this.excludedIds = const <String>{},
+    this.forceIncludeId,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final candidates = prov.employes.where((e) => _isChefPoste(e.poste)).toList();
+    final candidates = prov.employes
+        .where((e) =>
+            _isChefEquipePoste(e.poste) &&
+            (!excludedIds.contains(e.id) || (forceIncludeId != null && e.id == forceIncludeId)))
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
     final value = (chefId != null && chefId!.isNotEmpty && candidates.any((e) => e.id == chefId)) ? chefId! : '';
     return DropdownButtonFormField<String>(
       value: value,
@@ -112,6 +128,7 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
+    _SettingsSection(icon: Icons.account_tree_outlined, label: 'Départements'),
     _SettingsSection(icon: Icons.cancel_presentation_outlined, label: 'Raisons d\'absence'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
@@ -311,12 +328,13 @@ class _ParametresPageState extends State<ParametresPage> {
       case 2:  return const _ChefComptesSection();
       case 3:  return const _ChauffeursSection();
       case 4:  return const _PostesSection();
-      case 5:  return const _AbsenceReasonsSection();
-      case 6:  return const _GeneralSection();
-      case 7:  return const _NotificationsSection();
-      case 8:  return const _SecuriteSection();
-      case 9:  return const _DatabaseSection();
-      case 10: return const _AboutSection();
+      case 5:  return const _DepartementsSection();
+      case 6:  return const _AbsenceReasonsSection();
+      case 7:  return const _GeneralSection();
+      case 8:  return const _NotificationsSection();
+      case 9:  return const _SecuriteSection();
+      case 10: return const _DatabaseSection();
+      case 11: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -1755,7 +1773,7 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
             child: const Row(children: [
               Expanded(flex: 3, child: _TH('ÉQUIPE')),
               Expanded(flex: 2, child: _TH('CHEF')),
-              Expanded(flex: 2, child: _TH('MAGASIN')),
+              Expanded(flex: 2, child: _TH('DÉPARTEMENT')),
               Expanded(flex: 1, child: _TH('MEMBRES')),
               SizedBox(width: 110, child: _TH('ACTIONS', center: true)),
             ]),
@@ -1791,8 +1809,17 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
 
   void _showAddEquipeDialog(BuildContext context, EmployeesProvider prov) {
     final nomCtrl = TextEditingController();
-    final magasinCtrl = TextEditingController(text: 'A');
     String? chefId;
+    final deptNames = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
+    String selectedDepartement = deptNames.isNotEmpty ? deptNames.first : '';
+    String selectedSiteId = context.read<SiteProvider>().selectedSiteId ?? SiteId.jadida;
+    if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
+    final usedIds = <String>{
+      for (final e in prov.equipes) ...[
+        if (e.chefId.isNotEmpty) e.chefId,
+        ...e.membreIds,
+      ]
+    };
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -1804,9 +1831,33 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
               children: [
                 TextField(controller: nomCtrl, decoration: const InputDecoration(labelText: 'Nom équipe')),
                 const SizedBox(height: 12),
-                TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
+                DropdownButtonFormField<String>(
+                  value: selectedSiteId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Site *'),
+                  items: [
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida), overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi), overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (v) => setDialogState(() => selectedSiteId = v ?? SiteId.jadida),
+                ),
                 const SizedBox(height: 12),
-                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
+                DropdownButtonFormField<String>(
+                  value: deptNames.isEmpty ? '' : selectedDepartement,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Département *'),
+                  items: (deptNames.isEmpty ? <String>[''] : deptNames)
+                      .map((d) => DropdownMenuItem(value: d, child: Text(d.isEmpty ? '—' : d, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (v) => setDialogState(() => selectedDepartement = v ?? ''),
+                ),
+                const SizedBox(height: 12),
+                _ChefEquipeDropdown(
+                  prov: prov,
+                  chefId: chefId,
+                  excludedIds: usedIds,
+                  onChanged: (v) => setDialogState(() => chefId = v),
+                ),
               ],
             ),
           ),
@@ -1817,7 +1868,14 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                 final nom = nomCtrl.text.trim();
                 if (nom.isEmpty) return;
                 final id = 'eq_${DateTime.now().millisecondsSinceEpoch}';
-                await prov.addEquipe(Equipe(id: id, nom: nom, magasin: magasinCtrl.text.trim().isEmpty ? 'A' : magasinCtrl.text.trim(), chefId: chefId ?? '', membreIds: []));
+                await prov.addEquipe(Equipe(
+                  id: id,
+                  nom: nom,
+                  magasin: selectedDepartement,
+                  chefId: chefId ?? '',
+                  membreIds: [],
+                  siteId: selectedSiteId,
+                ));
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('Créer'),
@@ -1830,8 +1888,21 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
 
   void _showEditEquipeDialog(BuildContext context, EmployeesProvider prov, Equipe eq) {
     final nomCtrl = TextEditingController(text: eq.nom);
-    final magasinCtrl = TextEditingController(text: eq.magasin);
     String? chefId = eq.chefId.isEmpty ? null : eq.chefId;
+    final deptNamesBase = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
+    final deptNames = [
+      ...deptNamesBase,
+      if (eq.magasin.isNotEmpty && !deptNamesBase.contains(eq.magasin)) eq.magasin,
+    ];
+    String selectedDepartement = eq.magasin;
+    String selectedSiteId = eq.siteId;
+    if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
+    final usedIds = <String>{
+      for (final e in prov.equipes) ...[
+        if (e.chefId.isNotEmpty) e.chefId,
+        ...e.membreIds,
+      ]
+    };
     bool useCustomHours = eq.pointageStartHour != null && eq.pointageEndHour != null;
     int startHour = eq.pointageStartHour ?? 6;
     int startMinute = eq.pointageStartMinute ?? 0;
@@ -1849,9 +1920,34 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
               children: [
                 TextField(controller: nomCtrl, decoration: const InputDecoration(labelText: 'Nom équipe')),
                 const SizedBox(height: 12),
-                TextField(controller: magasinCtrl, decoration: const InputDecoration(labelText: 'Magasin')),
+                DropdownButtonFormField<String>(
+                  value: selectedSiteId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Site *'),
+                  items: [
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida), overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi), overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (v) => setDialogState(() => selectedSiteId = v ?? SiteId.jadida),
+                ),
                 const SizedBox(height: 12),
-                _ChefEquipeDropdown(prov: prov, chefId: chefId, onChanged: (v) => setDialogState(() => chefId = v)),
+                DropdownButtonFormField<String>(
+                  value: deptNames.isEmpty ? '' : (deptNames.contains(selectedDepartement) ? selectedDepartement : deptNames.first),
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Département *'),
+                  items: (deptNames.isEmpty ? <String>[''] : deptNames)
+                      .map((d) => DropdownMenuItem(value: d, child: Text(d.isEmpty ? '—' : d, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (v) => setDialogState(() => selectedDepartement = v ?? ''),
+                ),
+                const SizedBox(height: 12),
+                _ChefEquipeDropdown(
+                  prov: prov,
+                  chefId: chefId,
+                  excludedIds: usedIds,
+                  forceIncludeId: eq.chefId.isEmpty ? null : eq.chefId,
+                  onChanged: (v) => setDialogState(() => chefId = v),
+                ),
                 const SizedBox(height: 16),
                 const Divider(),
                 Text('Heures de pointage (chef d\'équipe)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey[800])),
@@ -1924,9 +2020,10 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                 final updated = Equipe(
                   id: eq.id,
                   nom: nomCtrl.text.trim(),
-                  magasin: magasinCtrl.text.trim(),
+                  magasin: selectedDepartement,
                   chefId: chefId ?? '',
                   membreIds: eq.membreIds,
+                  siteId: selectedSiteId,
                   pointageStartHour: useCustomHours ? startHour : null,
                   pointageStartMinute: useCustomHours ? startMinute : null,
                   pointageEndHour: useCustomHours ? endHour : null,
@@ -1969,7 +2066,7 @@ class _ChefEquipeCard extends StatelessWidget {
             Text(eq.nom, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark)),
             const SizedBox(height: 6),
             Text('Chef: ${v.chefNom}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
-            Text('Magasin: ${eq.magasin}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+            Text('Département: ${eq.magasin}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
             const SizedBox(height: 4),
             Text('${eq.membreIds.length} membre(s)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
@@ -3607,6 +3704,196 @@ void _confirmDeletePoste(BuildContext context, PostesProvider prov, Poste p) {
           style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
           onPressed: () async {
             await prov.deletePoste(p.id);
+            if (context.mounted) Navigator.pop(context);
+          },
+          child: const Text('Supprimer'),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────
+//  SECTION: DÉPARTEMENTS (من Firestore)
+// ─────────────────────────────────────────────
+
+class _DepartementsSection extends StatelessWidget {
+  const _DepartementsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<DepartementsProvider>();
+    if (prov.loading && prov.firebaseAvailable) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final list = prov.departements;
+    return Column(
+      children: [
+        if (!prov.firebaseAvailable) _offlineBanner(),
+        if (prov.error != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: Colors.red.shade50,
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, size: 20, color: Colors.red.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    prov.error!,
+                    style: TextStyle(fontSize: 12, color: Colors.red.shade900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(pagePadding(context), 14, pagePadding(context), 12),
+          child: isMobile(context)
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Départements', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                    Text('${list.length} département(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                        ),
+                        icon: const Icon(Icons.add, size: 15),
+                        label: const Text('Ajouter un département', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        onPressed: () => _showDepartementDialog(context, prov, null),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Départements', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
+                      Text('${list.length} département(s) — Gérés depuis Firestore', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    ]),
+                    const Spacer(),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kAccent, foregroundColor: Colors.white, elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                      ),
+                      icon: const Icon(Icons.add, size: 15),
+                      label: const Text('Ajouter un département', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      onPressed: () => _showDepartementDialog(context, prov, null),
+                    ),
+                  ],
+                ),
+        ),
+        const Divider(height: 1, color: _kBorder),
+        Expanded(
+          child: list.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.account_tree_outlined, size: 56, color: Colors.grey[400]),
+                      const SizedBox(height: 12),
+                      Text('Aucun département. Ajoutez depuis le bouton ci‑dessus.', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final d = list[i];
+                    return ListTile(
+                      leading: CircleAvatar(radius: 20, backgroundColor: _kAccent.withOpacity(0.12), child: Icon(Icons.account_tree_outlined, color: _kAccent, size: 20)),
+                      title: Text(d.nom, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(icon: const Icon(Icons.edit_outlined, size: 18), onPressed: () => _showDepartementDialog(context, prov, d)),
+                        IconButton(icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[400]), onPressed: () => _confirmDeleteDepartement(context, prov, d)),
+                      ]),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+void _showDepartementDialog(BuildContext context, DepartementsProvider prov, Departement? existing) {
+  final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+  final navigator = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(existing == null ? 'Nouveau département' : 'Modifier le département'),
+      content: TextField(
+        controller: nomCtrl,
+        decoration: const InputDecoration(labelText: 'Nom du département', hintText: 'Ex: Ventes, Production'),
+        autofocus: true,
+      ),
+      actions: [
+        TextButton(onPressed: () => navigator.pop(), child: const Text('Annuler')),
+        ElevatedButton(
+          onPressed: () async {
+            final nom = nomCtrl.text.trim();
+            if (nom.isEmpty) {
+              messenger.showSnackBar(const SnackBar(content: Text('Entrez un nom de département')));
+              return;
+            }
+            if (!prov.firebaseAvailable) {
+              messenger.showSnackBar(const SnackBar(
+                content: Text('Données hors ligne. Connectez Firebase (ex: Android) pour enregistrer.'),
+                backgroundColor: Colors.orange,
+              ));
+              if (dialogContext.mounted) navigator.pop();
+              return;
+            }
+            try {
+              if (existing == null) {
+                await prov.addDepartement(Departement(id: '', nom: nom));
+              } else {
+                await prov.updateDepartement(Departement(id: existing.id, nom: nom, ordre: existing.ordre));
+              }
+              if (dialogContext.mounted) navigator.pop();
+              if (context.mounted) {
+                messenger.showSnackBar(SnackBar(content: Text(existing == null ? 'Département « $nom » enregistré.' : 'Département mis à jour.')));
+              }
+            } catch (e) {
+              if (context.mounted) {
+                messenger.showSnackBar(SnackBar(
+                  content: Text('Erreur: ${e.toString().replaceFirst(RegExp(r'^\\[[\\w-]+/\\w+\\]\\s*'), '')}'),
+                  backgroundColor: Colors.red,
+                ));
+              }
+            }
+          },
+          child: const Text('Enregistrer'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _confirmDeleteDepartement(BuildContext context, DepartementsProvider prov, Departement d) {
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Supprimer le département'),
+      content: Text('Supprimer « ${d.nom} » ?'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+          onPressed: () async {
+            await prov.deleteDepartement(d.id);
             if (context.mounted) Navigator.pop(context);
           },
           child: const Text('Supprimer'),
