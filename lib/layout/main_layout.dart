@@ -10,7 +10,7 @@ import '../modules/Demandes/demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
-import '../modules/magasin/gestion_magasin_firebase.dart';
+import '../modules/magasin/gestion_magasin.dart';
 import '../modules/magasin/magasin_provider.dart';
 import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
@@ -29,7 +29,6 @@ class _MainLayoutState extends State<MainLayout> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés (اسم/صورة/CIN)، Pointage، Shifts، Paramètres (معلوماته فقط). الأدمن: كل القائمة.
   List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe) {
     if (isChauffeur) {
       return [
@@ -224,7 +223,7 @@ class _MainLayoutState extends State<MainLayout> {
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 1200),
+                constraints: const BoxConstraints(maxWidth: 1200),
                 child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe),
               ),
             ),
@@ -288,7 +287,8 @@ class _MainLayoutState extends State<MainLayout> {
       case 3:
         return const ShiftsPage();
       case 4:
-        return const GestionMagasinFirebase();
+        // ✅ CORRIGÉ : GestionMagasinFirebase → GestionMagasinPage
+        return const GestionMagasinPage();
       case 5:
         return const _PlaceholderPage(
           icon: Icons.bar_chart,
@@ -317,7 +317,6 @@ class _NavItem {
   _NavItem({required this.icon, required this.label});
 }
 
-/// صفحة مؤقتة (Rapports, etc.)
 class _PlaceholderPage extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -417,45 +416,17 @@ class _DashboardPage extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Employés',
-                        value: '$employesCount',
-                        icon: Icons.people,
-                        color: Colors.blue,
-                      ),
-                    ),
+                    Expanded(child: _StatCard(title: 'Employés', value: '$employesCount', icon: Icons.people, color: Colors.blue)),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Présents aujourd\'hui',
-                        value: presentLabel,
-                        icon: Icons.check_circle,
-                        color: Colors.green,
-                      ),
-                    ),
+                    Expanded(child: _StatCard(title: "Présents aujourd'hui", value: presentLabel, icon: Icons.check_circle, color: Colors.green)),
                   ],
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Produits en stock',
-                        value: stockLabel,
-                        icon: Icons.inventory_2,
-                        color: Colors.orange,
-                      ),
-                    ),
+                    Expanded(child: _StatCard(title: 'Produits en stock', value: stockLabel, icon: Icons.inventory_2, color: Colors.orange)),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Rapports ce mois',
-                        value: rapportsLabel,
-                        icon: Icons.bar_chart,
-                        color: Colors.purple,
-                      ),
-                    ),
+                    Expanded(child: _StatCard(title: 'Rapports ce mois', value: rapportsLabel, icon: Icons.bar_chart, color: Colors.purple)),
                   ],
                 ),
               ],
@@ -463,41 +434,13 @@ class _DashboardPage extends StatelessWidget {
           else
             Row(
               children: [
-                Expanded(
-                  child: _StatCard(
-                    title: 'Employés',
-                    value: '$employesCount',
-                    icon: Icons.people,
-                    color: Colors.blue,
-                  ),
-                ),
+                Expanded(child: _StatCard(title: 'Employés', value: '$employesCount', icon: Icons.people, color: Colors.blue)),
                 const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Présents aujourd\'hui',
-                    value: presentLabel,
-                    icon: Icons.check_circle,
-                    color: Colors.green,
-                  ),
-                ),
+                Expanded(child: _StatCard(title: "Présents aujourd'hui", value: presentLabel, icon: Icons.check_circle, color: Colors.green)),
                 const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Produits en stock',
-                    value: stockLabel,
-                    icon: Icons.inventory_2,
-                    color: Colors.orange,
-                  ),
-                ),
+                Expanded(child: _StatCard(title: 'Produits en stock', value: stockLabel, icon: Icons.inventory_2, color: Colors.orange)),
                 const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Rapports ce mois',
-                    value: rapportsLabel,
-                    icon: Icons.bar_chart,
-                    color: Colors.purple,
-                  ),
-                ),
+                Expanded(child: _StatCard(title: 'Rapports ce mois', value: rapportsLabel, icon: Icons.bar_chart, color: Colors.purple)),
               ],
             ),
         ],
@@ -529,41 +472,33 @@ class _StatCard extends StatelessWidget {
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(value,
-                        style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: color)),
-                  ),
-                  Text(title,
-                      style: const TextStyle(
-                          color: Colors.grey, fontSize: 12),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1),
-                ],
-              ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(value, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
+                ),
+                Text(title, style: const TextStyle(color: Colors.grey, fontSize: 12), overflow: TextOverflow.ellipsis, maxLines: 1),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
     );
   }
 }
