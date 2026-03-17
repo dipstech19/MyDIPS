@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
 import '../../../core/site/site_provider.dart';
+import '../departements_provider.dart';
 import '../models/equipe_model.dart';
 import '../models/employe_model.dart';
 
@@ -257,19 +258,28 @@ class _EquipesTabState extends State<EquipesTab> {
                             ),
                             const SizedBox(height: 8),
                             membres.isEmpty
-                                ? Text('Aucun membre',
-                                style: TextStyle(
-                                    color: Colors.grey[400],
-                                    fontSize: 13))
+                                ? Text(
+                                    'Aucun membre',
+                                    style: TextStyle(
+                                        color: Colors.grey[400], fontSize: 13),
+                                  )
                                 : Column(
-                              children: membres
-                                  .map((m) => _membreCard(
-                                nom: m.nom,
-                                poste: m.poste,
-                                isChef: false,
-                              ))
-                                  .toList(),
-                            ),
+                                    children: membres
+                                        .map(
+                                          (m) => _membreCard(
+                                            nom: m.nom,
+                                            poste: m.poste,
+                                            isChef: false,
+                                            onRemove: (widget.isDirecteur ||
+                                                    eq.chefId ==
+                                                        _getCurrentUserId())
+                                                ? () => _removeMembre(
+                                                    eq, m.id)
+                                                : null,
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
                           ],
                         ),
                       ),
@@ -288,6 +298,7 @@ class _EquipesTabState extends State<EquipesTab> {
     required String nom,
     required String poste,
     required bool isChef,
+    VoidCallback? onRemove,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
@@ -346,6 +357,15 @@ class _EquipesTabState extends State<EquipesTab> {
                       fontSize: 11,
                       fontWeight: FontWeight.bold)),
             ),
+          if (!isChef && onRemove != null) ...[
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              color: Colors.red[400],
+              tooltip: 'Retirer du groupe',
+              onPressed: onRemove,
+            ),
+          ],
         ],
       ),
     );
@@ -356,6 +376,7 @@ class _EquipesTabState extends State<EquipesTab> {
     final nomCtrl = TextEditingController();
     final auth = context.read<AuthProvider>();
     final site = context.read<SiteProvider>();
+    final deptsProv = context.read<DepartementsProvider>();
     final usedIds = _usedEmployeeIds();
     final availableChefs = widget.employes.where((e) => !usedIds.contains(e.id)).toList();
 
@@ -372,9 +393,9 @@ class _EquipesTabState extends State<EquipesTab> {
         ? auth.currentUser!.allowedSiteIds!.first
         : (site.selectedSiteId ?? SiteId.jadida);
     if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
-    String selectedMagasin = 'El Jadida #1';
+    final deptNames = deptsProv.departements.map((d) => d.nom).toList();
+    String selectedDepartement = deptNames.isNotEmpty ? deptNames.first : '';
     String selectedChefId = availableChefs.first.id;
-    final magasins = ['El Jadida #1', 'El Jadida #2', 'Entrepôt'];
 
     showDialog(
       context: context,
@@ -389,9 +410,13 @@ class _EquipesTabState extends State<EquipesTab> {
               Text('Nouvelle Équipe'),
             ],
           ),
-          content: SizedBox(
-            width: 400,
-            child: Column(
+          content: Builder(
+            builder: (dialogContext) {
+              final screenWidth = MediaQuery.of(dialogContext).size.width;
+              final dialogWidth = screenWidth > 560 ? 520.0 : screenWidth - 40;
+              return SizedBox(
+                width: dialogWidth,
+                child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Nom
@@ -406,28 +431,11 @@ class _EquipesTabState extends State<EquipesTab> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                // Magasin
-                DropdownButtonFormField<String>(
-                  value: selectedMagasin,
-                  decoration: InputDecoration(
-                    labelText: 'Magasin *',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    isDense: true,
-                  ),
-                  items: magasins
-                      .map((m) =>
-                      DropdownMenuItem(value: m, child: Text(m)))
-                      .toList(),
-                  onChanged: (v) =>
-                      setStateD(() => selectedMagasin = v!),
-                ),
-                const SizedBox(height: 14),
-                // Zone
+                // Site
                 DropdownButtonFormField<String>(
                   value: selectedSiteId,
                   decoration: InputDecoration(
-                    labelText: 'Zone (الموقع) *',
+                    labelText: 'Site (الموقع) *',
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8)),
                     isDense: true,
@@ -437,6 +445,26 @@ class _EquipesTabState extends State<EquipesTab> {
                     DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
                   ],
                   onChanged: (v) => setStateD(() => selectedSiteId = v ?? SiteId.jadida),
+                ),
+                const SizedBox(height: 14),
+                // Département
+                DropdownButtonFormField<String>(
+                  // إذا لم يكن هناك أي قسم، نجعل القيمة null لتفادي خطأ Dropdown
+                  value: deptNames.isEmpty ? null : selectedDepartement,
+                  decoration: InputDecoration(
+                    labelText: 'Département *',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                  ),
+                  items: (deptNames.isEmpty ? <String>['—'] : deptNames)
+                      .map((d) => DropdownMenuItem(value: d == '—' ? null : d, child: Text(d)))
+                      .toList(),
+                  onChanged: (v) => setStateD(() {
+                    if (v != null) {
+                      selectedDepartement = v;
+                    }
+                  }),
                 ),
                 const SizedBox(height: 14),
                 // Chef
@@ -458,6 +486,8 @@ class _EquipesTabState extends State<EquipesTab> {
                 ),
               ],
             ),
+              );
+            },
           ),
           actions: [
             TextButton(
@@ -470,7 +500,7 @@ class _EquipesTabState extends State<EquipesTab> {
                   widget.onAddEquipe(Equipe(
                     id: DateTime.now().millisecondsSinceEpoch.toString(),
                     nom: nomCtrl.text,
-                    magasin: selectedMagasin,
+                    magasin: selectedDepartement,
                     chefId: selectedChefId,
                     siteId: selectedSiteId,
                   ));
@@ -487,6 +517,13 @@ class _EquipesTabState extends State<EquipesTab> {
         ),
       ),
     );
+  }
+
+  void _removeMembre(Equipe eq, String membreId) {
+    final updated = eq.copyWith(
+      membreIds: eq.membreIds.where((id) => id != membreId).toList(),
+    );
+    widget.onAddEquipe(updated);
   }
 
   // DIALOG - Ajouter Membre

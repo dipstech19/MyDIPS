@@ -11,6 +11,7 @@ import 'core/utils/responsive.dart';
 import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
 import 'modules/employees/postes_provider.dart';
+import 'modules/employees/departements_provider.dart';
 import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
@@ -38,6 +39,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => EmployeesProvider()),
         ChangeNotifierProvider(create: (_) => PostesProvider()),
+        ChangeNotifierProvider(create: (_) => DepartementsProvider()),
         ChangeNotifierProvider(create: (_) => AdminsProvider()),
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),

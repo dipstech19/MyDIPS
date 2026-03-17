@@ -8,8 +8,8 @@ import '../../../core/site/site_model.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
-import '../employees_provider.dart';
 import '../postes_provider.dart';
+import '../departements_provider.dart';
 import '../services/storage_service.dart';
 
 class EmployeeEditDialog extends StatefulWidget {
@@ -45,7 +45,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   late TextEditingController _dateCnssCtrl;
 
   late String _poste;
-  late String _dept;
+  late TextEditingController _deptCtrl;
   late String _contrat;
   late String _chefId;
   late EmployeStatut _statut;
@@ -79,7 +79,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _dateCnssCtrl = TextEditingController(text: e.dateCnss);
     
     _poste = e.poste;
-    _dept = e.departement;
+    _deptCtrl = TextEditingController(text: e.departement);
     _contrat = _contrats.contains(e.typeContrat) ? e.typeContrat : 'CDI';
     _chefId = e.chefDirectId;
     _statut = e.statut;
@@ -103,6 +103,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _finContratCtrl.dispose();
     _cnssCtrl.dispose();
     _dateCnssCtrl.dispose();
+    _deptCtrl.dispose();
     _badgeExpiryCtrl.dispose();
     super.dispose();
   }
@@ -110,13 +111,13 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   @override
   Widget build(BuildContext context) {
     final postesProv = context.watch<PostesProvider>();
-    final empProv = context.watch<EmployeesProvider>();
+    final deptsProv = context.watch<DepartementsProvider>();
     final siteId = widget.employe.siteId;
     final posteNames = postesProv.postes
         .where((p) => p.siteId == siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    final depts = _uniqueDepartements(empProv);
+    final deptNames = deptsProv.departements.map((d) => d.nom).toList();
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -193,7 +194,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                         _dropdownPoste(posteNames),
                         const SizedBox(height: 12),
                         _row2(
-                          _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
+                          _dropdown('Département *', _deptCtrl.text, deptNames.isEmpty ? ['—'] : deptNames,
+                              (v) => setState(() => _deptCtrl.text = v ?? '')),
                           _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
                         ),
                         const SizedBox(height: 12),
@@ -330,10 +332,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
       setState(() => _saving = true);
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
-      final empProv = context.read<EmployeesProvider>();
-      final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
+      final dept = _deptCtrl.text.trim();
       
       final employeeId = widget.employe.id;
       
@@ -498,13 +498,6 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
-    if (_dept.isNotEmpty) set.add(_dept);
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

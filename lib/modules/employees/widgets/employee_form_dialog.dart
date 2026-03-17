@@ -10,8 +10,8 @@ import '../../../core/site/site_provider.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
-import '../employees_provider.dart';
 import '../postes_provider.dart';
+import '../departements_provider.dart';
 import '../services/storage_service.dart';
 
 class EmployeeFormDialog extends StatefulWidget {
@@ -45,7 +45,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _dateCnssCtrl = TextEditingController();
 
   String _poste = '';
-  String _dept = '';
+  final _deptCtrl = TextEditingController();
   String _contrat = 'CDI';
   String _chefId = '';
   String _siteId = SiteId.jadida;
@@ -78,12 +78,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       }
     }
     final postesProv = context.watch<PostesProvider>();
-    final empProv = context.watch<EmployeesProvider>();
+    final deptsProv = context.watch<DepartementsProvider>();
     final posteNames = postesProv.postes
         .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    final depts = _uniqueDepartements(empProv);
+    final deptNames = deptsProv.departements.map((d) => d.nom).toList();
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -174,7 +174,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       ),
                       const SizedBox(height: 12),
                       _row2(
-                        _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
+                        _dropdown('Département *', _deptCtrl.text, deptNames.isEmpty ? ['—'] : deptNames,
+                            (v) => setState(() => _deptCtrl.text = v ?? '')),
                         _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
                       ),
                       const SizedBox(height: 12),
@@ -316,10 +317,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       debugPrint('EmployeeFormDialog: Documents count: ${_tempDocuments.length}');
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
-      final empProv = context.read<EmployeesProvider>();
-      final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
-      final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
+      final dept = _deptCtrl.text.trim();
       
       final employeeId = DateTime.now().millisecondsSinceEpoch.toString();
       debugPrint('EmployeeFormDialog: Employee ID: $employeeId');
@@ -489,12 +488,6 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         );
       },
     );
-  }
-
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
-    final list = set.toList()..sort();
-    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

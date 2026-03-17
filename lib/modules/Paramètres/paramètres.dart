@@ -7,6 +7,8 @@ import '../../core/utils/responsive.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import '../employees/data/postes_repository.dart';
 import '../employees/postes_provider.dart';
+import '../employees/departements_provider.dart';
+import 'departements_section.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart' as emp;
 import '../employees/models/equipe_model.dart';
@@ -112,6 +114,7 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
+    _SettingsSection(icon: Icons.apartment, label: 'Départements'),
     _SettingsSection(icon: Icons.cancel_presentation_outlined, label: 'Raisons d\'absence'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
@@ -311,8 +314,9 @@ class _ParametresPageState extends State<ParametresPage> {
       case 2:  return const _ChefComptesSection();
       case 3:  return const _ChauffeursSection();
       case 4:  return const _PostesSection();
-      case 5:  return const _AbsenceReasonsSection();
-      case 6:  return const _GeneralSection();
+      case 5:  return const DepartementsSection();
+      case 6:  return const _AbsenceReasonsSection();
+      case 7:  return const _GeneralSection();
       case 7:  return const _NotificationsSection();
       case 8:  return const _SecuriteSection();
       case 9:  return const _DatabaseSection();
