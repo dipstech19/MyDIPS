@@ -204,7 +204,7 @@ class _MainLayoutState extends State<MainLayout> {
             builder: (ctx) => _buildSidebar(context, auth, items, onItemTap: () => Navigator.of(ctx).pop()),
           ),
         ),
-        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe)),
+        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, auth)),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex.clamp(0, items.length - 1),
           onTap: (i) => setState(() => _selectedIndex = i),
@@ -224,7 +224,7 @@ class _MainLayoutState extends State<MainLayout> {
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1200),
-                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe),
+                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, auth),
               ),
             ),
           ),
@@ -261,7 +261,16 @@ class _MainLayoutState extends State<MainLayout> {
     );
   }
 
-  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe) {
+  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe, AuthProvider auth) {
+    // ── Dériver le UserRole depuis AuthProvider ──────────────────────────────
+    // isDirecteur  → administrateur
+    // isChefEquipe → administrateur (gère son équipe)
+    // isChauffeur  → demandeur
+    // autres       → demandeur
+    final userRole = (auth.isDirecteur || auth.isChefEquipe)
+        ? UserRole.administrateur
+        : UserRole.demandeur;
+
     if (isChauffeur) {
       if (index == 0) return const DriverPointagePage();
       if (index == 1) return const ReportPage();
@@ -287,7 +296,6 @@ class _MainLayoutState extends State<MainLayout> {
       case 3:
         return const ShiftsPage();
       case 4:
-        // ✅ CORRIGÉ : GestionMagasinFirebase → GestionMagasinPage
         return const GestionMagasinPage();
       case 5:
         return const _PlaceholderPage(
@@ -298,7 +306,8 @@ class _MainLayoutState extends State<MainLayout> {
       case 6:
         return const ParametresPage();
       case 7:
-        return const DemandesPage();
+      // ✅ CORRIGÉ : paramètre role dérivé du AuthProvider
+        return DemandesPage(role: userRole);
       case 8:
         return const LogistiquePage();
       default:
@@ -379,14 +388,14 @@ class _DashboardPage extends StatelessWidget {
       emp.employes,
       auth.currentUser?.allowedSiteIds,
       auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
-      (e) => e.siteId,
+          (e) => e.siteId,
     );
     final employesCount = filteredEmployes.length;
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
       auth.currentUser?.allowedSiteIds,
       auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
-      (p) => p.siteId,
+          (p) => p.siteId,
     );
     final stockTotal = filteredProduits.fold<int>(0, (s, p) => s + p.total);
     final presentLabel = '${pointage.todayPresentCount}';
