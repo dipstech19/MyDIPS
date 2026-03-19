@@ -1,99 +1,64 @@
-import 'dart:async';
-import 'package:flutter/foundation.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'data/chauffeurs_repository.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 import 'models/chauffeur_model.dart';
 
-/// Provider لإدارة بيانات السائقين
 class ChauffeursProvider extends ChangeNotifier {
-  List<Chauffeur> _chauffeurs = [];
-  bool _loading = true;
-  String? _error;
-  StreamSubscription? _sub;
-  ChauffeursRepository? _repo;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const String _collection = 'chauffeurs';
 
-  final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
-
-  List<Chauffeur> get chauffeurs => _chauffeurs;
+  bool _loading = false;
   bool get loading => _loading;
-  String? get error => _error;
-  bool get firebaseAvailable => _firebaseAvailable;
+
+  bool get firebaseAvailable => true;
+
+  List<Chauffeur> _chauffeurs = [];
+  List<Chauffeur> get chauffeurs => List.unmodifiable(_chauffeurs);
 
   ChauffeursProvider() {
-    if (!_firebaseAvailable) {
-      _chauffeurs = [];
-      _loading = false;
-      _error = 'Firebase non disponible';
-      notifyListeners();
-      return;
-    }
-    _repo = ChauffeursRepository();
-    _subscribe();
+    _watch();
   }
 
-  void _subscribe() {
-    final repo = _repo;
-    if (repo == null) return;
-
-    _sub = repo.watchChauffeurs().listen(
-      (list) {
-        _chauffeurs = list;
-        _loading = false;
-        _error = null;
-        notifyListeners();
-      },
-      onError: (e) {
-        debugPrint('ChauffeursProvider: Error watching chauffeurs: $e');
-        _error = e.toString();
-        _loading = false;
-        notifyListeners();
-      },
-    );
+  void _watch() {
+    _firestore.collection(_collection).snapshots().listen((snap) {
+      _chauffeurs = snap.docs
+          .map((d) => Chauffeur.fromMap({...d.data(), 'id': d.id}))
+          .toList();
+      notifyListeners();
+    });
   }
 
   Future<void> addChauffeur(Chauffeur c) async {
-    if (!_firebaseAvailable || _repo == null) return;
+    _loading = true;
+    notifyListeners();
     try {
-      await _repo!.addChauffeur(c);
-    } catch (e) {
-      _error = e.toString();
+      await _firestore.collection(_collection).add(c.toMap());
+    } finally {
+      _loading = false;
       notifyListeners();
     }
   }
 
   Future<void> updateChauffeur(Chauffeur c) async {
-    if (!_firebaseAvailable || _repo == null) return;
+    if (c.id.isEmpty) return;
+    _loading = true;
+    notifyListeners();
     try {
-      await _repo!.updateChauffeur(c);
-    } catch (e) {
-      _error = e.toString();
+      await _firestore.collection(_collection).doc(c.id).set(c.toMap());
+    } finally {
+      _loading = false;
       notifyListeners();
     }
   }
 
   Future<void> deleteChauffeur(String id) async {
-    if (!_firebaseAvailable || _repo == null) return;
+    if (id.isEmpty) return;
+    _loading = true;
+    notifyListeners();
     try {
-      await _repo!.deleteChauffeur(id);
-    } catch (e) {
-      _error = e.toString();
+      await _firestore.collection(_collection).doc(id).delete();
+    } finally {
+      _loading = false;
       notifyListeners();
     }
-  }
-
-  Future<Chauffeur?> getChauffeurByUsername(String username) async {
-    if (!_firebaseAvailable || _repo == null) return null;
-    try {
-      return await _repo!.getChauffeurByUsername(username);
-    } catch (e) {
-      debugPrint('ChauffeursProvider: Error getting chauffeur: $e');
-      return null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
   }
 }

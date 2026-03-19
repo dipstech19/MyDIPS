@@ -1,20 +1,35 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/site/site_model.dart';
 
 /// منصب عمل (وظيفة) — من Firestore
 class Poste {
   final String id;
   final String nom;
   final int ordre;
+  /// الموقع المرتبط بالمنصب (Site). إذا كان 'all' أو فارغًا فهو متاح لكل المواقع.
+  final String siteId;
 
-  Poste({required this.id, required this.nom, this.ordre = 0});
+  Poste({
+    required this.id,
+    required this.nom,
+    this.ordre = 0,
+    this.siteId = SiteId.all,
+  });
 
-  Map<String, dynamic> toMap() => {'nom': nom, 'ordre': ordre};
+  Map<String, dynamic> toMap() => {
+        'nom': nom,
+        'ordre': ordre,
+        'siteId': siteId,
+      };
 
   static Poste fromMap(Map<String, dynamic> map) {
+    final rawSite = map['siteId'] as String?;
+    final siteId = (rawSite == null || rawSite.isEmpty) ? SiteId.all : rawSite;
     return Poste(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
       ordre: (map['ordre'] as num?)?.toInt() ?? 0,
+      siteId: siteId,
     );
   }
 }
