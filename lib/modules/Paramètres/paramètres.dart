@@ -3638,16 +3638,37 @@ class _PostesSection extends StatelessWidget {
 
 void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing) {
   final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+  String siteId = existing?.siteId ?? SiteId.all;
   final navigator = Navigator.of(context);
   final messenger = ScaffoldMessenger.of(context);
   showDialog(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(existing == null ? 'Nouveau poste' : 'Modifier le poste'),
-      content: TextField(
-        controller: nomCtrl,
-        decoration: const InputDecoration(labelText: 'Nom du poste', hintText: 'Ex: Chauffeur, Vendeur'),
-        autofocus: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: nomCtrl,
+            decoration: const InputDecoration(labelText: 'Nom du poste', hintText: 'Ex: Chauffeur, Vendeur'),
+            autofocus: true,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: siteId,
+            decoration: const InputDecoration(
+              labelText: 'Site',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: const [
+              DropdownMenuItem(value: SiteId.all, child: Text('Tous les sites')),
+              DropdownMenuItem(value: SiteId.jadida, child: Text('El Jadida')),
+              DropdownMenuItem(value: SiteId.safi, child: Text('Safi')),
+            ],
+            onChanged: (v) => siteId = v ?? SiteId.all,
+          ),
+        ],
       ),
       actions: [
         TextButton(onPressed: () => navigator.pop(), child: const Text('Annuler')),
@@ -3668,9 +3689,9 @@ void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing
             }
             try {
               if (existing == null) {
-                await prov.addPoste(Poste(id: '', nom: nom));
+                await prov.addPoste(Poste(id: '', nom: nom, siteId: siteId));
               } else {
-                await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre));
+                await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre, siteId: siteId));
               }
               if (dialogContext.mounted) navigator.pop();
               if (context.mounted) {
@@ -3822,6 +3843,104 @@ class _DepartementsSection extends StatelessWidget {
                 ),
         ),
       ],
+    ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  SECTION: RAISONS D'ABSENCE
+// ─────────────────────────────────────────────
+
+class _AbsenceReasonsSection extends StatelessWidget {
+  const _AbsenceReasonsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<AbsenceReasonsProvider>();
+    final list = prov.reasons;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(
+            title: 'Raisons d\'absence',
+            subtitle: 'Définir les motifs d\'absence et indiquer si chacun est déduit du salaire ou non.',
+          ),
+          const SizedBox(height: 20),
+          if (!prov.firebaseAvailable)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(
+                'Firebase indisponible. Les raisons ne peuvent pas être enregistrées.',
+                style: TextStyle(fontSize: 13, color: Colors.orange[800]),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text('Ajouter une raison'),
+                onPressed: () => _showAbsenceReasonDialog(context, prov, null),
+              ),
+            ),
+          if (prov.loading)
+            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+          else if (list.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Aucune raison d\'absence. Ajoutez-en pour que le chef et l\'admin puissent les choisir lors d\'un pointage absent (ex: Maladie, Paternité, Mariage).',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final r = list[i];
+                return Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: r.deductFromSalary ? Colors.red.withOpacity(0.12) : Colors.green.withOpacity(0.12),
+                      child: Icon(
+                        r.deductFromSalary ? Icons.remove_circle_outline : Icons.check_circle_outline,
+                        color: r.deductFromSalary ? Colors.red : Colors.green,
+                        size: 22,
+                      ),
+                    ),
+                    title: Text(r.label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: Text(
+                      r.deductFromSalary ? 'Déduit du salaire' : 'Non déduit (ex: congé payé)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          onPressed: () => _showAbsenceReasonDialog(context, prov, r),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[400]),
+                          onPressed: () => _confirmDeleteAbsenceReason(context, prov, r),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
     );
   }
 }

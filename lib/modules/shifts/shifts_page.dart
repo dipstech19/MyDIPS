@@ -101,6 +101,21 @@ class _ShiftsPageState extends State<ShiftsPage> {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        Tooltip(
+                          message: tr(context, 'shifts_refresh_tooltip'),
+                          child: IconButton(
+                            icon: const Icon(Icons.sync, size: 22),
+                            onPressed: () async {
+                              await context.read<ShiftsProvider>().refresh();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(tr(context, 'shifts_refreshed')), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                        SizedBox(width: 4),
                         OutlinedButton.icon(
                           icon: const Icon(Icons.download, size: 18),
                           label: Text(tr(context, 'shifts_export_excel')),
@@ -127,7 +142,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
                           await context.read<ShiftsProvider>().setConfig(RotationConfig(
                             startDate: DateTime(now.year, now.month, now.day),
                             equipeIds: ['', '', '', ''],
-                            overrides: {},
                           ));
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(

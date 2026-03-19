@@ -255,14 +255,20 @@ class _PointagePageState extends State<PointagePage> {
     PointageProvider pointageProvider,
   ) {
     final mobile = isMobile(context);
+    final teams = getAllTeamsWithWorkers(equipes, employes);
+    final selectedTeam = teams.where((t) => t.equipeId == _selectedEquipeIdAdmin).toList();
+    final team = selectedTeam.isEmpty ? null : selectedTeam.first;
     final now = DateTime.now();
     final viewDate = _reportViewDate ?? now;
     final isViewingToday = _reportViewDate == null ||
         (_reportViewDate!.year == now.year && _reportViewDate!.month == now.month && _reportViewDate!.day == now.day);
-    final recordsForDate = isViewingToday ? pointageProvider.todayPointage : pointageProvider.pointageByDate;
-    final recordByEmployeId = <String, PointageRecord>{};
-    for (final r in recordsForDate) recordByEmployeId[r.employeId] = r;
-
+    final baseWorkers = team?.workers ?? <Employe>[];
+    final pointageForView = isViewingToday ? pointageProvider.todayPointage : pointageProvider.pointageByDate;
+    final overtimeForTeam = team != null ? getOvertimeWorkersForEquipe(team!.equipeId, viewDate, pointageForView, employes) : <({Employe e, String chefName})>[];
+    final workers = <Employe>[...baseWorkers, ...overtimeForTeam.map((o) => o.e)];
+    final overtimeChefMap = {for (final o in overtimeForTeam) o.e.id: o.chefName};
+    final borderColor = Colors.grey.shade300;
+    final padding = pagePadding(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       pointageProvider.ensureNonWorkingLoadedForDate(viewDate);
     });
@@ -277,60 +283,6 @@ class _PointagePageState extends State<PointagePage> {
         }
       }
     }
-    bool isRoboEquipe(Equipe eq) {
-      final name = eq.nom.trim().toLowerCase();
-      if (name.contains('robo') || name.contains('repos') || name.contains('repo')) return true;
-      final shift = shiftsProvider.getShiftForEquipe(eq.id, viewDate);
-      return shift == ShiftType.rest;
-    }
-    final workingEquipes = equipes
-        .where((e) => e.chefId.isNotEmpty && !effectiveNonWorkingIds.contains(e.id) && !isRoboEquipe(e))
-        .toList();
-    final teams = getAllTeamsWithWorkersConsideringTemp(workingEquipes, employes, recordByEmployeId);
-    // Groupe spécial: employés "hors équipe" (pointage admin uniquement)
-    bool isChefEquipePoste(String poste) {
-      final p = poste.trim().toLowerCase();
-      return p == "chef d'équipe" || p == "chef d’equipe" || p == "chef d'equipe" || p == "chef d equipe";
-    }
-
-    // Tous les membres de toutes les équipes (y compris repos/ROBO) ne sont pas "hors équipe"
-    final usedIdsInAnyEquipe = <String>{
-      for (final eq in equipes) ...[
-        if (eq.chefId.isNotEmpty) eq.chefId,
-        ...eq.membreIds,
-      ]
-    };
-    var horsEquipeWorkers = employes
-        .where((e) => e.statut == EmployeStatut.enService && !usedIdsInAnyEquipe.contains(e.id) && !isChefEquipePoste(e.poste))
-        .toList();
-    horsEquipeWorkers = horsEquipeWorkers
-        .where((e) {
-          final rec = recordByEmployeId[e.id];
-          if (rec == null || !rec.tempAssigned) return true;
-          return rec.originalEquipeId != 'hors_equipe';
-        })
-        .toList()
-      ..sort((a, b) => a.nom.compareTo(b.nom));
-    final allTeams = [
-      if (horsEquipeWorkers.isNotEmpty)
-        (equipeId: 'hors_equipe', equipeName: 'Hors équipe', chefName: 'Admin', workers: horsEquipeWorkers),
-      ...teams,
-    ];
-
-    if (_selectedEquipeIdAdmin == null ||
-        (allTeams.isNotEmpty && !allTeams.any((t) => t.equipeId == _selectedEquipeIdAdmin))) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() => _selectedEquipeIdAdmin = allTeams.isEmpty ? null : allTeams.first.equipeId);
-      });
-    }
-
-    final selectedTeam = allTeams.where((t) => t.equipeId == _selectedEquipeIdAdmin).toList();
-    final team = selectedTeam.isEmpty ? null : selectedTeam.first;
-    final workers = team?.workers ?? <Employe>[];
-    final borderColor = Colors.grey.shade300;
-    final padding = pagePadding(context);
-
     final nonWorkingIdsEffective = effectiveNonWorkingIds.toList();
 
     PointageRecord? getRecord(String employeId) {
@@ -340,15 +292,18 @@ class _PointagePageState extends State<PointagePage> {
       return l.isEmpty ? null : l.first;
     }
 
+    final pointageForReport = isViewingToday ? pointageProvider.todayPointage : pointageProvider.pointageByDate;
     final presentByChef = <String, List<Employe>>{};
     final absentByChef = <String, List<Employe>>{};
     final notInVehicleByChef = <String, List<Employe>>{};
     final notWorkingByChef = <String, List<Employe>>{};
     String teamChefKey(String equipeName, String chefName) => '$equipeName — $chefName';
-    for (final t in allTeams) {
+    for (final t in teams) {
       final key = teamChefKey(t.equipeName, t.chefName);
       final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
-      for (final e in t.workers) {
+      final overtimeForT = getOvertimeWorkersForEquipe(t.equipeId, viewDate, pointageForReport, employes);
+      final workersInTeam = <Employe>[...t.workers, ...overtimeForT.map((o) => o.e)];
+      for (final e in workersInTeam) {
         if (isNonWorking) {
           notWorkingByChef.putIfAbsent(key, () => []).add(e);
           continue;
@@ -369,9 +324,11 @@ class _PointagePageState extends State<PointagePage> {
       int totalAbsent = 0;
       int totalEmployees = 0;
 
-      for (final t in allTeams) {
+      for (final t in teams) {
         if (nonWorkingIdsEffective.contains(t.equipeId)) continue;
-        for (final e in t.workers) {
+        final otForT = getOvertimeWorkersForEquipe(t.equipeId, viewDate, pointageForReport, employes);
+        final workersInT = <Employe>[...t.workers, ...otForT.map((o) => o.e)];
+        for (final e in workersInT) {
           totalEmployees++;
           final record = getRecord(e.id);
           if (record?.isFinalPresent ?? false) {
@@ -448,34 +405,17 @@ class _PointagePageState extends State<PointagePage> {
                 onPressed: () => _showFormationDialog(
                   context,
                   pointageProvider: pointageProvider,
-                  teams: allTeams,
+                  teams: teams,
                   initialDate: _reportViewDate ?? now,
                   onSuccess: () => setState(() {}),
                 ),
                 icon: const Icon(Icons.school, size: 18),
                 label: Text(tr(context, 'pointage_formation_btn')),
               ),
-              const SizedBox(width: 12),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.schedule, size: 18, color: Colors.orange.shade700),
-                  const SizedBox(width: 6),
-                  Text('Test créneaux', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-                  const SizedBox(width: 4),
-                  Switch(
-                    value: pointageProvider.ignoreTimeWindowsForTest,
-                    onChanged: (v) {
-                      pointageProvider.setIgnoreTimeWindowsForTest(v);
-                      setState(() {});
-                    },
-                  ),
-                ],
-              ),
             ],
           ),
           const SizedBox(height: 12),
-          if (mobile) _buildAdminMobileChefSelector(context, allTeams),
+          if (mobile) _buildAdminMobileChefSelector(context, teams),
           if (mobile) const SizedBox(height: 12),
           Expanded(
             flex: mobile ? 8 : 5,
@@ -487,13 +427,14 @@ class _PointagePageState extends State<PointagePage> {
                     borderColor: borderColor,
                     pointageProvider: pointageProvider,
                     getRecord: getRecord,
-                    teams: allTeams,
+                    teams: teams,
                     nonWorkingIds: nonWorkingIdsEffective,
                     viewDate: viewDate,
                     presentByChef: presentByChef,
                     absentByChef: absentByChef,
                     notInVehicleByChef: notInVehicleByChef,
                     notWorkingByChef: notWorkingByChef,
+                    overtimeChefMap: overtimeChefMap,
                   )
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -513,27 +454,21 @@ class _PointagePageState extends State<PointagePage> {
                               child: Text(tr(context, 'chefs_side_title'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                             ),
                             const Divider(height: 1),
-                            if (allTeams.isEmpty)
+                            if (teams.isEmpty)
                               Padding(padding: const EdgeInsets.all(16), child: Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600])))
                             else
                               Expanded(
                                 child: ListView.builder(
-                                  itemCount: allTeams.length,
+                                  itemCount: teams.length,
                                   itemBuilder: (context, i) {
-                                    final t = allTeams[i];
+                                    final t = teams[i];
                                     final isSelected = _selectedEquipeIdAdmin == t.equipeId;
                                     final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
-                                    final shiftLabel = t.equipeId == 'hors_equipe'
-                                        ? null
-                                        : shiftsProvider.getShiftForEquipe(t.equipeId, viewDate)?.shortLabel;
                                     return Material(
                                       color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.15) : null,
                                       child: ListTile(
                                         leading: const Icon(Icons.person, size: 20),
-                                        title: Text(
-                                          '${t.equipeName} — ${t.chefName}${shiftLabel != null ? ' ($shiftLabel)' : ''}',
-                                          style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, fontSize: 13),
-                                        ),
+                                        title: Text('${t.equipeName} — ${t.chefName}', style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, fontSize: 13)),
                                         trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
@@ -571,13 +506,14 @@ class _PointagePageState extends State<PointagePage> {
                       borderColor: borderColor,
                       pointageProvider: pointageProvider,
                       getRecord: getRecord,
-                      teams: allTeams,
+                      teams: teams,
                       nonWorkingIds: nonWorkingIdsEffective,
                       viewDate: viewDate,
                       presentByChef: presentByChef,
                       absentByChef: absentByChef,
                       notInVehicleByChef: notInVehicleByChef,
                       notWorkingByChef: notWorkingByChef,
+                      overtimeChefMap: overtimeChefMap,
                     ),
                   ),
                 ],
@@ -628,7 +564,7 @@ class _PointagePageState extends State<PointagePage> {
                 const SizedBox(width: 8),
               ],
               OutlinedButton.icon(
-                onPressed: () => _showExcelExportDialog(context, teams, equipes, employes, pointageProvider),
+                onPressed: () => _showExcelExportDialog(context, teams, pointageProvider),
                 icon: const Icon(Icons.table_chart, size: 18),
                 label: FittedBox(fit: BoxFit.scaleDown, child: Text(tr(context, 'pointage_download_excel'))),
               ),
@@ -688,8 +624,6 @@ class _PointagePageState extends State<PointagePage> {
   Future<void> _showExcelExportDialog(
     BuildContext context,
     List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams,
-    List<Equipe> equipes,
-    List<Employe> employes,
     PointageProvider pointageProvider,
   ) async {
     final now = DateTime.now();
@@ -712,28 +646,9 @@ class _PointagePageState extends State<PointagePage> {
     }
     final records = await pointageProvider.getPointageInDateRange(start, end);
     final employees = <({String id, String nom, String equipeName, String? equipeId})>[];
-    // IMPORTANT: les renforts doivent être attribués à l'équipe d'origine dans l'Excel.
-    // Donc on construit la liste des employés depuis l'appartenance "réelle" (equipes.membreIds / chefId),
-    // et on n'utilise pas la liste temp-aware (teams) pour déterminer equipeId.
-    final seen = <String>{};
-    for (final eq in equipes) {
-      if (eq.id.isEmpty) continue;
-      final chefName = getChefName(employes, eq.chefId);
-      final label = '${eq.nom} — $chefName';
-      final ids = <String>{...eq.membreIds, if (eq.chefId.isNotEmpty) eq.chefId};
-      for (final id in ids) {
-        if (!seen.add(id)) continue;
-        final empList = employes.where((e) => e.id == id).toList();
-        if (empList.isEmpty) continue;
-        final w = empList.first;
-        employees.add((id: w.id, nom: w.nom, equipeName: label, equipeId: eq.id));
-      }
-    }
-    // Garder aussi les employés hors équipe (équipeId = null) s'ils sont visibles dans l'écran.
-    for (final t in teams.where((t) => t.equipeId == 'hors_equipe')) {
+    for (final t in teams) {
       for (final w in t.workers) {
-        if (!seen.add(w.id)) continue;
-        employees.add((id: w.id, nom: w.nom, equipeName: '${t.equipeName} — ${t.chefName}', equipeId: null));
+        employees.add((id: w.id, nom: w.nom, equipeName: '${t.equipeName} — ${t.chefName}', equipeId: t.equipeId));
       }
     }
     final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
@@ -796,16 +711,7 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
-  Widget _buildAdminWorkersColumn(
-    BuildContext context,
-    ({String equipeId, String equipeName, String chefName, List<Employe> workers})? team,
-    List<Employe> workers,
-    Color borderColor,
-    PointageProvider pointageProvider,
-    PointageRecord? Function(String) getRecord, {
-    required List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> allTeams,
-    required DateTime viewDate,
-  }) {
+  Widget _buildAdminWorkersColumn(BuildContext context, ({String equipeId, String equipeName, String chefName, List<Employe> workers})? team, List<Employe> workers, Color borderColor, PointageProvider pointageProvider, PointageRecord? Function(String) getRecord, {Map<String, String> overtimeChefMap = const {}}) {
     if (team == null) {
       return Center(child: Text(tr(context, 'select_chef'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
     }
@@ -830,6 +736,7 @@ class _PointagePageState extends State<PointagePage> {
             final reconciled = record?.reconciledStatus ?? ReconciledStatus.pending;
             final isPresent = record?.isFinalPresent ?? false;
             final isAlreadyFormation = record?.adminFinalStatus == AttendanceStatus.training;
+            final overtimeChef = overtimeChefMap[e.id];
             return Card(
               margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
               child: Padding(
@@ -844,17 +751,25 @@ class _PointagePageState extends State<PointagePage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          if (overtimeChef != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.schedule, size: 14, color: Colors.orange.shade700),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${tr(context, 'pointage_overtime_badge')} — ${tr(context, 'chef_label')}: $overtimeChef',
+                                    style: TextStyle(fontSize: 11, color: Colors.orange.shade800),
+                                  ),
+                                ],
+                              ),
+                            ),
                           const SizedBox(height: 4),
                           Wrap(
                             spacing: 6,
                             runSpacing: 4,
                             children: [
-                              if (record?.tempAssigned == true)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(4)),
-                                  child: Text('Renfort', style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
-                                ),
                               _DriverChefBadge(
                                 label: 'S',
                                 value: record?.driverStatus,
@@ -973,28 +888,6 @@ class _PointagePageState extends State<PointagePage> {
                                 ),
                               ),
                             ),
-                            SizedBox(width: mobile ? 8 : 6),
-                            InkWell(
-                              onTap: () async {
-                                final ok = await _showRenfortDialog(
-                                  context,
-                                  employe: e,
-                                  currentEquipeId: team.equipeId,
-                                  allTeams: allTeams,
-                                  viewDate: viewDate,
-                                  pointageProvider: pointageProvider,
-                                );
-                                if (ok == true && mounted) setState(() {});
-                              },
-                              child: Container(
-                                padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 8, vertical: mobile ? 6 : 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.shade100,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text('Renfort', style: TextStyle(fontSize: mobile ? 11 : 10, color: Colors.orange.shade800)),
-                              ),
-                            ),
                           ],
                         ),
                       ],
@@ -1006,83 +899,6 @@ class _PointagePageState extends State<PointagePage> {
           }),
         ],
       ),
-    );
-  }
-
-  static Future<bool?> _showRenfortDialog(
-    BuildContext context, {
-    required Employe employe,
-    required String currentEquipeId,
-    required List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> allTeams,
-    required DateTime viewDate,
-    required PointageProvider pointageProvider,
-  }) async {
-    // Équipes cibles = celles qui travaillent ce jour (déjà filtrées dans allTeams), hors équipe actuelle
-    final targetTeams = allTeams.where((t) => t.equipeId != currentEquipeId && t.equipeId != 'hors_equipe').toList();
-    if (targetTeams.isEmpty) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Aucune autre équipe disponible pour ce jour.')));
-      return false;
-    }
-    String? selectedEquipeId = targetTeams.first.equipeId;
-
-    if (!context.mounted) return null;
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final sp = ctx.read<ShiftsProvider>();
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final target = targetTeams.where((t) => t.equipeId == selectedEquipeId).toList();
-            final t = target.isEmpty ? null : target.first;
-            return AlertDialog(
-              title: const Text('Renfort — affectation temporaire'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('${employe.nom} → équipe / shift pour le ${viewDate.day}/${viewDate.month}/${viewDate.year}'),
-                    const SizedBox(height: 16),
-                    const Text('Équipe cible (équipes qui travaillent ce jour)', style: TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    DropdownButtonFormField<String>(
-                      value: selectedEquipeId,
-                      decoration: const InputDecoration(border: OutlineInputBorder()),
-                      items: targetTeams.map((t) {
-                        final shift = sp.getShiftForEquipe(t.equipeId, viewDate);
-                        final label = '${t.equipeName} (${t.chefName}) — ${shift?.shortLabel ?? '—'}';
-                        return DropdownMenuItem(value: t.equipeId, child: Text(label));
-                      }).toList(),
-                      onChanged: (v) => setDialogState(() => selectedEquipeId = v),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(tr(context, 'cancel'))),
-                FilledButton(
-                  onPressed: t == null
-                      ? null
-                      : () async {
-                          await pointageProvider.assignEmployeeTemp(
-                            employeId: employe.id,
-                            employeNom: employe.nom,
-                            employeCin: employe.cin,
-                            targetEquipeId: t.equipeId,
-                            targetEquipeName: t.equipeName,
-                            targetChefName: t.chefName,
-                            originalEquipeId: currentEquipeId,
-                            day: viewDate,
-                          );
-                          if (ctx.mounted) Navigator.of(ctx).pop(true);
-                        },
-                  child: const Text('Confirmer'),
-                ),
-              ],
-            );
-          },
-        );
-      },
     );
   }
 
@@ -1276,19 +1092,11 @@ class _PointagePageState extends State<PointagePage> {
     required Map<String, List<Employe>> absentByChef,
     required Map<String, List<Employe>> notInVehicleByChef,
     required Map<String, List<Employe>> notWorkingByChef,
+    Map<String, String> overtimeChefMap = const {},
   }) {
     switch (_adminContentView) {
       case _AdminPointageView.workers:
-        return _buildAdminWorkersColumn(
-          context,
-          team,
-          workers,
-          borderColor,
-          pointageProvider,
-          getRecord,
-          allTeams: teams,
-          viewDate: viewDate,
-        );
+        return _buildAdminWorkersColumn(context, team, workers, borderColor, pointageProvider, getRecord, overtimeChefMap: overtimeChefMap);
       case _AdminPointageView.report:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1438,37 +1246,11 @@ class _PointagePageState extends State<PointagePage> {
     PointageProvider pointageProvider,
   ) {
     final shiftsProvider = context.watch<ShiftsProvider>();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      pointageProvider.ensureNonWorkingLoadedForDate(DateTime.now());
-    });
-    final recordByEmployeId = <String, PointageRecord>{};
-    for (final r in pointageProvider.todayPointage) recordByEmployeId[r.employeId] = r;
-    final now = DateTime.now();
-    DateTime? getOriginalShiftEnd(PointageRecord rec) {
-      final oid = rec.originalEquipeId;
-      if (oid == null || oid.isEmpty) return null;
-      final shift = shiftsProvider.getShiftForEquipe(oid, rec.date);
-      final d = DateTime(rec.date.year, rec.date.month, rec.date.day);
-      return shift?.getShiftEnd(d);
-    }
-    // Toujours afficher les renforts dans la liste du chef cible pour qu'il voie qui travaillera avec lui (heures sup.)
-    bool shouldShowRenfortInTarget(PointageRecord rec) => true;
-    // Dans l'équipe d'origine: n'afficher le membre que jusqu'à la fin de sa shift, après il disparaît
-    bool shouldShowMemberInOriginal(PointageRecord rec) {
-      final end = getOriginalShiftEnd(rec);
-      return end != null && now.isBefore(end);
-    }
-    final workers = getWorkersForEquipeConsideringTemp(
-      equipes,
-      employes,
-      auth.equipeId,
-      recordByEmployeId,
-      shouldShowRenfortInTarget: shouldShowRenfortInTarget,
-      shouldShowMemberInOriginal: shouldShowMemberInOriginal,
-    );
-    // Afficher tous les travailleurs ; ceux en formation sont en « présent — en formation » sans choix présent/absent
-    final workersDisplay = workers;
-    final workersInTraining = workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
+    final today = DateTime.now();
+    final pointageList = pointageProvider.todayPointage;
+    final workersDisplayList = getWorkersDisplayForEquipe(equipes, employes, auth.equipeId, pointageList, today);
+    final workersDisplay = workersDisplayList.map((w) => w.e).toList();
+    final workersInTraining = workersDisplay.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
     AttendanceState getState(String id) {
       if (pointageProvider.getRecordForEmployee(id)?.adminFinalStatus == AttendanceStatus.training) return AttendanceState.present;
       return _chefStatusToState(pointageProvider.getChefStatusForEmployee(id));
@@ -1552,39 +1334,61 @@ class _PointagePageState extends State<PointagePage> {
     final padding = pagePadding(context);
     final chefEquipeList = equipes.where((e) => e.id == auth.equipeId).toList();
     final chefEquipe = chefEquipeList.isEmpty ? null : chefEquipeList.first;
-    final today = DateTime.now();
     final shiftForChef = chefEquipe != null ? shiftsProvider.getShiftForEquipe(chefEquipe.id, today) : null;
     final config = getConfigForEquipeAndDate(chefEquipe, today, shiftForChef);
+    final now = DateTime.now();
     final hoursStatus = getPointageHoursStatus(now, config);
-    final ignoreTime = pointageProvider.ignoreTimeWindowsForTest;
-    final isWithinArrival = ignoreTime || config.canMarkArrivalNow(now);
-    final isWithinDeparture = ignoreTime || config.canMarkDepartureNow(now);
+    final isWithinArrival = config.canMarkArrivalNow(now);
+    final isWithinDeparture = config.canMarkDepartureNow(now);
     final mobile = isMobile(context);
 
-    final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
-    final effectiveNonWorkingIds = <String>{...nonWorkingIds};
-    if (shiftsProvider.hasConfig) {
-      for (final eid in shiftsProvider.config!.equipeIds) {
-        if (eid.isEmpty) continue;
-        if (shiftsProvider.getShiftForEquipe(eid, today) == ShiftType.rest) {
-          effectiveNonWorkingIds.add(eid);
+    Future<({String equipeId, String equipeName})?> showOvertimeShiftPicker() async {
+      final nonWorking = pointageProvider.nonWorkingEquipeIds;
+      // فقط الفرق التي تعمل اليوم وليست في راحة (Repos)
+      final working = equipes.where((eq) {
+        if (nonWorking.contains(eq.id)) return false;
+        if (!shiftsProvider.hasConfig) return true;
+        final shift = shiftsProvider.getShiftForEquipe(eq.id, today);
+        if (shift == ShiftType.rest) return false;
+        return true;
+      }).toList();
+      if (working.isEmpty) return null;
+      String shiftLabel(ShiftType s) {
+        switch (s) {
+          case ShiftType.morning: return tr(context, 'shifts_morning');
+          case ShiftType.evening: return tr(context, 'shifts_evening');
+          case ShiftType.night: return tr(context, 'shifts_night');
+          case ShiftType.rest: return tr(context, 'shifts_rest');
         }
       }
+      return showDialog<({String equipeId, String equipeName})>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr(context, 'pointage_overtime_select_shift_title')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: working.map((eq) {
+                final shift = shiftsProvider.getShiftForEquipe(eq.id, today);
+                return ListTile(
+                  title: Text(eq.nom),
+                  subtitle: Text(shiftLabel(shift)),
+                  onTap: () => Navigator.pop(ctx, (equipeId: eq.id, equipeName: eq.nom)),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+            ),
+          ],
+        ),
+      );
     }
-    bool isRoboEquipe(Equipe eq) {
-      final name = eq.nom.trim().toLowerCase();
-      if (name.contains('robo') || name.contains('repos') || name.contains('repo')) return true;
-      final shift = shiftsProvider.getShiftForEquipe(eq.id, today);
-      return shift == ShiftType.rest;
-    }
-    final workingEquipes = equipes
-        .where((e) => e.chefId.isNotEmpty && !effectiveNonWorkingIds.contains(e.id) && !isRoboEquipe(e))
-        .toList();
-    final teamsForRenfortSelection = workingEquipes
-        .map((eq) => (equipeId: eq.id, equipeName: eq.nom, chefName: getChefName(employes, eq.chefId), workers: <Employe>[]))
-        .toList();
 
-    Widget buildWorkerCard(Employe e) {
+    Widget buildWorkerCard(Employe e, [String? overtimeChefName]) {
       final record = pointageProvider.getRecordForEmployee(e.id);
       final isInTraining = record?.adminFinalStatus == AttendanceStatus.training;
       if (isInTraining) {
@@ -1644,8 +1448,6 @@ class _PointagePageState extends State<PointagePage> {
           );
       final canMarkArrival = !locked && isWithinArrival;
       final canMarkDeparture = isWithinDeparture;
-      final canChooseRenfortTeam =
-          record == null || !record.tempAssigned || (record.originalEquipeId != null && record.originalEquipeId == auth.equipeId);
       return Card(
         margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
         child: Padding(
@@ -1664,47 +1466,20 @@ class _PointagePageState extends State<PointagePage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
-                    if (record?.tempAssigned == true && record?.equipeId == auth.equipeId) ...[
+                    if (overtimeChefName != null)
                       Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Builder(
-                          builder: (_) {
-                            final origId = record!.originalEquipeId ?? '';
-                            final origEq = equipes.where((eq) => eq.id == origId).toList();
-                            final origName = origEq.isEmpty ? origId : origEq.first.nom;
-                            return Text(
-                              'Heures sup. — Équipe $origName',
-                              style: TextStyle(fontSize: 11, color: Colors.orange.shade800, fontWeight: FontWeight.w500),
-                            );
-                          },
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          children: [
+                            Icon(Icons.schedule, size: 14, color: Colors.orange.shade700),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${tr(context, 'pointage_overtime_badge')} — ${tr(context, 'chef_label')}: $overtimeChefName',
+                              style: TextStyle(fontSize: 11, color: Colors.orange.shade800),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                    if (canChooseRenfortTeam) ...[
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            final ok = await _showRenfortDialog(
-                              context,
-                              employe: e,
-                              currentEquipeId: auth.equipeId ?? '',
-                              allTeams: teamsForRenfortSelection,
-                              viewDate: DateTime(now.year, now.month, now.day),
-                              pointageProvider: pointageProvider,
-                            );
-                            if (ok == true && mounted) setState(() {});
-                          },
-                          icon: Icon(Icons.swap_horiz, size: mobile ? 16 : 14, color: Colors.orange.shade700),
-                          label: Text('Heures sup. (équipe)', style: TextStyle(fontSize: mobile ? 12 : 11, color: Colors.orange.shade800)),
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: Colors.orange.shade200),
-                            padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 8, vertical: mobile ? 8 : 6),
-                          ),
-                        ),
-                      ),
-                    ],
                     if (recordOrPlaceholder.departureStatus != DepartureStatus.unset && recordOrPlaceholder.overtimeMinutes != null && recordOrPlaceholder.overtimeMinutes! > 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
@@ -1718,109 +1493,98 @@ class _PointagePageState extends State<PointagePage> {
               ),
               if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
               const SizedBox(width: 8),
-              _wrapIfDisabled(
-                disabled: !canMarkArrival,
-                child: ChefStatusChips(
-                  current: getState(e.id),
-                  onSelect: canMarkArrival ? (s) async {
-                    String? absenceReason;
-                    if (s == AttendanceState.absent) {
-                      final reasonId = await _showAbsenceReasonDialog(context);
-                      if (reasonId == null || !context.mounted) return;
-                      absenceReason = reasonId;
-                    }
-                    final ok = await pointageProvider.markChefAttendance(
-                      employeId: e.id,
-                      employeNom: e.nom,
-                      employeCin: e.cin,
-                      equipeId: auth.equipeId ?? '',
-                      equipeName: equipeName,
-                      chefName: auth.currentUser?.nom ?? '',
-                      chefStatus: _stateToChefStatus(s),
-                      chefId: auth.currentUser?.id,
-                      absenceReason: absenceReason,
-                      configOverride: config,
-                    );
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _wrapIfDisabled(
+                    disabled: !canMarkArrival,
+                    child: ChefStatusChips(
+                      current: getState(e.id),
+                      onSelect: canMarkArrival ? (s) async {
+                        String? absenceReason;
+                        if (s == AttendanceState.absent) {
+                          final reasonId = await _showAbsenceReasonDialog(context);
+                          if (reasonId == null || !context.mounted) return;
+                          absenceReason = reasonId;
+                        }
+                        final ok = await pointageProvider.markChefAttendance(
+                          employeId: e.id,
+                          employeNom: e.nom,
+                          employeCin: e.cin,
+                          equipeId: auth.equipeId ?? '',
+                          equipeName: equipeName,
+                          chefName: auth.currentUser?.nom ?? '',
+                          chefStatus: _stateToChefStatus(s),
+                          chefId: auth.currentUser?.id,
+                          absenceReason: absenceReason,
+                          configOverride: config,
+                        );
+                        if (!ok && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                          );
+                        }
+                      } : (_) {},
+                      presentLabel: tr(context, 'present'),
+                      absentLabel: tr(context, 'absent'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  _DepartureChips(
+                    record: recordOrPlaceholder,
+                    config: config,
+                    onStillWorking: () async {
+                      // الشاف الأصلي يفتح فقط الساعات الإضافية ويحدد الفريق المستهدف
+                      final selected = await showOvertimeShiftPicker();
+                      if (selected == null || !context.mounted) return;
+                      final ok = await pointageProvider.setDepartureStatus(
+                        record: recordOrPlaceholder,
+                        status: DepartureStatus.stillWorking,
+                        overtimeTargetEquipeId: selected.equipeId,
+                        overtimeTargetEquipeName: selected.equipeName,
+                        // لا نضع overtimeMinutes هنا؛ تُحدَّد لاحقاً من شاف الفريق المستهدف
+                        configOverride: config,
                       );
-                    }
-                  } : (_) {},
-                  presentLabel: tr(context, 'present'),
-                  absentLabel: tr(context, 'absent'),
-                ),
-              ),
-              if (canMarkDeparture)
-                _DepartureChips(
-                  record: recordOrPlaceholder,
-                  config: config,
-                  onStillWorking: () async {
-                    // "Encore au travail" = اختيار الفريق الذي سيعمل معه ساعات إضافية (الشيفت الذي بعده فقط)
-                    ShiftType? nextShift(ShiftType? s) {
-                      if (s == null) return null;
-                      switch (s) {
-                        case ShiftType.morning:
-                          return ShiftType.evening;
-                        case ShiftType.evening:
-                          return ShiftType.night;
-                        case ShiftType.night:
-                          return ShiftType.morning;
-                        case ShiftType.rest:
-                          return null;
-                      }
-                    }
-                    final myShift = shiftsProvider.getShiftForEquipe(auth.equipeId ?? '', today);
-                    final ns = nextShift(myShift);
-                    final todayDate = DateTime(today.year, today.month, today.day);
-                    DateTime targetDate = todayDate;
-                    // الشيفت الليلي 22→06: الصباح التالي 06→14 يكون إما نفس اليوم (بعد منتصف الليل) أو اليوم الموالي (قبل منتصف الليل)
-                    if (myShift == ShiftType.night && ns == ShiftType.morning) {
-                      targetDate = now.hour < 6 ? todayDate : todayDate.add(const Duration(days: 1));
-                    }
-                    final candidates = workingEquipes
-                        .where((eq) => eq.id != (auth.equipeId ?? '') && shiftsProvider.getShiftForEquipe(eq.id, targetDate) == ns)
-                        .toList();
-                    if (candidates.isEmpty) {
-                      if (context.mounted) {
+                      if (!ok && context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: const Text('Aucune équipe disponible pour la shift suivante.'), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                          SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                         );
                       }
-                      return;
-                    }
-                    final candidateTeams = candidates
-                        .map((eq) => (equipeId: eq.id, equipeName: eq.nom, chefName: getChefName(employes, eq.chefId), workers: <Employe>[]))
-                        .toList();
-                    final ok = await _showRenfortDialog(
-                      context,
-                      employe: e,
-                      currentEquipeId: auth.equipeId ?? '',
-                      allTeams: candidateTeams,
-                      viewDate: targetDate,
-                      pointageProvider: pointageProvider,
-                    );
-                    if (ok == true && mounted) setState(() {});
-                  },
-                  onFinished: (int? overtimeMinutes) async {
-                    final ok = await pointageProvider.setDepartureStatus(
-                      record: recordOrPlaceholder,
-                      status: DepartureStatus.finished,
-                      overtimeMinutes: overtimeMinutes,
-                      configOverride: config,
-                    );
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                    },
+                    onFinished: (int? overtimeMinutes) async {
+                      // إذا كان هذا الشاف هو شاف الفريق الذي يستقبل الساعات الإضافية
+                      // وكان العامل في وضع stillWorking، نعتمد شيفت كاملة 8 ساعات
+                      int? minutesToUse = overtimeMinutes;
+                      final isOvertimeForThisEquipe =
+                          recordOrPlaceholder.overtimeTargetEquipeId != null &&
+                          recordOrPlaceholder.overtimeTargetEquipeId!.isNotEmpty &&
+                          auth.equipeId != null &&
+                          auth.equipeId!.isNotEmpty &&
+                          recordOrPlaceholder.overtimeTargetEquipeId == auth.equipeId &&
+                          recordOrPlaceholder.departureStatus == DepartureStatus.stillWorking;
+                      if (isOvertimeForThisEquipe) {
+                        minutesToUse = 480; // 8 ساعات كاملة
+                      }
+                      final ok = await pointageProvider.setDepartureStatus(
+                        record: recordOrPlaceholder,
+                        status: DepartureStatus.finished,
+                        overtimeMinutes: minutesToUse,
+                        configOverride: config,
                       );
-                    }
-                  },
-                  stillLabel: tr(context, 'departure_still_working'),
-                  finishedLabel: tr(context, 'departure_finished'),
-                  overtimeLabel: tr(context, 'overtime_minutes'),
-                  overtimeHint: tr(context, 'overtime_minutes_hint'),
-                  finishWithoutOvertimeDialog: true,
-                ),
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                        );
+                      }
+                    },
+                    stillLabel: tr(context, 'departure_still_working'),
+                    finishedLabel: tr(context, 'departure_finished'),
+                    overtimeLabel: tr(context, 'overtime_minutes'),
+                    overtimeHint: tr(context, 'overtime_minutes_hint'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -1926,7 +1690,7 @@ class _PointagePageState extends State<PointagePage> {
               child: ListView.builder(
                 padding: const EdgeInsets.only(bottom: 8),
                 itemCount: workersDisplay.length,
-                itemBuilder: (context, i) => buildWorkerCard(workersDisplay[i]),
+                itemBuilder: (context, i) => buildWorkerCard(workersDisplayList[i].e, workersDisplayList[i].overtimeChefName),
               ),
             ),
             SizedBox(height: 12),
@@ -2078,7 +1842,7 @@ class _PointagePageState extends State<PointagePage> {
               ),
             )
           else
-            ...workersDisplay.map((e) => buildWorkerCard(e)),
+            ...workersDisplayList.map((w) => buildWorkerCard(w.e, w.overtimeChefName)),
           OutlinedButton.icon(
             onPressed: () async {
               final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
@@ -2139,8 +1903,6 @@ class _DepartureChips extends StatelessWidget {
   final String finishedLabel;
   final String overtimeLabel;
   final String overtimeHint;
-  /// Si true, "Fin du travail" enregistre directement la fin de shift sans demander les heures sup. (0 = 8h normales)
-  final bool finishWithoutOvertimeDialog;
 
   const _DepartureChips({
     required this.record,
@@ -2151,7 +1913,6 @@ class _DepartureChips extends StatelessWidget {
     required this.finishedLabel,
     required this.overtimeLabel,
     required this.overtimeHint,
-    this.finishWithoutOvertimeDialog = false,
   });
 
   @override
@@ -2171,10 +1932,6 @@ class _DepartureChips extends StatelessWidget {
           label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
           selected: isFinished,
           onSelected: (_) async {
-            if (finishWithoutOvertimeDialog) {
-              onFinished(0);
-              return;
-            }
             final controller = TextEditingController();
             final minutes = await showDialog<int?>(
               context: context,

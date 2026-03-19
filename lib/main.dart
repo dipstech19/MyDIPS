@@ -6,7 +6,7 @@ import 'core/auth/login_page.dart';
 import 'core/locale/app_locale.dart';
 import 'core/site/site_model.dart';
 import 'core/site/site_provider.dart';
-import 'core/theme/app_theme.dart';
+import 'core/theme/app_theme.dart' as theme;
 import 'core/utils/responsive.dart';
 import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
@@ -62,11 +62,11 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'DIPS - Système de Gestion',
       debugShowCheckedModeBanner: false,
-      theme: appTheme,
+      theme: theme.appTheme,
       builder: (context, child) {
         return MediaQuery(
           data: MediaQuery.of(context).copyWith(
-            textScaler: textScaler(context),
+            textScaler: theme.textScaler(context),
           ),
           child: child!,
         );

@@ -214,8 +214,12 @@ class EmployeeDetailDialog extends StatelessWidget {
                       child: Column(children: [
                         _card(children: [
                           _row('Poste', e.poste),
+                          _row('Site', e.siteId),
                           _row('Département', e.departement),
                           _row('Chef direct', _getChefNom(e.chefDirectId)),
+                          _row('Badge accès', e.badgeActif ? 'Actif' : 'Inactif'),
+                          if (e.badgeExpiration.isNotEmpty)
+                            _row('Expiration badge', e.badgeExpiration),
                         ]),
                         const SizedBox(height: 12),
                         _card(children: [
@@ -223,7 +227,7 @@ class EmployeeDetailDialog extends StatelessWidget {
                           _row('Date début', e.dateDebut),
                           if (e.finContrat.isNotEmpty)
                             _row('Fin contrat', e.finContrat),
-                          _row('Salaire Net', '${e.salaireBase.toInt()} DH'),
+                          _row('Salaire base', '${e.salaireBase.toInt()} DH'),
                         ]),
                         const SizedBox(height: 12),
                         _PresenceLeaveCard(employe: e, isDirecteur: true),

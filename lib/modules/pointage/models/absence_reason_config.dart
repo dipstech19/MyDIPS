@@ -1,35 +1,16 @@
-/// سبب غياب قابل للتعديل من طرف الأدمن — يُخزّن في Firestore.
+/// سبب غياب قابل للتخصيص (من الإعدادات / Firestore)
 class AbsenceReasonConfig {
   final String id;
   final String label;
-  /// إن كان true يُخصم من الراتب/ساعات العمل؛ إن كان false يُحتسب كغياب مأذون (مدفوع).
   final bool deductFromSalary;
   final int order;
 
-  const AbsenceReasonConfig({
+  AbsenceReasonConfig({
     required this.id,
     required this.label,
-    required this.deductFromSalary,
+    this.deductFromSalary = true,
     this.order = 0,
   });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'label': label,
-      'deductFromSalary': deductFromSalary,
-      'order': order,
-    };
-  }
-
-  static AbsenceReasonConfig? fromMap(String id, Map<String, dynamic>? map) {
-    if (map == null) return null;
-    return AbsenceReasonConfig(
-      id: id,
-      label: map['label'] as String? ?? '',
-      deductFromSalary: map['deductFromSalary'] as bool? ?? true,
-      order: (map['order'] as num?)?.toInt() ?? 0,
-    );
-  }
 
   AbsenceReasonConfig copyWith({
     String? id,
@@ -42,6 +23,22 @@ class AbsenceReasonConfig {
       label: label ?? this.label,
       deductFromSalary: deductFromSalary ?? this.deductFromSalary,
       order: order ?? this.order,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'label': label,
+        'deductFromSalary': deductFromSalary,
+        'order': order,
+      };
+
+  static AbsenceReasonConfig fromMap(Map<String, dynamic> map) {
+    return AbsenceReasonConfig(
+      id: map['id'] as String? ?? '',
+      label: map['label'] as String? ?? '',
+      deductFromSalary: map['deductFromSalary'] as bool? ?? true,
+      order: map['order'] as int? ?? 0,
     );
   }
 }

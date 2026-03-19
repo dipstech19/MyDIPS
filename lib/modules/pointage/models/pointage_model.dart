@@ -108,15 +108,11 @@ class PointageRecord {
   final DateTime? departureMarkedAt;
   /// ساعات إضافية (دقائق) عند "انتهى من العمل"
   final int? overtimeMinutes;
+  /// عند "لا يزال يعمل": الوردية/الفريق الذي سيعمل فيه ساعات إضافية
+  final String? overtimeTargetEquipeId;
+  final String? overtimeTargetEquipeName;
   /// سبب الغياب (من الشاف أو الأدمن عند تسجيل غائب)
   final String? absenceReason;
-
-  /// Affectation temporaire (renfort) vers une autre équipe pour une journée.
-  final bool tempAssigned;
-  /// ID de l'équipe d'origine (pour cacher l'employé de son équipe ce jour-là).
-  final String? originalEquipeId;
-  /// Override de shift pour cet employé (morning|evening|night|null).
-  final String? shiftOverride;
 
   PointageRecord({
     required this.id,
@@ -142,10 +138,9 @@ class PointageRecord {
     this.departureStatus = DepartureStatus.unset,
     this.departureMarkedAt,
     this.overtimeMinutes,
+    this.overtimeTargetEquipeId,
+    this.overtimeTargetEquipeName,
     this.absenceReason,
-    this.tempAssigned = false,
-    this.originalEquipeId,
-    this.shiftOverride,
   });
 
   /// السائق لا يستطيع التعديل بعد الإرسال
@@ -219,10 +214,9 @@ class PointageRecord {
     'departureStatus': departureStatus.name,
     'departureMarkedAt': departureMarkedAt?.toIso8601String(),
     'overtimeMinutes': overtimeMinutes,
+    'overtimeTargetEquipeId': overtimeTargetEquipeId,
+    'overtimeTargetEquipeName': overtimeTargetEquipeName,
     'absenceReason': absenceReason,
-    'tempAssigned': tempAssigned,
-    'originalEquipeId': originalEquipeId,
-    'shiftOverride': shiftOverride,
   };
 
   static DriverPointageStatus _driverFromMap(dynamic v) {
@@ -281,10 +275,9 @@ class PointageRecord {
     departureStatus: _departureFromMap(map['departureStatus']),
     departureMarkedAt: map['departureMarkedAt'] != null ? DateTime.tryParse(map['departureMarkedAt']) : null,
     overtimeMinutes: map['overtimeMinutes'] is int ? map['overtimeMinutes'] as int : null,
+    overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
+    overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
     absenceReason: map['absenceReason'] as String?,
-    tempAssigned: map['tempAssigned'] as bool? ?? false,
-    originalEquipeId: map['originalEquipeId'] as String?,
-    shiftOverride: map['shiftOverride'] as String?,
   );
 
   PointageRecord copyWith({
@@ -311,10 +304,9 @@ class PointageRecord {
     DepartureStatus? departureStatus,
     DateTime? departureMarkedAt,
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
     String? absenceReason,
-    bool? tempAssigned,
-    String? originalEquipeId,
-    String? shiftOverride,
   }) => PointageRecord(
     id: id ?? this.id,
     employeId: employeId ?? this.employeId,
@@ -339,10 +331,9 @@ class PointageRecord {
     departureStatus: departureStatus ?? this.departureStatus,
     departureMarkedAt: departureMarkedAt ?? this.departureMarkedAt,
     overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
+    overtimeTargetEquipeId: overtimeTargetEquipeId ?? this.overtimeTargetEquipeId,
+    overtimeTargetEquipeName: overtimeTargetEquipeName ?? this.overtimeTargetEquipeName,
     absenceReason: absenceReason ?? this.absenceReason,
-    tempAssigned: tempAssigned ?? this.tempAssigned,
-    originalEquipeId: originalEquipeId ?? this.originalEquipeId,
-    shiftOverride: shiftOverride ?? this.shiftOverride,
   );
 }
 

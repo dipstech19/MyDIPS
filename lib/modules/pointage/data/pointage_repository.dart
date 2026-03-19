@@ -90,6 +90,8 @@ class PointageRepository {
       toWrite['departureStatus'] = existing.departureStatus.name;
       toWrite['departureMarkedAt'] = existing.departureMarkedAt?.toIso8601String();
       toWrite['overtimeMinutes'] = existing.overtimeMinutes;
+      toWrite['overtimeTargetEquipeId'] = existing.overtimeTargetEquipeId;
+      toWrite['overtimeTargetEquipeName'] = existing.overtimeTargetEquipeName;
       await _firestore.collection(_pointageCollection).doc(docId).set(toWrite);
     } else {
       await _firestore.collection(_pointageCollection).doc(docId).set(toWrite);
@@ -149,11 +151,13 @@ class PointageRepository {
     }
   }
 
-  /// تحديث حالة الخروج (لا يزال يعمل / انتهى) مع اختياري ساعات إضافية
+  /// تحديث حالة الخروج (لا يزال يعمل / انتهى) مع اختياري ساعات إضافية واختيار وردية الساعات الإضافية
   Future<void> setDepartureStatus(
     PointageRecord record,
     DepartureStatus status, {
     int? overtimeMinutes,
+    String? overtimeTargetEquipeId,
+    String? overtimeTargetEquipeName,
   }) async {
     final docId = _docId(record.employeId, record.date);
     final existing = await getByEmployeAndDate(record.employeId, record.date);
@@ -163,6 +167,13 @@ class PointageRepository {
       'departureMarkedAt': now.toIso8601String(),
       if (overtimeMinutes != null) 'overtimeMinutes': overtimeMinutes,
     };
+    if (status == DepartureStatus.stillWorking) {
+      if (overtimeTargetEquipeId != null) updates['overtimeTargetEquipeId'] = overtimeTargetEquipeId;
+      if (overtimeTargetEquipeName != null) updates['overtimeTargetEquipeName'] = overtimeTargetEquipeName;
+    } else {
+      updates['overtimeTargetEquipeId'] = null;
+      updates['overtimeTargetEquipeName'] = null;
+    }
     if (existing != null) {
       await _firestore.collection(_pointageCollection).doc(docId).update(updates);
     } else {
@@ -170,6 +181,8 @@ class PointageRepository {
         departureStatus: status,
         departureMarkedAt: now,
         overtimeMinutes: overtimeMinutes ?? record.overtimeMinutes,
+        overtimeTargetEquipeId: overtimeTargetEquipeId ?? record.overtimeTargetEquipeId,
+        overtimeTargetEquipeName: overtimeTargetEquipeName ?? record.overtimeTargetEquipeName,
       ).toMap();
       await _firestore.collection(_pointageCollection).doc(docId).set(map);
     }
@@ -223,10 +236,6 @@ class PointageRepository {
       if (status == AttendanceStatus.absent) 'absenceReason': absenceReason,
       if (status != AttendanceStatus.absent) 'absenceReason': null,
     };
-    await _firestore.collection(_pointageCollection).doc(docId).update(updates);
-  }
-
-  Future<void> updatePointageFields(String docId, Map<String, dynamic> updates) async {
     await _firestore.collection(_pointageCollection).doc(docId).update(updates);
   }
 

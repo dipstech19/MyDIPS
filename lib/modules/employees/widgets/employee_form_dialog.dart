@@ -8,7 +8,6 @@ import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
 import '../../../core/site/site_provider.dart';
 import '../../../core/utils/responsive.dart';
-import '../departements_provider.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
 import '../employees_provider.dart';
@@ -52,6 +51,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   String _siteId = SiteId.jadida;
   EmployeStatut _statut = EmployeStatut.enService;
   bool _siteIdInitialized = false;
+  bool _badgeActif = false;
+  final _badgeExpiryCtrl = TextEditingController();
   
   // Photo de profil
   String? _photoPath;
@@ -78,8 +79,11 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     }
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
-    final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final depts = context.watch<DepartementsProvider>().departements.map((d) => d.nom).toList();
+    final posteNames = postesProv.postes
+        .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
+        .map((p) => p.nom)
+        .toList();
+    final depts = _uniqueDepartements(empProv);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -152,15 +156,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       const SizedBox(height: 20),
                       _sectionTitle('💼 Travail'),
                       const SizedBox(height: 12),
-                      _row2(
-                        _dropdownPoste(posteNames),
-                        const SizedBox(),
-                      ),
+                      _dropdownPoste(posteNames),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: _siteId,
                         decoration: InputDecoration(
-                          labelText: 'Site *',
+                          labelText: 'Site (الموقع) *',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           isDense: true,
@@ -174,7 +175,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       const SizedBox(height: 12),
                       _row2(
                         _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
-                        _field(_salaireCtrl, 'Salaire Net (DH) *', required: true, isNumber: true),
+                        _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
                       ),
                       const SizedBox(height: 12),
                       _row2(
@@ -229,6 +230,27 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                         _field(_cnssCtrl, 'Numéro CNSS'),
                         _dateField(_dateCnssCtrl, 'Date inscription CNSS'),
                       ),
+                      
+                      const SizedBox(height: 20),
+                      _sectionTitle('🎫 Badge d\'accès (Site)'),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Switch(
+                            value: _badgeActif,
+                            onChanged: (v) => setState(() => _badgeActif = v),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Badge activé',
+                              style: TextStyle(fontSize: 13, color: _badgeActif ? Colors.green[700] : Colors.grey[700], fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _dateField(_badgeExpiryCtrl, 'Date d\'expiration du badge'),
                       
                       const SizedBox(height: 20),
                       _sectionTitle('📁 Documents'),
@@ -295,7 +317,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final depts = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
+      final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
@@ -360,6 +382,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         chefDirectId: _chefId,
         cnss: _cnssCtrl.text,
         dateCnss: _dateCnssCtrl.text,
+        badgeActif: _badgeActif,
+        badgeExpiration: _badgeExpiryCtrl.text,
         statut: _statut,
         documents: documents,
         photoUrl: photoUrl ?? '',
@@ -465,6 +489,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         );
       },
     );
+  }
+
+  List<String> _uniqueDepartements(EmployeesProvider prov) {
+    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
+    final list = set.toList()..sort();
+    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

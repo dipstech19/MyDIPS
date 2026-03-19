@@ -105,6 +105,7 @@ class AppTranslations {
     'pointage_hours_open': 'Pointage ouvert de %s à %s',
     'pointage_hours_not_yet': 'Pointage pas encore ouvert. Ouverture à %s.',
     'pointage_hours_closed': 'Pointage fermé pour aujourd\'hui (fermeture à %s). Non pointé = absent.',
+    'pointage_hours_closed_short': 'Hors créneau pointage',
     'pointage_night_shift_closed': 'Travail 22:00 → 06:00. Pointage fermé pour ce créneau (fermeture à 06:00).',
     'pointage_hours_cannot_mark': 'En dehors des heures de pointage. Impossible d\'enregistrer.',
     'pointage_team_not_working': 'Ne travaille pas ce jour',
@@ -175,9 +176,9 @@ class AppTranslations {
     'shifts_config_position_legend': 'Au 1er jour, position 1 = Matin, 2 = Soir, 3 = Nuit, 4 = Repos. Choisissez l\'équipe pour chaque position.',
     'shifts_schedule': 'Planning',
     'shifts_table_date': 'Date',
-    'shifts_table_p1': 'Shift 1 06-14',
-    'shifts_table_p2': 'Shift 2 14-22',
-    'shifts_table_p3': 'Shift 3 22-06',
+    'shifts_table_p1': 'P1 (Matin)',
+    'shifts_table_p2': 'P2 (Soir)',
+    'shifts_table_p3': 'P3 (Nuit)',
     'shifts_table_rh': 'RH (Repos)',
     'shifts_equipe_column': 'Équipe',
     'shifts_today': 'Aujourd\'hui',
@@ -196,6 +197,8 @@ class AppTranslations {
     'shifts_export_from': 'Du',
     'shifts_export_to': 'Au',
     'shifts_export_select_period': 'Choisir la période',
+    'shifts_refresh_tooltip': 'Recharger le planning depuis le serveur',
+    'shifts_refreshed': 'Planning rechargé.',
     'pointage_download_pdf_equipe': 'Télécharger PDF (équipe)',
     'pointage_download_excel': 'Télécharger Excel (période)',
     'pointage_excel_date_range': 'Période pour Excel',
@@ -203,6 +206,8 @@ class AppTranslations {
     'pointage_excel_to': 'Au',
     'pointage_export_ok': 'Export réussi',
     'pointage_export_excel_saved': 'Fichier Excel enregistré',
+    'pointage_overtime_select_shift_title': 'Choisir la shift pour les heures supplémentaires',
+    'pointage_overtime_badge': 'Heures supplémentaires',
   };
 
   static const Map<String, String> ar = {
@@ -288,6 +293,7 @@ class AppTranslations {
     'pointage_hours_open': 'البوانتاج مفتوح من %s إلى %s',
     'pointage_hours_not_yet': 'البوانتاج لم يفتح بعد. يفتح على %s.',
     'pointage_hours_closed': 'البوانتاج مغلق لليوم (الإقفال %s). غير المسجل = غائب.',
+    'pointage_hours_closed_short': 'خارج وقت البوانتاج',
     'pointage_night_shift_closed': 'عمل 22:00 → 06:00. البوانتاج مغلق لهذا الشف (إقفال 06:00).',
     'pointage_hours_cannot_mark': 'خارج أوقات البوانتاج. لا يمكن التسجيل.',
     'pointage_team_not_working': 'لا تعمل هذا اليوم',
@@ -379,6 +385,8 @@ class AppTranslations {
     'shifts_export_from': 'من',
     'shifts_export_to': 'إلى',
     'shifts_export_select_period': 'اختر الفترة',
+    'shifts_refresh_tooltip': 'تحديث الجدول من الخادم',
+    'shifts_refreshed': 'تم تحديث الجدول.',
     'pointage_download_pdf_equipe': 'تنزيل PDF (الفريق)',
     'pointage_download_excel': 'تنزيل Excel (الفترة)',
     'pointage_excel_date_range': 'الفترة لملف Excel',
@@ -386,6 +394,8 @@ class AppTranslations {
     'pointage_excel_to': 'إلى',
     'pointage_export_ok': 'تم التصدير بنجاح',
     'pointage_export_excel_saved': 'تم حفظ ملف Excel',
+    'pointage_overtime_select_shift_title': 'اختر الوردية لساعات العمل الإضافية',
+    'pointage_overtime_badge': 'ساعات إضافية',
   };
 
   static String get(String locale, String key) {

@@ -16,8 +16,6 @@ class PointageExportRow {
   final String equipeName;
   final int daysWorked;
   final int daysAbsent;
-  /// Heures non travaillées (jours absents * 8h)
-  final double hoursNotWorked;
   final double totalHours;
   final double overtimeHours;
   final Map<DateTime, String> hoursByDay;
@@ -30,7 +28,6 @@ class PointageExportRow {
     required this.equipeName,
     required this.daysWorked,
     required this.daysAbsent,
-    required this.hoursNotWorked,
     required this.totalHours,
     required this.overtimeHours,
     required this.hoursByDay,
@@ -522,7 +519,6 @@ class PointageExportService {
 
       _setHeader('Jours travailles');
       _setHeader('Jours absents');
-      _setHeader('Heures non travaillees');
       _setHeader('Total heures');
       _setHeader('Heures sup.');
       _setHeader('Total');
@@ -545,19 +541,6 @@ class PointageExportService {
           // - "x" أو "x ..." (غياب): أحمر
           final baseStyle = excel.CellStyle(
             horizontalAlign: excel.HorizontalAlign.Center,
-            backgroundColorHex: excel.ExcelColor.fromHexString(
-              val == 'Ropos'
-                  ? '#EEEEEE'
-                  : (val == '✓'
-                      ? '#C8E6C9'
-                      : (val.startsWith('x')
-                          ? (() {
-                              final reasonId = r.absenceReasonIdByDay[d];
-                              final paid = reasonId != null && !isAbsenceReasonDeductFromSalary(reasonId, reasonConfigs);
-                              return paid ? '#C8E6C9' : '#FFCDD2';
-                            })()
-                          : '#FFFFFF')),
-            ),
             leftBorder: excel.Border(
               borderStyle: excel.BorderStyle.Thin,
               borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
@@ -587,9 +570,6 @@ class PointageExportService {
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
             excel.IntCellValue(r.daysAbsent));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.hoursNotWorked));
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
             excel.DoubleCellValue(r.totalHours));
@@ -697,7 +677,6 @@ class PointageExportService {
       };
 
       int daysWorked = 0;
-      int daysAbsent = 0;
       int restDaysCount = 0;
       double totalHours = 0;
       double overtimeHours = 0;
@@ -706,7 +685,7 @@ class PointageExportService {
 
       for (final d in days) {
         if (emp.equipeId != null && isRestDay != null && isRestDay(d, emp.equipeId!)) {
-          hoursByDay[d] = 'Ropos';
+          hoursByDay[d] = 'repos';
           restDaysCount++;
           continue;
         }
@@ -719,33 +698,23 @@ class PointageExportService {
           hoursByDay[d] = '✓';
         } else {
           final reasonLabel = r != null ? getAbsenceReasonLabel(r.absenceReason, reasonConfigs) : '';
+          hoursByDay[d] = reasonLabel.isEmpty ? 'x' : 'x $reasonLabel';
           if (r != null && r.absenceReason != null) {
             absenceReasonIdByDay[d] = r.absenceReason;
-            final paidAbsence = !isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs);
-            if (paidAbsence) {
-              // غياب مأذون/مدفوع: يُحتسب كحضور
-              daysWorked++;
+            if (!isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs)) {
               totalHours += hoursPerDay;
-              hoursByDay[d] = reasonLabel.isEmpty ? '✓' : 'x $reasonLabel';
-            } else {
-              daysAbsent++;
-              hoursByDay[d] = reasonLabel.isEmpty ? 'x' : 'x $reasonLabel';
             }
-          } else {
-            daysAbsent++;
-            hoursByDay[d] = reasonLabel.isEmpty ? 'x' : 'x $reasonLabel';
           }
         }
       }
 
-      final hoursNotWorked = daysAbsent * hoursPerDay;
+      final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
       rows.add(PointageExportRow(
         employeId: emp.id,
         employeNom: emp.nom,
         equipeName: emp.equipeName,
         daysWorked: daysWorked,
         daysAbsent: daysAbsent,
-        hoursNotWorked: hoursNotWorked,
         totalHours: totalHours,
         overtimeHours: overtimeHours,
         hoursByDay: hoursByDay,

@@ -11,9 +11,9 @@ class AdminUser {
   bool actif;
   List<String> permissions;
   /// المواقع المسموح بها: [] أو ["all"] = الكل، ["jadida"] أو ["safi"] = موقع واحد
+  DateTime dateCreation;
   List<String> siteIds;
   String password;
-  DateTime dateCreation;
 
   AdminUser({
     required this.id,
@@ -24,9 +24,9 @@ class AdminUser {
     required this.role,
     required this.actif,
     required this.permissions,
-    this.siteIds = const [],
-    this.password = '',
     required this.dateCreation,
+    this.siteIds = const ['all'],
+    this.password = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -62,11 +62,11 @@ class AdminUser {
       permissions: perms is List<dynamic>
           ? perms.map((e) => e.toString()).toList()
           : [],
+      dateCreation: dateCreation,
       siteIds: sites is List<dynamic>
           ? sites.map((e) => e.toString()).toList()
-          : [],
+          : ['all'],
       password: map['password'] as String? ?? '',
-      dateCreation: dateCreation,
     );
   }
 }

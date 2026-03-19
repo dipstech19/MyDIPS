@@ -39,6 +39,7 @@ final List<AppUser> appUsers = [
     username: 'admin',
     password: '1234',
     role: UserRole.directeur,
+    siteIds: ['all'],
   ),
   AppUser(
     id: 'u2',

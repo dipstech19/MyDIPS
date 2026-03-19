@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../../core/site/site_model.dart';
 import '../../../core/utils/responsive.dart';
-import '../departements_provider.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
 import '../employees_provider.dart';
@@ -56,6 +56,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   
   late List<Document> _documents;
   final List<_TempDocument> _newDocuments = [];
+  bool _badgeActif = false;
+  late TextEditingController _badgeExpiryCtrl;
 
   static const _contrats = ['CDI', 'CDD', 'Anapec'];
 
@@ -83,6 +85,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _statut = e.statut;
     _existingPhotoUrl = e.photoUrl;
     _documents = List.from(e.documents);
+    _badgeActif = e.badgeActif;
+    _badgeExpiryCtrl = TextEditingController(text: e.badgeExpiration);
   }
 
   @override
@@ -99,6 +103,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _finContratCtrl.dispose();
     _cnssCtrl.dispose();
     _dateCnssCtrl.dispose();
+    _badgeExpiryCtrl.dispose();
     super.dispose();
   }
 
@@ -106,12 +111,12 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   Widget build(BuildContext context) {
     final postesProv = context.watch<PostesProvider>();
     final empProv = context.watch<EmployeesProvider>();
-    final posteNames = postesProv.postes.map((p) => p.nom).toList();
-    final provDepts = context.watch<DepartementsProvider>().departements.map((d) => d.nom).toList();
-    final depts = [
-      ...provDepts,
-      if (_dept.isNotEmpty && !provDepts.contains(_dept)) _dept,
-    ];
+    final siteId = widget.employe.siteId;
+    final posteNames = postesProv.postes
+        .where((p) => p.siteId == siteId || p.siteId == SiteId.all)
+        .map((p) => p.nom)
+        .toList();
+    final depts = _uniqueDepartements(empProv);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -185,14 +190,11 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                         const SizedBox(height: 20),
                         _sectionTitle('💼 Travail'),
                         const SizedBox(height: 12),
-                        _row2(
-                          _dropdownPoste(posteNames),
-                          const SizedBox(),
-                        ),
+                        _dropdownPoste(posteNames),
                         const SizedBox(height: 12),
                         _row2(
                           _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
-                          _field(_salaireCtrl, 'Salaire Net (DH) *', required: true, isNumber: true),
+                          _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
                         ),
                         const SizedBox(height: 12),
                         _row2(
@@ -247,6 +249,27 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                           _field(_cnssCtrl, 'Numéro CNSS'),
                           _dateField(_dateCnssCtrl, 'Date inscription CNSS'),
                         ),
+                        
+                        const SizedBox(height: 20),
+                        _sectionTitle('🎫 Badge d\'accès (Site)'),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Switch(
+                              value: _badgeActif,
+                              onChanged: (v) => setState(() => _badgeActif = v),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Badge activé',
+                                style: TextStyle(fontSize: 13, color: _badgeActif ? Colors.green[700] : Colors.grey[700], fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _dateField(_badgeExpiryCtrl, 'Date d\'expiration du badge'),
                         
                         const SizedBox(height: 20),
                         _sectionTitle('📁 Documents'),
@@ -308,11 +331,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
       final empProv = context.read<EmployeesProvider>();
-      final provDepts = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
-      final depts = [
-        ...provDepts,
-        if (_dept.isNotEmpty && !provDepts.contains(_dept)) _dept,
-      ];
+      final depts = _uniqueDepartements(empProv);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
@@ -375,6 +394,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         chefDirectId: _chefId,
         cnss: _cnssCtrl.text,
         dateCnss: _dateCnssCtrl.text,
+        badgeActif: _badgeActif,
+        badgeExpiration: _badgeExpiryCtrl.text,
         statut: _statut,
         documents: allDocs,
         photoUrl: photoUrl,
@@ -477,6 +498,13 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         );
       },
     );
+  }
+
+  List<String> _uniqueDepartements(EmployeesProvider prov) {
+    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
+    if (_dept.isNotEmpty) set.add(_dept);
+    final list = set.toList()..sort();
+    return list.isEmpty ? ['—'] : list;
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

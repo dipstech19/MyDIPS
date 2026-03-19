@@ -9,8 +9,7 @@ class Equipe {
   final int? pointageStartMinute;
   final int? pointageEndHour;
   final int? pointageEndMinute;
-  /// موقع الفريق: jadida | safi
-  final String siteId;
+  final String? _siteId;
 
   Equipe({
     required this.id,
@@ -18,12 +17,14 @@ class Equipe {
     required this.magasin,
     required this.chefId,
     this.membreIds = const [],
-    this.siteId = 'jadida',
     this.pointageStartHour,
     this.pointageStartMinute,
     this.pointageEndHour,
     this.pointageEndMinute,
-  });
+    String? siteId,
+  }) : _siteId = siteId;
+
+  String get siteId => _siteId ?? 'all';
 
   Equipe copyWith({
     String? nom,
@@ -42,11 +43,11 @@ class Equipe {
       magasin: magasin ?? this.magasin,
       chefId: chefId ?? this.chefId,
       membreIds: membreIds ?? this.membreIds,
-      siteId: siteId ?? this.siteId,
       pointageStartHour: pointageStartHour ?? this.pointageStartHour,
       pointageStartMinute: pointageStartMinute ?? this.pointageStartMinute,
       pointageEndHour: pointageEndHour ?? this.pointageEndHour,
       pointageEndMinute: pointageEndMinute ?? this.pointageEndMinute,
+      siteId: siteId ?? _siteId,
     );
   }
 
@@ -56,8 +57,8 @@ class Equipe {
       'magasin': magasin,
       'chefId': chefId,
       'membreIds': membreIds,
-      'siteId': siteId,
     };
+    if (_siteId != null) m['siteId'] = _siteId;
     if (pointageStartHour != null) m['pointageStartHour'] = pointageStartHour;
     if (pointageStartMinute != null) m['pointageStartMinute'] = pointageStartMinute;
     if (pointageEndHour != null) m['pointageEndHour'] = pointageEndHour;
@@ -76,7 +77,6 @@ class Equipe {
       nom: map['nom'] as String? ?? '',
       magasin: map['magasin'] as String? ?? '',
       chefId: map['chefId'] as String? ?? '',
-      siteId: map['siteId'] as String? ?? 'jadida',
       membreIds: membreIds is List<dynamic>
           ? membreIds.map((e) => e.toString()).toList()
           : const [],
@@ -84,6 +84,7 @@ class Equipe {
       pointageStartMinute: startM is int ? startM : (startM != null ? int.tryParse(startM.toString()) : null),
       pointageEndHour: endH is int ? endH : (endH != null ? int.tryParse(endH.toString()) : null),
       pointageEndMinute: endM is int ? endM : (endM != null ? int.tryParse(endM.toString()) : null),
+      siteId: map['siteId'] as String?,
     );
   }
 }
