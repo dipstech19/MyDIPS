@@ -2537,7 +2537,8 @@ class _ReportSection extends StatelessWidget {
   final Color color;
   final Map<String, List<Employe>> byChef;
 
-  const _ReportSection({required this.title, required this.color, required this.byChef});
+  const _ReportSection(
+      {required this.title, required this.color, required this.byChef});
 
   @override
   Widget build(BuildContext context) {
@@ -2545,7 +2546,8 @@ class _ReportSection extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: color.withValues(alpha: 0.4), width: 1)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: color.withValues(alpha: 0.4), width: 1)),
       color: color.withValues(alpha: 0.06),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -2557,12 +2559,16 @@ class _ReportSection extends StatelessWidget {
                 Icon(Icons.circle, size: 10, color: color),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+                  child: Text(title, style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold, color: color)),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(20)),
-                  child: Text('$totalCount', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: color.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Text('$totalCount', style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.bold, color: color)),
                 ),
               ],
             ),
@@ -2570,7 +2576,8 @@ class _ReportSection extends StatelessWidget {
             if (byChef.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(tr(context, 'report_no_data'), style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                child: Text(tr(context, 'report_no_data'),
+                    style: TextStyle(fontSize: 13, color: Colors.grey[600])),
               )
             else
               ...byChef.entries.map((e) {
@@ -2578,36 +2585,56 @@ class _ReportSection extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: ExpansionTile(
-                    tilePadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
-                    childrenPadding: const EdgeInsets.only(left: 0, right: 0, top: 4, bottom: 12),
-                    collapsedShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    tilePadding: const EdgeInsets.symmetric(
+                        horizontal: 0, vertical: 4),
+                    childrenPadding: const EdgeInsets.only(
+                        left: 0, right: 0, top: 4, bottom: 12),
+                    collapsedShape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
                     backgroundColor: color.withValues(alpha: 0.04),
                     collapsedBackgroundColor: Colors.transparent,
-                    leading: Icon(Icons.groups, size: 20, color: color.withValues(alpha: 0.9)),
+                    leading: Icon(Icons.groups, size: 20,
+                        color: color.withValues(alpha: 0.9)),
                     title: Text(
                       e.key,
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color.withValues(alpha: 0.9)),
+                      style: TextStyle(fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: color.withValues(alpha: 0.9)),
                     ),
                     trailing: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
-                      child: Text('$count', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(color: color.withValues(
+                          alpha: 0.2), borderRadius: BorderRadius.circular(12)),
+                      child: Text('$count', style: TextStyle(fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: color)),
                     ),
                     children: [
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
-                        children: e.value.map((emp) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: color.withValues(alpha: 0.25)),
-                            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 2, offset: const Offset(0, 1))],
-                          ),
-                          child: Text(emp.nom, style: TextStyle(fontSize: 13, color: Colors.grey[800])),
-                        )).toList(),
+                        children: e.value.map((emp) =>
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                    color: color.withValues(alpha: 0.25)),
+                                boxShadow: [
+                                  BoxShadow(color: Colors.black.withValues(
+                                      alpha: 0.06),
+                                      blurRadius: 2,
+                                      offset: const Offset(0, 1))
+                                ],
+                              ),
+                              child: Text(emp.nom, style: TextStyle(
+                                  fontSize: 13, color: Colors.grey[800])),
+                            )).toList(),
                       ),
                     ],
                   ),
