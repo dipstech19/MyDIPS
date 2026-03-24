@@ -35,7 +35,8 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       case DriverPointageStatus.absent:
         return AttendanceState.absent;
       case DriverPointageStatus.enVehicule:
-        return AttendanceState.notInVehicle;
+        // Legacy value treated as present.
+        return AttendanceState.present;
       case DriverPointageStatus.unset:
         return AttendanceState.unmarked;
     }
@@ -47,9 +48,10 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
         return DriverPointageStatus.present;
       case AttendanceState.absent:
         return DriverPointageStatus.absent;
-      case AttendanceState.notInVehicle:
-        return DriverPointageStatus.enVehicule;
       case AttendanceState.unmarked:
+        return DriverPointageStatus.unset;
+      case AttendanceState.notInVehicle:
+        // Driver no longer uses "vient seul" (not in vehicle). Treat as unset.
         return DriverPointageStatus.unset;
     }
   }
@@ -118,11 +120,21 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final shiftForEquipe = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, today) : null;
     final config = getConfigForEquipeAndDate(selectedEquipe, today, shiftForEquipe);
     final now = DateTime.now();
-    final hoursStatus = getPointageHoursStatus(now, config);
-    final isWithinArrival = config.canMarkArrivalNow(now);
-    final isWithinDeparture = config.canMarkDepartureNow(now);
+    final ignoreTime = pointageProvider.ignoreTimeWindowsForTest;
+    final hoursStatus = ignoreTime ? PointageHoursStatus.open : getPointageHoursStatus(now, config);
+    final isWithinArrival = ignoreTime || config.canMarkArrivalNow(now);
+    final isWithinDeparture = ignoreTime || config.canMarkDepartureNow(now);
     final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
     final yesterday = today.subtract(const Duration(days: 1));
+
+    final canSendReport = workersDisplay.isNotEmpty && workersDisplay.every((e) {
+      final r = pointageProvider.getRecordForEmployee(e.id);
+      if (r == null) return false;
+      if (r.driverStatus == DriverPointageStatus.unset) return false;
+      final isPresent = r.driverStatus == DriverPointageStatus.present || r.driverStatus == DriverPointageStatus.enVehicule;
+      if (!isPresent) return true; // absent doesn't require departure
+      return r.arrivalMarkedAt != null && r.departureStatus == DepartureStatus.finished;
+    });
 
     Widget buildBody(PointageRecord? Function(String)? getRecordOverride) {
       return Directionality(
@@ -143,6 +155,31 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             ),
             const SizedBox(height: 12),
             _PointageHoursBanner(context: context, status: hoursStatus, config: config),
+            const SizedBox(height: 10),
+            Material(
+              color: Colors.blueGrey.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.science_outlined, size: 20, color: Colors.blueGrey[700]),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Test créneaux (± 8h)',
+                        style: TextStyle(fontSize: 13, color: Colors.blueGrey[800]),
+                      ),
+                    ),
+                    Switch(
+                      value: pointageProvider.ignoreTimeWindowsForTest,
+                      onChanged: (v) => pointageProvider.setIgnoreTimeWindowsForTest(v),
+                      activeColor: Colors.blueGrey,
+                    ),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             if (mobile) _buildMobileChefSelector(context, teams),
             if (mobile) const SizedBox(height: 12),
@@ -217,11 +254,11 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                     final workersForExport = t.workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus != AttendanceStatus.training).toList();
                     final presentNames = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
-                      return s == AttendanceState.present || s == AttendanceState.notInVehicle;
+                      return s == AttendanceState.present;
                     }).map((e) => e.nom).toList();
                     final absentWorkers = workersForExport.where((e) {
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
-                      return s != AttendanceState.present && s != AttendanceState.notInVehicle;
+                      return s != AttendanceState.present;
                     }).toList();
                     final absentNames = absentWorkers.map((e) => e.nom).toList();
                     final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
@@ -260,7 +297,17 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 width: double.infinity,
                 child: PrimaryButton(
                   label: tr(context, 'send_report_btn'),
-                  onTap: isWithinArrival ? () => _sendReport(config) : null,
+                  onTap: (isWithinArrival && canSendReport) ? () => _sendReport(config) : () {
+                    if (!canSendReport && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+                          backgroundColor: Colors.orange,
+                          behavior: SnackBarBehavior.fixed,
+                        ),
+                      );
+                    }
+                  },
                 ),
               ),
             ),
@@ -357,7 +404,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 );
             final driverStatus = record.driverStatus;
             final state = _driverStatusToState(driverStatus);
-            final locked = record.driverLocked;
+            final locked = pointageProvider.isDriverLockedForEmployee(e.id);
             Widget chipsWidget;
             if (isWithinArrival) {
               chipsWidget = DriverStatusChips(
@@ -388,10 +435,12 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
               chipsWidget = _DepartureChips(
                 record: record,
                 config: pointageConfig,
-                onStillWorking: () async {
+                onStillWorking: (int? workedMinutesBeforeStop, String? incompleteShiftReason) async {
                   final ok = await pointageProvider.setDepartureStatus(
                     record: record,
                     status: DepartureStatus.stillWorking,
+                    workedMinutesBeforeStop: workedMinutesBeforeStop,
+                    incompleteShiftReason: incompleteShiftReason,
                     configOverride: pointageConfig,
                   );
                   if (!ok && context.mounted) {
@@ -413,7 +462,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                     );
                   }
                 },
-                stillLabel: tr(context, 'departure_still_working'),
+                stillLabel: 'N\'a pas terminé',
                 finishedLabel: tr(context, 'departure_finished'),
                 overtimeLabel: tr(context, 'overtime_minutes'),
                 overtimeHint: tr(context, 'overtime_minutes_hint'),
@@ -512,7 +561,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 class _DepartureChips extends StatelessWidget {
   final PointageRecord record;
   final PointageHoursConfig config;
-  final VoidCallback onStillWorking;
+  final void Function(int? workedMinutesBeforeStop, String? incompleteShiftReason) onStillWorking;
   final void Function(int? overtimeMinutes) onFinished;
   final String stillLabel;
   final String finishedLabel;
@@ -541,7 +590,56 @@ class _DepartureChips extends StatelessWidget {
         FilterChip(
           label: Text(stillLabel, style: const TextStyle(fontSize: 12)),
           selected: isStill,
-          onSelected: (_) => onStillWorking(),
+          onSelected: (_) async {
+            final workedHoursCtrl = TextEditingController();
+            final reasonCtrl = TextEditingController();
+            final data = await showDialog<({int? workedMinutes, String? reason})>(
+              context: context,
+              builder: (ctx) {
+                return AlertDialog(
+                  title: Text(stillLabel),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: workedHoursCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Heures travaillées',
+                          hintText: 'Ex: 5.5',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: reasonCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Raison (optionnel)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
+                        final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
+                        final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
+                        Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
+                      },
+                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                    ),
+                  ],
+                );
+              },
+            );
+            onStillWorking(data?.workedMinutes, data?.reason);
+          },
         ),
         FilterChip(
           label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),

@@ -11,7 +11,9 @@ class AuthProvider extends ChangeNotifier {
   bool get isDirecteur => _currentUser?.role == UserRole.directeur;
   bool get isChefEquipe => _currentUser?.role == UserRole.chefEquipe;
   bool get isChauffeur => _currentUser?.role == UserRole.chauffeur;
+  bool get isGroupeResponsable => _currentUser?.role == UserRole.groupeResponsable;
   String? get equipeId => _currentUser?.equipeId;
+  String? get groupeId => _currentUser?.groupeId;
 
   /// تسجيل الدخول — ثابت ثم سائقين ثم شافات (بالايميل)
   Future<bool> login(String usernameOrEmail, String password) async {
@@ -132,6 +134,35 @@ class AuthProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('AuthProvider: Error chef login: $e');
+    }
+
+    // 4. مسؤول مجموعة (Groupe) من Firebase (email + mot de passe) — يظهر له groupe فقط
+    try {
+      final email = input.toLowerCase();
+      final snap = await FirebaseFirestore.instance
+          .collection('groupe_comptes')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) {
+        final data = snap.docs.first.data();
+        if ((data['password'] as String? ?? '') == pwd && (data['actif'] as bool? ?? false)) {
+          final id = snap.docs.first.id;
+          final gid = data['groupeId'] as String? ?? '';
+          _currentUser = AppUser(
+            id: id,
+            nom: data['nom'] as String? ?? 'Responsable',
+            username: data['email'] as String? ?? email,
+            password: data['password'] as String? ?? '',
+            role: UserRole.groupeResponsable,
+            groupeId: gid.isNotEmpty ? gid : null,
+          );
+          notifyListeners();
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('AuthProvider: Error groupe login: $e');
     }
 
     return false;

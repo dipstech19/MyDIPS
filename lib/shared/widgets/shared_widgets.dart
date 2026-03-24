@@ -132,6 +132,116 @@ class InfoBanner extends StatelessWidget {
 
 enum AttendanceState { unmarked, present, absent, notInVehicle }
 
+/// Worker card: avatar, name, CIN, and one toggle (unmarked → present → absent → unmarked)
+class WorkerTile extends StatelessWidget {
+  final String name;
+  final String cin;
+  final AttendanceState state;
+  final ValueChanged<AttendanceState> onStateChanged;
+
+  const WorkerTile({
+    super.key,
+    required this.name,
+    required this.cin,
+    required this.state,
+    required this.onStateChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            AvatarCircle(letter: name.isNotEmpty ? name.substring(0, 1) : '?', color: AppColors.accent),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('CIN: $cin', style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ],
+              ),
+            ),
+            _ToggleButton(state: state, onTap: () {
+              switch (state) {
+                case AttendanceState.unmarked:
+                  onStateChanged(AttendanceState.present);
+                  break;
+                case AttendanceState.present:
+                  onStateChanged(AttendanceState.absent);
+                  break;
+                case AttendanceState.absent:
+                case AttendanceState.notInVehicle:
+                  onStateChanged(AttendanceState.unmarked);
+                  break;
+              }
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Reusable attendance toggle: unmarked → present → absent → unmarked
+class AttendanceToggleButton extends StatelessWidget {
+  final AttendanceState state;
+  final VoidCallback onTap;
+
+  const AttendanceToggleButton({super.key, required this.state, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    Color bgColor;
+    IconData icon;
+    switch (state) {
+      case AttendanceState.unmarked:
+        bgColor = AppColors.border;
+        icon = Icons.circle_outlined;
+        break;
+      case AttendanceState.present:
+        bgColor = AppColors.green;
+        icon = Icons.check;
+        break;
+      case AttendanceState.absent:
+        bgColor = AppColors.red;
+        icon = Icons.close;
+        break;
+      case AttendanceState.notInVehicle:
+        bgColor = AppColors.yellow;
+        icon = Icons.directions_car;
+        break;
+    }
+    return Material(
+      color: bgColor,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(icon, color: Colors.white, size: 24),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToggleButton extends StatelessWidget {
+  final AttendanceState state;
+  final VoidCallback onTap;
+
+  const _ToggleButton({required this.state, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => AttendanceToggleButton(state: state, onTap: onTap);
+}
 class _StatusChip extends StatelessWidget {
   final String label;
   final IconData icon;

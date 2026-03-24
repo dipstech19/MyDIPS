@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/document_model.dart';
 import '../models/employe_model.dart';
 
@@ -23,6 +24,45 @@ class _DocumentsTabState extends State<DocumentsTab> {
   List<Document> get _filtered => _filterCat == null
       ? _docs
       : _docs.where((d) => d.categorie == _filterCat).toList();
+
+  Future<void> _downloadDocument(Document doc) async {
+    final raw = doc.path.trim();
+    if (raw.isEmpty || raw == '/simulated/path') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Aucun lien de téléchargement disponible pour ce document.'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+      return;
+    }
+
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lien invalide: ${doc.nom}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+      return;
+    }
+
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Impossible d\'ouvrir le document: ${doc.nom}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
+    }
+  }
 
   void _addDoc(DocCategorie categorie) {
     final now = DateTime.now();
@@ -201,7 +241,7 @@ class _DocumentsTabState extends State<DocumentsTab> {
                       icon: const Icon(Icons.download, size: 18),
                       color: Colors.blue,
                       tooltip: 'Télécharger',
-                      onPressed: () {},
+                      onPressed: () => _downloadDocument(doc),
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, size: 18),

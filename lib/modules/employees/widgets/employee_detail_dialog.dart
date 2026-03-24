@@ -371,30 +371,17 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
             children: [
               Text(tr(context, 'employee_presence_leave_title'), style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
               const SizedBox(height: 10),
-              _row(
-                context,
-                tr(context, 'employee_leave_initial'),
-                Text(
-                  hasStart ? _formatLeave(leaveAcquired) : '—',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                ),
-              ),
-              _row(
-                context,
-                tr(context, 'employee_leave_days_taken'),
-                Text(
-                  _formatLeave(taken),
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                ),
-              ),
-              _row(
-                context,
-                tr(context, 'employee_leave_days_available'),
-                Text(
-                  hasStart ? _formatLeave(available) : '—',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green.shade700),
-                ),
-              ),
+              _row(context, tr(context, 'employee_days_present'), hasStart
+                  ? _PresentDaysFuture(employeId: employe.id, start: start)
+                  : const Text('—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              _row(context, tr(context, 'employee_leave_days_acquired'),
+                  Text(hasStart ? _formatLeave(leaveAcquired) : '—', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              _row(context, tr(context, 'employee_leave_days_taken'),
+                  Text(_formatLeave(taken), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              _row(context, tr(context, 'employee_leave_days_available'),
+                  Text(hasStart ? _formatLeave(available) : '—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green.shade700))),
+              const SizedBox(height: 6),
+              Text(tr(context, 'employee_leave_rule'), style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               if (isDirecteur && hasStart) ...[
                 const SizedBox(height: 12),
                 const Divider(height: 1),

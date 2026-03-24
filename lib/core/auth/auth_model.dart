@@ -1,4 +1,4 @@
-enum UserRole { directeur, chefEquipe, chauffeur }
+enum UserRole { directeur, chefEquipe, chauffeur, groupeResponsable }
 
 class AppUser {
   final String id;
@@ -7,6 +7,7 @@ class AppUser {
   final String password;
   final UserRole role;
   final String? equipeId;
+  final String? groupeId;
   final String? photoUrl;
   final List<String>? siteIds;
 
@@ -17,6 +18,7 @@ class AppUser {
     required this.password,
     required this.role,
     this.equipeId,
+    this.groupeId,
     this.photoUrl,
     this.siteIds,
   });

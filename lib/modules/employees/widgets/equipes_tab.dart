@@ -3,14 +3,16 @@ import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
 import '../../../core/site/site_provider.dart';
+import '../../groupes/groupes_provider.dart';
 import '../departements_provider.dart';
+import '../postes_provider.dart';
 import '../models/equipe_model.dart';
 import '../models/employe_model.dart';
 
 class EquipesTab extends StatefulWidget {
   final List<Equipe> equipes;
   final List<Employe> employes;
-  final bool isDirecteur; // ← زيد
+  final bool isDirecteur;
   final Function(Equipe) onAddEquipe;
   final Function(Equipe) onDeleteEquipe;
 
@@ -18,7 +20,7 @@ class EquipesTab extends StatefulWidget {
     super.key,
     required this.equipes,
     required this.employes,
-    required this.isDirecteur, // ← زيد
+    required this.isDirecteur,
     required this.onAddEquipe,
     required this.onDeleteEquipe,
   });
@@ -30,14 +32,155 @@ class EquipesTab extends StatefulWidget {
 class _EquipesTabState extends State<EquipesTab> {
   String? _expandedId;
 
-  /// جميع الموظفين المستعملين حالياً في أي فريق (كشاف أو كعضو)
-  Set<String> _usedEmployeeIds() {
-    final set = <String>{};
-    for (final eq in widget.equipes) {
-      if (eq.chefId.isNotEmpty) set.add(eq.chefId);
-      set.addAll(eq.membreIds);
+  List<Employe> _unassignedOperateurs() {
+    final used = _usedEmployeeIds();
+    final list = widget.employes
+        .where((e) =>
+            !used.contains(e.id) &&
+            !_isChefEquipePoste(e.poste) &&
+            _isOperateurProcessPoste(e.poste))
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+    return list;
+  }
+
+  void _showAssignUnassignedDialog(BuildContext context) {
+    final unassigned = _unassignedOperateurs();
+    if (unassigned.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aucun Operateur Process sans équipe.')),
+      );
+      return;
     }
-    return set;
+    if (widget.equipes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Créez une équipe d\'abord.')),
+      );
+      return;
+    }
+
+    String selectedEquipeId = widget.equipes.first.id;
+    final selectedIds = <String>{for (final e in unassigned) e.id};
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setStateD) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.group_add, color: Color(0xFF1565C0)),
+              SizedBox(width: 10),
+              Text('Affecter employés sans équipe'),
+            ],
+          ),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedEquipeId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Équipe cible *',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                  ),
+                  items: widget.equipes
+                      .map((eq) => DropdownMenuItem(
+                            value: eq.id,
+                            child: Text(eq.nom, overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setStateD(() => selectedEquipeId = v ?? widget.equipes.first.id),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${unassigned.length} Operateur Process sans équipe',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => setStateD(() {
+                        selectedIds
+                          ..clear()
+                          ..addAll(unassigned.map((e) => e.id));
+                      }),
+                      child: const Text('Tout sélectionner'),
+                    ),
+                    TextButton(
+                      onPressed: () => setStateD(() => selectedIds.clear()),
+                      child: const Text('Tout désélectionner'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: unassigned.length,
+                    itemBuilder: (context, i) {
+                      final e = unassigned[i];
+                      final checked = selectedIds.contains(e.id);
+                      return CheckboxListTile(
+                        value: checked,
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(e.nom, overflow: TextOverflow.ellipsis),
+                        subtitle: Text(e.poste, overflow: TextOverflow.ellipsis),
+                        onChanged: (v) => setStateD(() {
+                          if (v == true) {
+                            selectedIds.add(e.id);
+                          } else {
+                            selectedIds.remove(e.id);
+                          }
+                        }),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white),
+              onPressed: () {
+                if (selectedIds.isEmpty) return;
+                final target = widget.equipes.where((e) => e.id == selectedEquipeId).toList();
+                if (target.isEmpty) return;
+                final eq = target.first;
+                final merged = {...eq.membreIds, ...selectedIds}.toList();
+                widget.onAddEquipe(eq.copyWith(membreIds: merged));
+                Navigator.pop(ctx);
+              },
+              child: const Text('Affecter'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isChefEquipePoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    // Accept common variants (with/without apostrophe/accents).
+    return p == "chef d'équipe" || p == "chef d’equipe" || p == "chef d'equipe" || p == "chef d equipe";
+  }
+
+  bool _isOperateurProcessPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    // Matches: "Operateur Process" (with/without accents / extra spaces).
+    return p == 'operateur process' ||
+        p == 'opérateur process' ||
+        p == 'operateur  process' ||
+        p == 'opérateur  process';
   }
 
   String _getNom(String id) {
@@ -68,15 +211,25 @@ class _EquipesTabState extends State<EquipesTab> {
                 style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             // ✅ زر Nouvelle Équipe فقط للـ Directeur
             if (widget.isDirecteur)
-              ElevatedButton.icon(
-                onPressed: () => _showAddEquipeDialog(context),
-                icon: const Icon(Icons.group_add, size: 18),
-                label: const Text('Nouvelle Équipe'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                ),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _showAssignUnassignedDialog(context),
+                    icon: const Icon(Icons.group_work_outlined, size: 18),
+                    label: const Text('Affecter sans équipe'),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    onPressed: () => _showAddEquipeDialog(context),
+                    icon: const Icon(Icons.group_add, size: 18),
+                    label: const Text('Nouvelle Équipe'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1565C0),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    ),
+                  ),
+                ],
               ),
           ],
         ),
@@ -156,23 +309,36 @@ class _EquipesTabState extends State<EquipesTab> {
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15)),
                                   const SizedBox(height: 4),
-                                  Row(children: [
-                                    const Icon(Icons.store,
-                                        size: 13, color: Colors.grey),
-                                    const SizedBox(width: 4),
-                                    Text(eq.magasin,
-                                        style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontSize: 12)),
-                                    const SizedBox(width: 12),
-                                    const Icon(Icons.person,
-                                        size: 13, color: Colors.grey),
-                                    const SizedBox(width: 4),
-                                    Text('Chef: ${_getNom(eq.chefId)}',
-                                        style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontSize: 12)),
-                                  ]),
+                                  Wrap(
+                                    spacing: 12,
+                                    runSpacing: 4,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.store, size: 13, color: Colors.grey),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            eq.magasin,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                          ),
+                                        ],
+                                      ),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.person, size: 13, color: Colors.grey),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Chef: ${_getNom(eq.chefId)}',
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -230,6 +396,8 @@ class _EquipesTabState extends State<EquipesTab> {
                                     color: Color(0xFF1565C0))),
                             const SizedBox(height: 8),
                             _membreCard(
+                              equipe: eq,
+                              employeId: eq.chefId,
                               nom: _getNom(eq.chefId),
                               poste: _getPoste(eq.chefId),
                               isChef: true,
@@ -258,28 +426,21 @@ class _EquipesTabState extends State<EquipesTab> {
                             ),
                             const SizedBox(height: 8),
                             membres.isEmpty
-                                ? Text(
-                                    'Aucun membre',
-                                    style: TextStyle(
-                                        color: Colors.grey[400], fontSize: 13),
-                                  )
+                                ? Text('Aucun membre',
+                                style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 13))
                                 : Column(
-                                    children: membres
-                                        .map(
-                                          (m) => _membreCard(
-                                            nom: m.nom,
-                                            poste: m.poste,
-                                            isChef: false,
-                                            onRemove: (widget.isDirecteur ||
-                                                    eq.chefId ==
-                                                        _getCurrentUserId())
-                                                ? () => _removeMembre(
-                                                    eq, m.id)
-                                                : null,
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
+                            children: membres
+                                .map((m) => _membreCard(
+                                      equipe: eq,
+                                      employeId: m.id,
+                                      nom: m.nom,
+                                      poste: m.poste,
+                                      isChef: false,
+                                    ))
+                                .toList(),
+                            ),
                           ],
                         ),
                       ),
@@ -294,11 +455,19 @@ class _EquipesTabState extends State<EquipesTab> {
     );
   }
 
+  void _removeMembre(Equipe equipe, String employeId) {
+    final updated = equipe.copyWith(
+      membreIds: equipe.membreIds.where((id) => id != employeId).toList(),
+    );
+    widget.onAddEquipe(updated);
+  }
+
   Widget _membreCard({
+    required Equipe equipe,
+    required String employeId,
     required String nom,
     required String poste,
     required bool isChef,
-    VoidCallback? onRemove,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
@@ -343,6 +512,12 @@ class _EquipesTabState extends State<EquipesTab> {
               ],
             ),
           ),
+          if (!isChef && widget.isDirecteur)
+            IconButton(
+              tooltip: 'Retirer',
+              icon: Icon(Icons.remove_circle_outline, color: Colors.red[400], size: 20),
+              onPressed: () => _removeMembre(equipe, employeId),
+            ),
           if (isChef)
             Container(
               padding:
@@ -357,32 +532,40 @@ class _EquipesTabState extends State<EquipesTab> {
                       fontSize: 11,
                       fontWeight: FontWeight.bold)),
             ),
-          if (!isChef && onRemove != null) ...[
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              color: Colors.red[400],
-              tooltip: 'Retirer du groupe',
-              onPressed: onRemove,
-            ),
-          ],
         ],
       ),
     );
   }
 
   // DIALOG - Ajouter Équipe
+  Set<String> _usedEmployeeIds() {
+    final set = <String>{};
+    for (final eq in widget.equipes) {
+      if (eq.chefId.isNotEmpty) set.add(eq.chefId);
+      set.addAll(eq.membreIds);
+    }
+    // Also exclude employees already in any Groupe.
+    final groupes = context.read<GroupesProvider>().groupes;
+    for (final g in groupes) {
+      set.addAll(g.membreIds);
+    }
+    return set;
+  }
+
   void _showAddEquipeDialog(BuildContext context) {
     final nomCtrl = TextEditingController();
     final auth = context.read<AuthProvider>();
     final site = context.read<SiteProvider>();
-    final deptsProv = context.read<DepartementsProvider>();
+    final deptNames = context.read<DepartementsProvider>().departements.map((d) => d.nom).toList();
     final usedIds = _usedEmployeeIds();
-    final availableChefs = widget.employes.where((e) => !usedIds.contains(e.id)).toList();
+    final availableChefs = widget.employes
+        .where((e) => !usedIds.contains(e.id) && _isChefEquipePoste(e.poste))
+        .toList();
 
     if (availableChefs.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Aucun employé disponible pour être chef (tous déjà dans une équipe).')),
+        const SnackBar(
+            content: Text('Aucun "Chef d\'équipe" disponible (ou tous déjà dans une équipe).')),
       );
       return;
     }
@@ -393,7 +576,6 @@ class _EquipesTabState extends State<EquipesTab> {
         ? auth.currentUser!.allowedSiteIds!.first
         : (site.selectedSiteId ?? SiteId.jadida);
     if (selectedSiteId == SiteId.all) selectedSiteId = SiteId.jadida;
-    final deptNames = deptsProv.departements.map((d) => d.nom).toList();
     String selectedDepartement = deptNames.isNotEmpty ? deptNames.first : '';
     String selectedChefId = availableChefs.first.id;
 
@@ -401,8 +583,7 @@ class _EquipesTabState extends State<EquipesTab> {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setStateD) => AlertDialog(
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
               Icon(Icons.group_add, color: Color(0xFF1565C0)),
@@ -410,84 +591,71 @@ class _EquipesTabState extends State<EquipesTab> {
               Text('Nouvelle Équipe'),
             ],
           ),
-          content: Builder(
-            builder: (dialogContext) {
-              final screenWidth = MediaQuery.of(dialogContext).size.width;
-              final dialogWidth = screenWidth > 560 ? 520.0 : screenWidth - 40;
-              return SizedBox(
-                width: dialogWidth,
-                child: Column(
+          content: SizedBox(
+            width: 380,
+            child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Nom
                 TextFormField(
                   controller: nomCtrl,
                   decoration: InputDecoration(
                     labelText: 'Nom de l\'équipe *',
                     hintText: 'Ex: Équipe Ventes',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
                 ),
                 const SizedBox(height: 14),
-                // Site
                 DropdownButtonFormField<String>(
                   value: selectedSiteId,
+                  isExpanded: true,
                   decoration: InputDecoration(
-                    labelText: 'Site (الموقع) *',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                    labelText: 'Site *',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
                   items: [
-                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
-                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida), overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi), overflow: TextOverflow.ellipsis)),
                   ],
                   onChanged: (v) => setStateD(() => selectedSiteId = v ?? SiteId.jadida),
                 ),
                 const SizedBox(height: 14),
-                // Département
                 DropdownButtonFormField<String>(
-                  // إذا لم يكن هناك أي قسم، نجعل القيمة null لتفادي خطأ Dropdown
-                  value: deptNames.isEmpty ? null : selectedDepartement,
+                  value: deptNames.isEmpty ? '' : selectedDepartement,
+                  isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'Département *',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
-                  items: (deptNames.isEmpty ? <String>['—'] : deptNames)
-                      .map((d) => DropdownMenuItem(value: d == '—' ? null : d, child: Text(d)))
+                  items: (deptNames.isEmpty ? <String>[''] : deptNames)
+                      .map((d) => DropdownMenuItem(
+                            value: d,
+                            child: Text(d.isEmpty ? '—' : d, overflow: TextOverflow.ellipsis),
+                          ))
                       .toList(),
-                  onChanged: (v) => setStateD(() {
-                    if (v != null) {
-                      selectedDepartement = v;
-                    }
-                  }),
+                  onChanged: (v) => setStateD(() => selectedDepartement = v ?? ''),
                 ),
                 const SizedBox(height: 14),
-                // Chef
                 DropdownButtonFormField<String>(
                   value: selectedChefId,
+                  isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'Chef d\'équipe *',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     isDense: true,
                   ),
                   items: availableChefs
                       .map((e) => DropdownMenuItem(
-                      value: e.id,
-                      child: Text('${e.nom} (${e.poste})')))
+                            value: e.id,
+                            child: Text('${e.nom} (${e.poste})', overflow: TextOverflow.ellipsis),
+                          ))
                       .toList(),
-                  onChanged: (v) =>
-                      setStateD(() => selectedChefId = v!),
+                  onChanged: (v) => setStateD(() => selectedChefId = v!),
                 ),
               ],
             ),
-              );
-            },
           ),
           actions: [
             TextButton(
@@ -499,7 +667,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 if (nomCtrl.text.isNotEmpty && selectedChefId.isNotEmpty) {
                   widget.onAddEquipe(Equipe(
                     id: DateTime.now().millisecondsSinceEpoch.toString(),
-                    nom: nomCtrl.text,
+                    nom: nomCtrl.text.trim(),
                     magasin: selectedDepartement,
                     chefId: selectedChefId,
                     siteId: selectedSiteId,
@@ -519,36 +687,34 @@ class _EquipesTabState extends State<EquipesTab> {
     );
   }
 
-  void _removeMembre(Equipe eq, String membreId) {
-    final updated = eq.copyWith(
-      membreIds: eq.membreIds.where((id) => id != membreId).toList(),
-    );
-    widget.onAddEquipe(updated);
-  }
-
   // DIALOG - Ajouter Membre
   void _showAddMembreDialog(BuildContext context, Equipe eq) {
-    // فقط الموظفين اللي ليسوا في أي فريق آخر (لا كشيف ولا كعضو)
+    // كل عامل في équipe واحدة فقط:
+    // - لا يظهر إذا كان chef أو عضو في أي équipe
+    // - عند إضافة عضو: نسمح باختيار poste ثم نعرض فقط هذا poste
     final usedIds = _usedEmployeeIds();
-    final disponibles = widget.employes
-        .where((e) {
-          if (usedIds.contains(e.id)) return false;
-          final posteLower = e.poste.toLowerCase();
-          // لا نسمح للـ Chef d'équipe أن يكون تحت Chef آخر
-          if (posteLower.contains('chef')) return false;
-          // نسمح فقط بالـ Operateur Process كأعضاء تحت الشاف (حسب طلبك)
-          return posteLower.contains('operateur process');
-        })
-        .toList();
-
-    if (disponibles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tous les employés sont déjà dans une équipe')),
-      );
-      return;
+    // Prefer postes from Paramètres (Firestore). If empty, fallback to distinct postes from employees.
+    // IMPORTANT: do not use context.watch here (outside build); it can break dialog interaction.
+    final postesProv = context.read<PostesProvider>();
+    final posteNamesFromConfig = postesProv.postes.map((p) => p.nom).where((p) => p.trim().isNotEmpty).toList()..sort();
+    final posteNamesFallback = widget.employes
+        .map((e) => e.poste.trim())
+        .where((p) => p.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final posteNames = posteNamesFromConfig.isNotEmpty ? posteNamesFromConfig : posteNamesFallback;
+    String? selectedPoste = posteNames.isNotEmpty ? posteNames.first : null;
+    List<Employe> disponiblesFor(String? poste) {
+      final p = (poste ?? '').trim().toLowerCase();
+      final list = widget.employes
+          .where((e) => !usedIds.contains(e.id) && e.poste.trim().toLowerCase() == p)
+          .toList()
+        ..sort((a, b) => a.nom.compareTo(b.nom));
+      return list;
     }
-
-    String selectedId = disponibles.first.id;
+    var disponibles = disponiblesFor(selectedPoste);
+    String? selectedId = disponibles.isNotEmpty ? disponibles.first.id : null;
 
     showDialog(
       context: context,
@@ -564,38 +730,66 @@ class _EquipesTabState extends State<EquipesTab> {
             ],
           ),
           content: SizedBox(
-            width: 350,
-            child: DropdownButtonFormField<String>(
-              value: selectedId,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: 'Choisir un employé',
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8)),
-              ),
-              items: disponibles
-                  .map((e) => DropdownMenuItem(
-                  value: e.id,
-                  child: Text(
-                    '${e.nom} (${e.poste})',
-                    overflow: TextOverflow.ellipsis,
-                  )))
-                  .toList(),
-              onChanged: (v) => setStateD(() => selectedId = v!),
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedPoste,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Poste',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  items: posteNames
+                      .map((p) => DropdownMenuItem<String>(value: p, child: Text(p, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (v) {
+                    setStateD(() {
+                      selectedPoste = v;
+                      disponibles = disponiblesFor(selectedPoste);
+                      selectedId = disponibles.isNotEmpty ? disponibles.first.id : null;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selectedId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Choisir un employé',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  items: disponibles
+                      .map((e) => DropdownMenuItem<String>(
+                            value: e.id,
+                            child: Text('${e.nom} (${e.poste})', overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setStateD(() => selectedId = v),
+                ),
+                if (disponibles.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text('Aucun employé disponible pour ce poste.', style: TextStyle(color: Colors.grey[700])),
+                  ),
+              ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(ctx),
               child: const Text('Annuler'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: selectedId == null
+                  ? null
+                  : () {
                 final updated = eq.copyWith(
-                  membreIds: [...eq.membreIds, selectedId],
+                  membreIds: [...eq.membreIds, selectedId!],
                 );
                 widget.onAddEquipe(updated);
-                Navigator.pop(context);
+                Navigator.pop(ctx);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF1565C0),

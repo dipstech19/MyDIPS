@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -19,6 +20,33 @@ class ShiftsPage extends StatefulWidget {
 }
 
 class _ShiftsPageState extends State<ShiftsPage> {
+  bool _loadingTooLong = false;
+  Timer? _loadTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLoadTimer();
+  }
+
+  void _startLoadTimer() {
+    _loadTimer?.cancel();
+    _loadingTooLong = false;
+    _loadTimer = Timer(const Duration(seconds: 10), () {
+      if (!mounted) return;
+      final shifts = context.read<ShiftsProvider>();
+      if (shifts.loading) {
+        setState(() => _loadingTooLong = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _loadTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final locale = context.watch<LocaleProvider>();
@@ -62,7 +90,31 @@ class _ShiftsPageState extends State<ShiftsPage> {
             ),
             SizedBox(height: 24),
             if (shifts.loading)
-              Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: _loadingTooLong
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.wifi_off, size: 48, color: Colors.grey.shade400),
+                            const SizedBox(height: 12),
+                            Text('Connexion lente ou indisponible.',
+                                style: TextStyle(color: Colors.grey.shade600)),
+                            const SizedBox(height: 16),
+                            FilledButton.icon(
+                              onPressed: () {
+                                _startLoadTimer();
+                                context.read<ShiftsProvider>().refresh();
+                              },
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('Réessayer'),
+                            ),
+                          ],
+                        )
+                      : const CircularProgressIndicator(),
+                ),
+              )
             else if (shifts.error != null)
               Material(
                 color: Colors.red.shade50,
@@ -73,6 +125,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                     Icon(Icons.error_outline, color: Colors.red.shade700),
                     SizedBox(width: 12),
                     Expanded(child: Text(shifts.error!, style: TextStyle(color: Colors.red.shade900))),
+                    SizedBox(width: 12),
+                    TextButton.icon(
+                      onPressed: () => context.read<ShiftsProvider>().refresh(),
+                      icon: Icon(Icons.refresh, size: 18),
+                      label: Text('Réessayer'),
+                    ),
                   ]),
                 ),
               )

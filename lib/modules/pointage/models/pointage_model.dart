@@ -114,6 +114,27 @@ class PointageRecord {
   /// سبب الغياب (من الشاف أو الأدمن عند تسجيل غائب)
   final String? absenceReason;
 
+  /// هل هذا سجل Renfort (موظف محوَّل مؤقتاً لفريق آخر)؟
+  final bool tempAssigned;
+  /// معرّف الفريق الأصلي عند التحويل المؤقت
+  final String? originalEquipeId;
+
+  /// حالة الشاف للساعات الإضافية (نظام Renfort القديم — محتفظ به للتوافق)
+  final ChefPointageStatus overtimeChefStatus;
+  final String? overtimeMarkedByChefId;
+  final DateTime? overtimeArrivalMarkedAt;
+
+  /// وقت بداية/نهاية التكوين
+  final DateTime? trainingStartAt;
+  final DateTime? trainingEndAt;
+
+  /// سبب الشيفت الناقص ودقائق العمل الفعلية
+  final String? incompleteShiftReason;
+  final int? workedMinutesBeforeStop;
+
+  /// تجاوز الشيفت للسجل الفردي (مثلاً عند Renfort)
+  final String? shiftOverride;
+
   PointageRecord({
     required this.id,
     required this.employeId,
@@ -141,6 +162,16 @@ class PointageRecord {
     this.overtimeTargetEquipeId,
     this.overtimeTargetEquipeName,
     this.absenceReason,
+    this.tempAssigned = false,
+    this.originalEquipeId,
+    this.overtimeChefStatus = ChefPointageStatus.unset,
+    this.overtimeMarkedByChefId,
+    this.overtimeArrivalMarkedAt,
+    this.trainingStartAt,
+    this.trainingEndAt,
+    this.incompleteShiftReason,
+    this.workedMinutesBeforeStop,
+    this.shiftOverride,
   });
 
   /// السائق لا يستطيع التعديل بعد الإرسال
@@ -217,6 +248,16 @@ class PointageRecord {
     'overtimeTargetEquipeId': overtimeTargetEquipeId,
     'overtimeTargetEquipeName': overtimeTargetEquipeName,
     'absenceReason': absenceReason,
+    'tempAssigned': tempAssigned,
+    'originalEquipeId': originalEquipeId,
+    'overtimeChefStatus': overtimeChefStatus.name,
+    'overtimeMarkedByChefId': overtimeMarkedByChefId,
+    'overtimeArrivalMarkedAt': overtimeArrivalMarkedAt?.toIso8601String(),
+    'trainingStartAt': trainingStartAt?.toIso8601String(),
+    'trainingEndAt': trainingEndAt?.toIso8601String(),
+    'incompleteShiftReason': incompleteShiftReason,
+    'workedMinutesBeforeStop': workedMinutesBeforeStop,
+    'shiftOverride': shiftOverride,
   };
 
   static DriverPointageStatus _driverFromMap(dynamic v) {
@@ -278,6 +319,19 @@ class PointageRecord {
     overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
     overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
     absenceReason: map['absenceReason'] as String?,
+    tempAssigned: map['tempAssigned'] as bool? ?? false,
+    originalEquipeId: map['originalEquipeId'] as String?,
+    overtimeChefStatus: ChefPointageStatus.values.firstWhere(
+      (e) => e.name == (map['overtimeChefStatus'] as String?),
+      orElse: () => ChefPointageStatus.unset,
+    ),
+    overtimeMarkedByChefId: map['overtimeMarkedByChefId'] as String?,
+    overtimeArrivalMarkedAt: map['overtimeArrivalMarkedAt'] != null ? DateTime.tryParse(map['overtimeArrivalMarkedAt']) : null,
+    trainingStartAt: map['trainingStartAt'] != null ? DateTime.tryParse(map['trainingStartAt']) : null,
+    trainingEndAt: map['trainingEndAt'] != null ? DateTime.tryParse(map['trainingEndAt']) : null,
+    incompleteShiftReason: map['incompleteShiftReason'] as String?,
+    workedMinutesBeforeStop: map['workedMinutesBeforeStop'] is int ? map['workedMinutesBeforeStop'] as int : null,
+    shiftOverride: map['shiftOverride'] as String?,
   );
 
   PointageRecord copyWith({
@@ -307,6 +361,16 @@ class PointageRecord {
     String? overtimeTargetEquipeId,
     String? overtimeTargetEquipeName,
     String? absenceReason,
+    bool? tempAssigned,
+    String? originalEquipeId,
+    ChefPointageStatus? overtimeChefStatus,
+    String? overtimeMarkedByChefId,
+    DateTime? overtimeArrivalMarkedAt,
+    DateTime? trainingStartAt,
+    DateTime? trainingEndAt,
+    String? incompleteShiftReason,
+    int? workedMinutesBeforeStop,
+    String? shiftOverride,
   }) => PointageRecord(
     id: id ?? this.id,
     employeId: employeId ?? this.employeId,
@@ -334,6 +398,16 @@ class PointageRecord {
     overtimeTargetEquipeId: overtimeTargetEquipeId ?? this.overtimeTargetEquipeId,
     overtimeTargetEquipeName: overtimeTargetEquipeName ?? this.overtimeTargetEquipeName,
     absenceReason: absenceReason ?? this.absenceReason,
+    tempAssigned: tempAssigned ?? this.tempAssigned,
+    originalEquipeId: originalEquipeId ?? this.originalEquipeId,
+    overtimeChefStatus: overtimeChefStatus ?? this.overtimeChefStatus,
+    overtimeMarkedByChefId: overtimeMarkedByChefId ?? this.overtimeMarkedByChefId,
+    overtimeArrivalMarkedAt: overtimeArrivalMarkedAt ?? this.overtimeArrivalMarkedAt,
+    trainingStartAt: trainingStartAt ?? this.trainingStartAt,
+    trainingEndAt: trainingEndAt ?? this.trainingEndAt,
+    incompleteShiftReason: incompleteShiftReason ?? this.incompleteShiftReason,
+    workedMinutesBeforeStop: workedMinutesBeforeStop ?? this.workedMinutesBeforeStop,
+    shiftOverride: shiftOverride ?? this.shiftOverride,
   );
 }
 
