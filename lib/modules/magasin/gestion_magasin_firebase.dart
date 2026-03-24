@@ -1,5 +1,3 @@
-import 'package:dips_managment/modules/magasin/gestion_magasin.dart'
-    hide Produit, Mouvement, LigneMouvement, VarianteStock;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,7 +6,6 @@ import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import 'magasin_provider.dart';
-import 'models/magasin_model.dart';
 
 const Color kBlue = Color(0xFF2563EB);
 const Color kBlueDk = Color(0xFF1D4ED8);

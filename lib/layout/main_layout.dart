@@ -495,7 +495,10 @@ class _MainLayoutState extends State<MainLayout> {
       case 7:
         return const ParametresPage();
       case 8:
-        return const DemandesPage();
+        final auth = context.read<AuthProvider>();
+        return DemandesPage(
+          role: auth.isDirecteur ? UserRole.administrateur : UserRole.demandeur,
+        );
       case 9:
         return const LogistiquePage();
       default:
