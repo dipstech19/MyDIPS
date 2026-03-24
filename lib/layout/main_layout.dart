@@ -16,7 +16,10 @@ import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
+import '../modules/groupes/groupe_pointage_page.dart';
 import '../modules/shifts/shifts_page.dart';
+import '../modules/overtime/overtime_page.dart';
+import '../modules/overtime/overtime_provider.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -29,13 +32,18 @@ class _MainLayoutState extends State<MainLayout> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  List<_NavItem> _navItems(
-      BuildContext context, bool isChauffeur, bool isChefEquipe) {
+  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés، Pointage، Shifts، Paramètres. مسؤول مجموعة: Pointage فقط.
+  List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
     if (isChauffeur) {
       return [
         _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
         _NavItem(
             icon: Icons.note_add, label: tr(context, 'nav_send_report')),
+      ];
+    }
+    if (isGroupe) {
+      return [
+        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
       ];
     }
     if (isChefEquipe) {
@@ -45,6 +53,8 @@ class _MainLayoutState extends State<MainLayout> {
         _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
         _NavItem(
             icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        _NavItem(
+            icon: Icons.more_time, label: 'Heures Sup.'),
         _NavItem(
             icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
         _NavItem(
@@ -56,6 +66,8 @@ class _MainLayoutState extends State<MainLayout> {
       _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
       _NavItem(
           icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+      _NavItem(
+          icon: Icons.more_time, label: 'Heures Sup.'),
       _NavItem(
           icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
       _NavItem(
@@ -340,7 +352,8 @@ class _MainLayoutState extends State<MainLayout> {
     final auth = context.watch<AuthProvider>();
     final isChauffeur = auth.isChauffeur;
     final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
-    final items = _navItems(context, isChauffeur, isChefEquipe);
+    final isGroupe = auth.isGroupeResponsable;
+    final items = _navItems(context, isChauffeur, isChefEquipe, isGroupe);
     final mobile = isMobile(context);
 
     // Clamp index in case item list changes between role switches
@@ -372,10 +385,14 @@ class _MainLayoutState extends State<MainLayout> {
             ),
           ),
         ),
-        // ── NO BottomNavigationBar — sidebar/drawer only ───────────────────
-        body: SafeArea(
-          child: _buildPage(
-              context, safeIndex, isChauffeur, isChefEquipe, auth),
+        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe)),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _selectedIndex.clamp(0, items.length - 1),
+          onTap: (i) => setState(() => _selectedIndex = i),
+          selectedItemColor: const Color(0xFF1565C0),
+          unselectedItemColor: Colors.grey,
+          type: BottomNavigationBarType.fixed,
+          items: items.map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label)).toList(),
         ),
       );
     }
@@ -386,8 +403,12 @@ class _MainLayoutState extends State<MainLayout> {
         children: [
           _buildSidebarContent(context, auth, items),
           Expanded(
-            child: _buildPage(
-                context, safeIndex, isChauffeur, isChefEquipe, auth),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: 1200),
+                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe),
+              ),
+            ),
           ),
         ],
       ),
@@ -423,23 +444,17 @@ class _MainLayoutState extends State<MainLayout> {
     );
   }
 
-  Widget _buildPage(BuildContext context, int index, bool isChauffeur,
-      bool isChefEquipe, AuthProvider auth) {
-    final userRole = (auth.isDirecteur || auth.isChefEquipe)
-        ? UserRole.administrateur
-        : UserRole.demandeur;
-
+  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
+    final auth = context.read<AuthProvider>();
+    final userRole = (auth.isDirecteur || auth.isChefEquipe) ? UserRole.administrateur : UserRole.demandeur;
     if (isChauffeur) {
-      switch (index) {
-        case 0:
-          return const DriverPointagePage();
-        case 1:
-          return const ReportPage();
-        default:
-          return const DriverPointagePage();
-      }
+      if (index == 0) return const DriverPointagePage();
+      if (index == 1) return const ReportPage();
+      return const DriverPointagePage();
     }
-
+    if (isGroupe) {
+      return const GroupePointagePage();
+    }
     if (isChefEquipe) {
       switch (index) {
         case 0:
@@ -449,8 +464,10 @@ class _MainLayoutState extends State<MainLayout> {
         case 2:
           return const PointagePage();
         case 3:
-          return const ShiftsPage();
+          return const OvertimePage();
         case 4:
+          return const ShiftsPage();
+        case 5:
           return const ParametresPage();
         default:
           return const _DashboardPage();
@@ -465,20 +482,22 @@ class _MainLayoutState extends State<MainLayout> {
       case 2:
         return const PointagePage();
       case 3:
-        return const ShiftsPage();
+        return const OvertimePage();
       case 4:
-        return const GestionMagasinPage();
+        return const ShiftsPage();
       case 5:
+        return const GestionMagasinPage();
+      case 6:
         return const _PlaceholderPage(
           icon: Icons.bar_chart,
           title: 'Rapports',
           subtitle: 'Bientôt disponible',
         );
-      case 6:
-        return const ParametresPage();
       case 7:
-        return DemandesPage(role: userRole);
+        return const ParametresPage();
       case 8:
+        return DemandesPage(role: userRole);
+      case 9:
         return const LogistiquePage();
       default:
         return const _PlaceholderPage(

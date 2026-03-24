@@ -1,104 +1,134 @@
 import '../employees/models/equipe_model.dart';
+import '../shifts/models/shift_models.dart';
 
-/// إعداد ساعات البوانتاج (دخول/خروج) — إما افتراضي أو مخصص للفريق
+/// أوقات فتح وإقفال البوانتاج: لا يمكن التسجيل خارج هذا النافذة.
+/// بعد وقت الإقفال يُعتبر من لم يسجّل غائباً.
 class PointageHoursConfig {
+  PointageHoursConfig({
+    this.startHour = 6,
+    this.startMinute = 0,
+    this.endHour = 17,
+    this.endMinute = 0,
+  });
+
   final int startHour;
   final int startMinute;
   final int endHour;
   final int endMinute;
-  final int departureEarliestHour;
-  final int departureEarliestMinute;
-  final int departureLatestHour;
-  final int departureLatestMinute;
 
-  const PointageHoursConfig({
-    this.startHour = 6,
-    this.startMinute = 0,
-    this.endHour = 22,
-    this.endMinute = 0,
-    this.departureEarliestHour = 14,
-    this.departureEarliestMinute = 0,
-    this.departureLatestHour = 23,
-    this.departureLatestMinute = 0,
-  });
+  static PointageHoursConfig get instance => _instance ??= PointageHoursConfig();
+  static PointageHoursConfig? _instance;
 
-  static const PointageHoursConfig instance = PointageHoursConfig();
+  int get _startMinutes => startHour * 60 + startMinute;
+  int get _endMinutes => endHour * 60 + endMinute;
+  /// نافذة الوصول: من بداية العمل حتى بداية العمل + 1 ساعة
+  int get _arrivalEndMinutes => _startMinutes + 60;
+  /// نافذة الخروج: من نهاية العمل حتى نهاية العمل + 1 ساعة
+  int get _departureStartMinutes => _endMinutes;
+  int get _departureEndMinutes => _endMinutes + 60;
 
-  /// يمكن تسجيل الدخول الآن؟
-  /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
-  bool canMarkArrivalNow(DateTime now) {
-    return true;
+  static int _minutesOfDay(DateTime d) => d.hour * 60 + d.minute;
+
+  /// نافذة نقطاج الوصول (من بداية العمل إلى بداية + 1 ساعة)
+  bool isWithinArrivalWindow(DateTime now) {
+    final m = _minutesOfDay(now);
+    return m >= _startMinutes && m < _arrivalEndMinutes;
   }
 
-  /// يمكن تسجيل الخروج الآن؟
-  /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
-  bool canMarkDepartureNow(DateTime now) {
-    return true;
+  /// نافذة نقطاج الخروج (من نهاية العمل إلى نهاية + 1 ساعة)
+  bool isWithinDepartureWindow(DateTime now) {
+    final m = _minutesOfDay(now);
+    return m >= _departureStartMinutes && m < _departureEndMinutes;
   }
 
-  /// هل الوقت الحالي ضمن نافذة الدخول (وليس نافذة الخروج فقط)؟
-  bool isWithinArrivalWindow(DateTime now) => canMarkArrivalNow(now);
-
-  /// وردية ليلية (بداية الوردية بعد 22:00 تقريباً)
-  bool get isNightShift => startHour >= 22;
-
-  /// وقت البداية منسّق (مثلاً "06:00")
-  String startTimeFormatted() {
-    return '${startHour.toString().padLeft(2, '0')}:${startMinute.toString().padLeft(2, '0')}';
+  /// هل يمكن تسجيل الحضور (وصل) الآن؟
+  bool canMarkArrivalNow(DateTime now, {Duration graceBefore = Duration.zero, Duration graceAfter = Duration.zero}) {
+    final m = _minutesOfDay(now);
+    final start = _startMinutes - graceBefore.inMinutes;
+    final end = _arrivalEndMinutes + graceAfter.inMinutes;
+    return m >= start && m < end;
   }
 
-  /// وقت النهاية منسّق (مثلاً "22:00")
-  String endTimeFormatted() {
-    return '${endHour.toString().padLeft(2, '0')}:${endMinute.toString().padLeft(2, '0')}';
+  /// هل يمكن تسجيل الخروج (لا يزال يعمل / انتهى) الآن؟
+  bool canMarkDepartureNow(DateTime now, {Duration graceBefore = Duration.zero, Duration graceAfter = Duration.zero}) {
+    final m = _minutesOfDay(now);
+    final start = _departureStartMinutes - graceBefore.inMinutes;
+    final end = _departureEndMinutes + graceAfter.inMinutes;
+    return m >= start && m < end;
   }
 
-  /// نافذة الخروج منسّقة (مثلاً "14:00 - 23:00")
-  String departureWindowFormatted() {
-    final earliest = '${departureEarliestHour.toString().padLeft(2, '0')}:${departureEarliestMinute.toString().padLeft(2, '0')}';
-    final latest = '${departureLatestHour.toString().padLeft(2, '0')}:${departureLatestMinute.toString().padLeft(2, '0')}';
-    return '$earliest - $latest';
-  }
+  /// هل الوقت الحالي ضمن أي نافذة (وصل أو خروج)؟
+  bool isWithinHours(DateTime now) =>
+      isWithinArrivalWindow(now) || isWithinDepartureWindow(now);
 
-  /// نافذة الدخول منسّقة للنص (مثلاً "06:00 - 22:00")
-  String arrivalWindowFormatted() {
-    final start = '${startHour.toString().padLeft(2, '0')}:${startMinute.toString().padLeft(2, '0')}';
-    final end = '${endHour.toString().padLeft(2, '0')}:${endMinute.toString().padLeft(2, '0')}';
-    return '$start - $end';
-  }
+  bool isBeforeOpening(DateTime now) =>
+      _minutesOfDay(now) < _startMinutes && _minutesOfDay(now) < _departureStartMinutes;
+
+  bool isAfterCutoff(DateTime now) =>
+      _minutesOfDay(now) >= _departureEndMinutes ||
+      (_minutesOfDay(now) >= _arrivalEndMinutes && _minutesOfDay(now) < _departureStartMinutes);
+
+  bool canMarkOrSubmitNow(DateTime now) => isWithinHours(now);
+
+  String startTimeFormatted() => '${startHour.toString().padLeft(2, '0')}:${startMinute.toString().padLeft(2, '0')}';
+  String endTimeFormatted() => '${endHour.toString().padLeft(2, '0')}:${endMinute.toString().padLeft(2, '0')}';
+  String arrivalWindowFormatted() => '${startTimeFormatted()} — ${((_arrivalEndMinutes ~/ 60) % 24).toString().padLeft(2, '0')}:${(_arrivalEndMinutes % 60).toString().padLeft(2, '0')}';
+  String departureWindowFormatted() => '${endTimeFormatted()} — ${((_departureEndMinutes ~/ 60) % 24).toString().padLeft(2, '0')}:${(_departureEndMinutes % 60).toString().padLeft(2, '0')}';
+
+  /// وردية ليلية (22→06): التقرير يُربط بيوم الدخول وليس يوم الخروج.
+  bool get isNightShift => startHour == 22 && endHour == 6;
 }
 
-/// حالة نافذة البوانتاج: مفتوحة | لم تُفتح بعد | مغلقة
-enum PointageHoursStatus { open, notYetOpen, closed }
-
-/// تاريخ البوانتاج الفعلي (قد يكون اليوم أو اليوم السابق لوردية ليلية)
+/// تاريخ البوانتاج لاستخدامه في الحفظ والتقارير: لوردية الليل قبل 07:00 = يوم الدخول (أمس).
 DateTime getPointageDateForConfig(PointageHoursConfig config, DateTime now) {
-  final t = now.hour * 60 + now.minute;
-  final start = config.startHour * 60 + config.startMinute;
-  // إذا كان قبل منتصف الليل وبعد منتصف الليل نعتبره اليوم السابق للوردية الليلية
-  if (t < 12 && start >= 22) {
-    return DateTime(now.year, now.month, now.day - 1);
+  final today = DateTime(now.year, now.month, now.day);
+  if (config.isNightShift && now.hour < 7) {
+    return today.subtract(const Duration(days: 1));
   }
-  return DateTime(now.year, now.month, now.day);
+  return today;
 }
 
-PointageHoursStatus getPointageHoursStatus(DateTime now, PointageHoursConfig config) {
-  // وضع الاختبار: نعتبر نافذة البوانتاج دائماً مفتوحة لعرض الشيفت فقط.
-  return PointageHoursStatus.open;
-}
-
-/// يُرجع إعداد الساعات للفريق والتاريخ والوردية (إن وُجدت)
-PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, dynamic shiftForEquipe) {
-  if (equipe != null && equipe.pointageStartHour != null && equipe.pointageEndHour != null) {
+/// إرجاع إعداد الساعات لفريق: إن وُجدت ساعات مخصّصة للفريق تُستخدم، وإلا الإعداد العام.
+PointageHoursConfig getConfigForEquipe(Equipe? equipe) {
+  if (equipe == null) return PointageHoursConfig.instance;
+  final sh = equipe.pointageStartHour;
+  final sm = equipe.pointageStartMinute;
+  final eh = equipe.pointageEndHour;
+  final em = equipe.pointageEndMinute;
+  if (sh != null && eh != null) {
     return PointageHoursConfig(
-      startHour: equipe.pointageStartHour!,
-      startMinute: equipe.pointageStartMinute ?? 0,
-      endHour: equipe.pointageEndHour!,
-      endMinute: equipe.pointageEndMinute ?? 0,
-      departureEarliestHour: (equipe.pointageStartHour! + 8).clamp(0, 23),
-      departureEarliestMinute: equipe.pointageStartMinute ?? 0,
-      departureLatestHour: 23,
-      departureLatestMinute: 59,
+      startHour: sh,
+      startMinute: sm ?? 0,
+      endHour: eh,
+      endMinute: em ?? 0,
     );
   }
   return PointageHoursConfig.instance;
+}
+
+/// إرجاع إعداد الساعات لفريق في تاريخ معيّن: إن وُجدت وردية (صباحية/مسائية/ليلية) تُستخدم أوقاتها الفعلية، وإلا إعداد الفريق أو العام.
+PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, ShiftType? shift) {
+  if (shift == ShiftType.morning) {
+    return PointageHoursConfig(startHour: 6, startMinute: 0, endHour: 14, endMinute: 0);
+  }
+  if (shift == ShiftType.evening) {
+    return PointageHoursConfig(startHour: 14, startMinute: 0, endHour: 22, endMinute: 0);
+  }
+  if (shift == ShiftType.night) {
+    return PointageHoursConfig(startHour: 22, startMinute: 0, endHour: 6, endMinute: 0);
+  }
+  return getConfigForEquipe(equipe);
+}
+
+enum PointageHoursStatus {
+  open,
+  notYetOpen,
+  closed,
+}
+
+PointageHoursStatus getPointageHoursStatus(DateTime now, [PointageHoursConfig? config]) {
+  final c = config ?? PointageHoursConfig.instance;
+  if (c.isWithinArrivalWindow(now) || c.isWithinDepartureWindow(now)) return PointageHoursStatus.open;
+  if (c.isAfterCutoff(now)) return PointageHoursStatus.closed;
+  return PointageHoursStatus.notYetOpen;
 }

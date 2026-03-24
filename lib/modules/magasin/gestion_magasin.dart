@@ -2463,44 +2463,47 @@ class _MouvFormState extends State<_MouvForm> {
                             color: sel ? _col : kBorder,
                             width: sel ? 2.0 : 1.5),
                       ),
-                      child: Column(
-                          mainAxisAlignment:
-                          MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('🏪',
-                                style: TextStyle(
-                                    fontSize: mobile ? 18 : 22)),
-                            const SizedBox(height: 4),
-                            Text('Mag. $mag',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800,
-                                    color: sel ? _col : kText),
-                                overflow: TextOverflow.ellipsis),
-                            Text('$prodCount prod.',
-                                style: _muted.copyWith(
-                                    fontSize: 9)),
-                            if (sel) ...[
-                              const SizedBox(height: 3),
-                              Container(
-                                  padding:
-                                  const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 2),
-                                  decoration: BoxDecoration(
-                                      color: _col,
-                                      borderRadius:
-                                      BorderRadius.circular(
-                                          20)),
-                                  child: const Text('✓',
-                                      style: TextStyle(
-                                          fontSize: 9,
-                                          fontWeight:
-                                          FontWeight.w700,
-                                          color: Colors.white))),
-                            ],
-                          ]),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Column(
+                            mainAxisAlignment:
+                            MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('🏪',
+                                  style: TextStyle(
+                                      fontSize: mobile ? 18 : 22)),
+                              const SizedBox(height: 4),
+                              Text('Mag. $mag',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      color: sel ? _col : kText),
+                                  overflow: TextOverflow.ellipsis),
+                              Text('$prodCount prod.',
+                                  style: _muted.copyWith(
+                                      fontSize: 9)),
+                              if (sel) ...[
+                                const SizedBox(height: 3),
+                                Container(
+                                    padding:
+                                    const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 2),
+                                    decoration: BoxDecoration(
+                                        color: _col,
+                                        borderRadius:
+                                        BorderRadius.circular(
+                                            20)),
+                                    child: const Text('✓',
+                                        style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight:
+                                            FontWeight.w700,
+                                            color: Colors.white))),
+                              ],
+                            ]),
+                      ),
                     ),
                   );
                 }).toList(),

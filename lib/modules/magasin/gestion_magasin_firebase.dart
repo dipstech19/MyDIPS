@@ -1,3 +1,4 @@
+import 'package:dips_managment/modules/magasin/gestion_magasin.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -5,8 +6,6 @@ import '../../core/auth/auth_provider.dart';
 import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
-import 'magasin_provider.dart';
-import 'models/magasin_model.dart';
 
 const Color kBlue = Color(0xFF2563EB);
 const Color kBlueDk = Color(0xFF1D4ED8);
@@ -473,7 +472,7 @@ class _EntreesPageState extends State<_EntreesPage> {
       .where((m) => (_cat == 'Toutes' || m.categorie == _cat) && (_mag == 'Tous' || m.magasin == _mag))
       .toList();
 
-  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte);
+  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte.toInt());
 
   @override
   Widget build(BuildContext context) {
@@ -591,7 +590,7 @@ class _SortiesPageState extends State<_SortiesPage> {
       .where((m) => (_cat == 'Toutes' || m.categorie == _cat) && (_mag == 'Tous' || m.magasin == _mag))
       .toList();
 
-  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte);
+  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte.toInt());
 
   @override
   Widget build(BuildContext context) {
