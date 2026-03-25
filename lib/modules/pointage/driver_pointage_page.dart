@@ -249,22 +249,41 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             if (teams.isNotEmpty)
               OutlinedButton.icon(
                 onPressed: () async {
-                  final equipes = <({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})>[];
+                  final equipes = <({
+                    String equipeName,
+                    List<String> presentNames,
+                    List<String> presentNoDepartureNames,
+                    List<String> absentNames,
+                    List<String?> absentReasons
+                  })>[];
                   for (final t in teams) {
                     final workersForExport = t.workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus != AttendanceStatus.training).toList();
-                    final presentNames = workersForExport.where((e) {
+
+                    final presentNames = <String>[];
+                    final presentNoDepartureNames = <String>[];
+                    final absentNames = <String>[];
+                    final absentReasons = <String?>[];
+
+                    for (final e in workersForExport) {
+                      final record = pointageProvider.getRecordForEmployee(e.id);
                       final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
-                      return s == AttendanceState.present;
-                    }).map((e) => e.nom).toList();
-                    final absentWorkers = workersForExport.where((e) {
-                      final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
-                      return s != AttendanceState.present;
-                    }).toList();
-                    final absentNames = absentWorkers.map((e) => e.nom).toList();
-                    final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
+
+                      if (s == AttendanceState.present) {
+                        // Sortie confirmée = P2 (sinon = seulement P1)
+                        if (record?.departureStatus == DepartureStatus.finished) {
+                          presentNames.add(e.nom);
+                        } else {
+                          presentNoDepartureNames.add(e.nom);
+                        }
+                      } else {
+                        absentNames.add(e.nom);
+                        absentReasons.add(record?.absenceReason);
+                      }
+                    }
                     equipes.add((
                       equipeName: t.equipeName,
                       presentNames: presentNames,
+                      presentNoDepartureNames: presentNoDepartureNames,
                       absentNames: absentNames,
                       absentReasons: absentReasons,
                     ));

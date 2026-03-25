@@ -12,11 +12,11 @@ import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
 import '../modules/magasin/gestion_magasin.dart';
 import '../modules/magasin/magasin_provider.dart';
-import '../modules/magasin/gestion_magasin_firebase.dart';
 import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
+import '../modules/pointage/formation_page.dart';
 import '../modules/groupes/groupe_pointage_page.dart';
 import '../modules/shifts/shifts_page.dart';
 import '../modules/overtime/overtime_page.dart';
@@ -71,6 +71,8 @@ class _MainLayoutState extends State<MainLayout> {
           icon: Icons.more_time, label: 'Heures Sup.'),
       _NavItem(
           icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+      _NavItem(
+          icon: Icons.school, label: 'Formation'),
       _NavItem(
           icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
       _NavItem(
@@ -485,21 +487,23 @@ class _MainLayoutState extends State<MainLayout> {
       case 4:
         return const ShiftsPage();
       case 5:
-        return GestionMagasinFirebase();
+        return const FormationPage();
       case 6:
+        return GestionMagasinPage();
+      case 7:
         return const _PlaceholderPage(
           icon: Icons.bar_chart,
           title: 'Rapports',
           subtitle: 'Bientôt disponible',
         );
-      case 7:
-        return const ParametresPage();
       case 8:
+        return const ParametresPage();
+      case 9:
         final auth = context.read<AuthProvider>();
         return DemandesPage(
           role: auth.isDirecteur ? UserRole.administrateur : UserRole.demandeur,
         );
-      case 9:
+      case 10:
         return const LogistiquePage();
       default:
         return const _PlaceholderPage(

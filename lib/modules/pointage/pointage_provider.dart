@@ -175,6 +175,12 @@ class PointageProvider extends ChangeNotifier {
     return _repo!.getPointageForDate(date);
   }
 
+  /// جلب كل سجلات البوانتاج لنطاق تاريخ (من start إلى end شامل) — للإحصائيات متعددة الأيام.
+  Future<List<PointageRecord>> getPointageForDateRange(DateTime start, DateTime end) async {
+    if (!_firebaseAvailable || _repo == null) return [];
+    return _repo!.getPointageForDateRange(start, end);
+  }
+
   /// سجل نقطاج لموظف في تاريخ معيّن (للتحقق من «في تكويني» في الحوار)
   Future<PointageRecord?> getRecordForEmployeeForDate(String employeId, DateTime date) async {
     if (!_firebaseAvailable || _repo == null) return null;

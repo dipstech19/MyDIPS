@@ -4,8 +4,8 @@
 // =============================================================================
 
 export 'gestion_magasin.dart' show
-    MagasinProvider,
-    Produit,
-    Mouvement,
-    VarianteProduit,
-    LigneMouvement;
+MagasinProvider,
+Produit,
+Mouvement,
+VarianteProduit,
+LigneMouvement;

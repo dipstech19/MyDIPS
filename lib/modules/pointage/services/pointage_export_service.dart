@@ -13,6 +13,7 @@ import '../../overtime/models/overtime_model.dart';
 
 class PointageExportRow {
   final String employeId;
+  final String employeCin;
   final String employeNom;
   final String equipeName;
   final int daysWorked;
@@ -32,6 +33,7 @@ class PointageExportRow {
 
   const PointageExportRow({
     required this.employeId,
+    required this.employeCin,
     required this.employeNom,
     required this.equipeName,
     required this.daysWorked,
@@ -172,7 +174,7 @@ class PointageExportService {
         children: [
           _presenceCell('#', header: true, align: pw.TextAlign.center),
           _presenceCell('Nom', header: true),
-          _presenceCell('Prés.', header: true, align: pw.TextAlign.center, maxLines: 1),
+          _presenceCell('Entré.', header: true, align: pw.TextAlign.center, maxLines: 1),
           _presenceCell('Sortie', header: true, align: pw.TextAlign.center, maxLines: 1),
           _presenceCell('Abs.', header: true, align: pw.TextAlign.center, maxLines: 1),
           _presenceCell('Raison absence', header: true, maxLines: 2),
@@ -187,8 +189,8 @@ class PointageExportService {
           children: [
             _presenceCell('$index', align: pw.TextAlign.center),
             _presenceCell(name),
-            _presenceCell('X', align: pw.TextAlign.center),
-            _presenceCell('X', align: pw.TextAlign.center),
+            _presenceCell('P1', align: pw.TextAlign.center),
+            _presenceCell('P2', align: pw.TextAlign.center),
             _presenceCell('', align: pw.TextAlign.center),
             _presenceCell(''),
           ],
@@ -203,8 +205,8 @@ class PointageExportService {
           children: [
             _presenceCell('$index', align: pw.TextAlign.center),
             _presenceCell(name),
-            _presenceCell('X', align: pw.TextAlign.center),
-            _presenceCell('!', align: pw.TextAlign.center),
+            _presenceCell('P1', align: pw.TextAlign.center),
+            _presenceCell('', align: pw.TextAlign.center),
             _presenceCell('', align: pw.TextAlign.center),
             _presenceCell('Sortie non confirmée'),
           ],
@@ -337,7 +339,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})> equipes,
+    required List<({String equipeName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     if (equipes.isEmpty) return Uint8List(0);
     final logo = await _loadLogo();
@@ -385,13 +387,13 @@ class PointageExportService {
             pw.SizedBox(height: 8),
             _buildPresenceTableWithDeparture(
               presentWithDepartureNames: eq.presentNames,
-              presentNoDepartureNames: const [],
+              presentNoDepartureNames: eq.presentNoDepartureNames,
               absentNames: eq.absentNames,
               absentReasons: eq.absentReasons,
             ),
             pw.SizedBox(height: 8),
             pw.Text(
-              'Présents: ${eq.presentNames.length}    Absents: ${eq.absentNames.length}',
+              'Présents: ${eq.presentNames.length + eq.presentNoDepartureNames.length}    Absents: ${eq.absentNames.length}',
               style: const pw.TextStyle(fontSize: 10),
             ),
             pw.SizedBox(height: 40),
@@ -423,7 +425,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> absentNames, List<String?> absentReasons})> equipes,
+    required List<({String equipeName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     final bytes = await buildDailyReportPdfMulti(
       date: date,
@@ -555,18 +557,10 @@ class PointageExportService {
 
       sheet.updateCell(
         excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-        excel.TextCellValue('ID'),
+        excel.TextCellValue('Employé'),
       );
       sheet
           .cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: headerRow))
-          .cellStyle = headerStyle;
-
-      sheet.updateCell(
-        excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-        excel.TextCellValue('Employe'),
-      );
-      sheet
-          .cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: headerRow))
           .cellStyle = headerStyle;
       for (final d in days) {
         final idx =
@@ -595,58 +589,55 @@ class PointageExportService {
         col = 0;
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.TextCellValue(r.employeId));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
             excel.TextCellValue(r.employeNom));
-        int dayCol = 2;
+        int dayCol = 1;
+        excel.CellStyle makeDayStyle({
+          String bg = '#FFFFFF',
+          String fg = '#000000',
+        }) {
+          return excel.CellStyle(
+            horizontalAlign: excel.HorizontalAlign.Center,
+            backgroundColorHex: excel.ExcelColor.fromHexString(bg),
+            fontColorHex: excel.ExcelColor.fromHexString(fg),
+            leftBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            rightBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            topBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            bottomBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+          );
+        }
+
         for (final d in days) {
           final val = r.hoursByDay[d] ?? '-';
           final cellIndex = excel.CellIndex.indexByColumnRow(columnIndex: dayCol, rowIndex: rowIndex);
-          sheet.updateCell(cellIndex, excel.TextCellValue(val));
-          excel.CellStyle makeDayStyle({
-            String bg = '#FFFFFF',
-            String fg = '#000000',
-          }) {
-            return excel.CellStyle(
-              horizontalAlign: excel.HorizontalAlign.Center,
-              backgroundColorHex: excel.ExcelColor.fromHexString(bg),
-              fontColorHex: excel.ExcelColor.fromHexString(fg),
-              leftBorder: excel.Border(
-                borderStyle: excel.BorderStyle.Thin,
-                borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-              ),
-              rightBorder: excel.Border(
-                borderStyle: excel.BorderStyle.Thin,
-                borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-              ),
-              topBorder: excel.Border(
-                borderStyle: excel.BorderStyle.Thin,
-                borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-              ),
-              bottomBorder: excel.Border(
-                borderStyle: excel.BorderStyle.Thin,
-                borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-              ),
-            );
-          }
-
-          final cell = sheet.cell(cellIndex);
           final dayStatus = r.dayStatusByDay[d] ?? '';
+          excel.CellStyle style;
           if (dayStatus == 'present') {
-            cell.cellStyle = makeDayStyle(bg: '#C8E6C9', fg: '#1B5E20');
+            style = makeDayStyle(bg: '#C8E6C9', fg: '#1B5E20');
           } else if (dayStatus == 'absent') {
-            cell.cellStyle = makeDayStyle(bg: '#FFCDD2', fg: '#B71C1C');
+            style = makeDayStyle(bg: '#FFCDD2', fg: '#B71C1C');
           } else if (dayStatus == 'formation') {
-            cell.cellStyle = makeDayStyle(bg: '#BBDEFB', fg: '#0D47A1');
+            style = makeDayStyle(bg: '#BBDEFB', fg: '#0D47A1');
           } else if (dayStatus == 'paid_absence') {
-            // Absent but paid: distinct color from present.
-            cell.cellStyle = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
+            style = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
           } else if (dayStatus == 'rest') {
-            cell.cellStyle = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
+            style = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
           } else {
-            cell.cellStyle = makeDayStyle(bg: '#FFFFFF', fg: '#000000');
+            style = makeDayStyle(bg: '#FFFFFF', fg: '#000000');
           }
+          // كتابة القيمة ثم تعيين style
+          sheet.updateCell(cellIndex, excel.TextCellValue(val), cellStyle: style);
           dayCol++;
           col = dayCol;
         }
@@ -743,7 +734,7 @@ class PointageExportService {
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String nom, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> employees,
     required List<PointageRecord> records,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
@@ -861,16 +852,17 @@ class PointageExportService {
             daysWorked++;
             if (hasNaturalHours) totalHours += hoursPerDay;
             overtimeHours += otForDay;
-            hoursByDay[d] = '✓';
+            // Afficher uniquement "8" pour un jour présent (sans mention HS)
+            hoursByDay[d] = '8';
             dayStatusByDay[d] = 'present';
           } else {
             final r = dayRecords.isNotEmpty ? dayRecords.first : null;
-            final reasonLabel = r != null ? getAbsenceReasonLabel(r.absenceReason, reasonConfigs) : '';
             final isPaidAbsence = r != null &&
                 r.absenceReason != null &&
                 !isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs);
-            // Not present, but still counted as paid day.
-            hoursByDay[d] = isPaidAbsence ? 'x*' : (reasonLabel.isEmpty ? 'x' : 'x $reasonLabel');
+            // Paid absence: couleur orange + "8" (heures comptabilisées)
+            // Regular absence: "absent"
+            hoursByDay[d] = isPaidAbsence ? '8' : 'absent';
             dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
             if (r != null && r.absenceReason != null) {
               absenceReasonIdByDay[d] = r.absenceReason;
@@ -881,15 +873,10 @@ class PointageExportService {
           }
         }
 
-        // إضافة ساعات overtime_assignments لهذا اليوم
+        // Overtime assignments: colonne dédiée uniquement (pas d'affichage dans la cellule du jour)
         final dayOtHours = overtimeByDay[d] ?? 0;
         if (dayOtHours > 0) {
           overtimeHours += dayOtHours;
-          // نضيف علامة + للخلية اليومية لتوضيح وجود ساعات إضافية
-          final current = hoursByDay[d] ?? '-';
-          if (current != 'repos') {
-            hoursByDay[d] = '$current +${dayOtHours.toStringAsFixed(1)}HS';
-          }
         }
       }
 
@@ -899,6 +886,7 @@ class PointageExportService {
       final salairePeriode = emp.salaireNet * (payableDays / periodBaseDays);
       rows.add(PointageExportRow(
         employeId: emp.id,
+        employeCin: emp.cin,
         employeNom: emp.nom,
         equipeName: emp.equipeName,
         daysWorked: daysWorked,

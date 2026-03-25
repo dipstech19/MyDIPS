@@ -246,7 +246,7 @@ class PointagePage extends StatefulWidget {
 
 enum _AdminPointageView { workers, report, analysis }
 
-enum _AdminDesignTab { pointages, statistiques, hs }
+enum _AdminDesignTab { pointages, statistiques, hs, formation }
 
 class _PointagePageState extends State<PointagePage> {
   String? _selectedEquipeIdAdmin;
@@ -1018,6 +1018,12 @@ class _PointagePageState extends State<PointagePage> {
                   onTap: () => setState(() => _adminTab = _AdminDesignTab.hs),
                 ),
                 const SizedBox(width: 14),
+                _AdminTopTabButton(
+                  label: 'Formation',
+                  selected: _adminTab == _AdminDesignTab.formation,
+                  onTap: () => setState(() => _adminTab = _AdminDesignTab.formation),
+                ),
+                const SizedBox(width: 14),
               ],
             ),
           ),
@@ -1071,6 +1077,13 @@ class _PointagePageState extends State<PointagePage> {
                         );
                       },
                     ),
+                  );
+                }
+                if (_adminTab == _AdminDesignTab.formation) {
+                  return _FormationManagementPage(
+                    teams: allTeams,
+                    pointageProvider: pointageProvider,
+                    employes: employes,
                   );
                 }
                 // Pointages tab (existing functionality)
@@ -1247,7 +1260,7 @@ class _PointagePageState extends State<PointagePage> {
       end = t;
     }
     final records = await pointageProvider.getPointageInDateRange(start, end);
-    final employees = <({String id, String nom, String equipeName, String? equipeId, double salaireNet})>[];
+    final employees = <({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})>[];
     // IMPORTANT: les renforts doivent être attribués à l'équipe d'origine dans l'Excel.
     // Donc on construit la liste des employés depuis l'appartenance "réelle" (equipes.membreIds / chefId),
     // et on n'utilise pas la liste temp-aware (teams) pour déterminer equipeId.
@@ -1264,6 +1277,7 @@ class _PointagePageState extends State<PointagePage> {
         final w = empList.first;
         employees.add((
           id: w.id,
+          cin: w.cin,
           nom: w.nom,
           equipeName: label,
           equipeId: eq.id,
@@ -1277,6 +1291,7 @@ class _PointagePageState extends State<PointagePage> {
         if (!seen.add(w.id)) continue;
         employees.add((
           id: w.id,
+          cin: w.cin,
           nom: w.nom,
           equipeName: '${t.equipeName} — ${t.chefName}',
           equipeId: null,
@@ -1284,7 +1299,7 @@ class _PointagePageState extends State<PointagePage> {
         ));
       }
     }
-    List<({String id, String nom, String equipeName, String? equipeId, double salaireNet})> filteredEmployees = employees;
+    List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> filteredEmployees = employees;
     switch (picked.scope) {
       case 'groupes':
         filteredEmployees = employees.where((e) => (e.equipeId ?? '').startsWith('groupe:')).toList();
@@ -2652,14 +2667,25 @@ class _PointagePageState extends State<PointagePage> {
             SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () async {
-                final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+                final presentNames = <String>[];
+                final presentNoDepartureNames = <String>[];
                 final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
+                for (final w in workersDisplay) {
+                  if (getState(w.id) != AttendanceState.present) continue;
+                  final r = pointageProvider.getRecordForEmployee(w.id);
+                  if (r?.departureStatus == DepartureStatus.finished) {
+                    presentNames.add(w.nom);
+                  } else {
+                    presentNoDepartureNames.add(w.nom);
+                  }
+                }
                 final absentNames = absentWorkers.map((e) => e.nom).toList();
                 final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
                 final filePath = await PointageExportService.shareDailyReportPdf(
                   date: DateTime.now(),
                   title: trOf(context, 'report_presence_title'),
                   presentNames: presentNames,
+                  presentNoDepartureNames: presentNoDepartureNames,
                   absentNames: absentNames,
                   absentReasons: absentReasons,
                   signatureLabel: trOf(context, 'pointage_signature_chef'),
@@ -2826,14 +2852,25 @@ class _PointagePageState extends State<PointagePage> {
             ...workersDisplay.map((e) => buildWorkerCard(e)),
           OutlinedButton.icon(
             onPressed: () async {
-              final presentNames = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).map((e) => e.nom).toList();
+              final presentNames = <String>[];
+              final presentNoDepartureNames = <String>[];
               final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
+              for (final w in workersDisplay) {
+                if (getState(w.id) != AttendanceState.present) continue;
+                final r = pointageProvider.getRecordForEmployee(w.id);
+                if (r?.departureStatus == DepartureStatus.finished) {
+                  presentNames.add(w.nom);
+                } else {
+                  presentNoDepartureNames.add(w.nom);
+                }
+              }
               final absentNames = absentWorkers.map((e) => e.nom).toList();
               final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
               final filePath = await PointageExportService.shareDailyReportPdf(
                 date: DateTime.now(),
                 title: trOf(context, 'report_presence_title'),
                 presentNames: presentNames,
+                presentNoDepartureNames: presentNoDepartureNames,
                 absentNames: absentNames,
                 absentReasons: absentReasons,
                 signatureLabel: trOf(context, 'pointage_signature_chef'),
@@ -3223,7 +3260,12 @@ class _PointageCard extends StatelessWidget {
 }
 
 /// لوحة تحليل الحضور: قوائم قابلة للطي على الهاتف — اضغط على الفريق لفتح الأعضاء.
-class _PointageAnalysisSection extends StatelessWidget {
+// ─────────────────────────────────────────────────────────────────────────────
+// Période preset pour les statistiques d'analyse
+// ─────────────────────────────────────────────────────────────────────────────
+enum _PeriodPreset { today, week, month, custom }
+
+class _PointageAnalysisSection extends StatefulWidget {
   final List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams;
   final List<String> nonWorkingIds;
   final PointageRecord? Function(String) getRecord;
@@ -3238,260 +3280,878 @@ class _PointageAnalysisSection extends StatelessWidget {
     this.showHeader = true,
   });
 
-  static String _timeStr(DateTime? d) {
-    if (d == null) return '—';
-    return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  @override
+  State<_PointageAnalysisSection> createState() => _PointageAnalysisSectionState();
+}
+
+class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
+  _PeriodPreset _preset = _PeriodPreset.today;
+  late DateTime _rangeStart;
+  late DateTime _rangeEnd;
+  List<PointageRecord>? _rangeRecords;
+  bool _loadingRange = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final today = DateTime.now();
+    _rangeStart = DateTime(today.year, today.month, today.day);
+    _rangeEnd = _rangeStart;
   }
 
-  static String _durationStr(DateTime? start, DateTime? end) {
-    if (start == null || end == null) return '—';
-    if (end.isBefore(start)) return '—';
-    final minutes = end.difference(start).inMinutes;
+  bool get _isMultiDay => !_rangeStart.isAtSameMomentAs(_rangeEnd) ||
+      _rangeStart.day != _rangeEnd.day ||
+      _rangeStart.month != _rangeEnd.month ||
+      _rangeStart.year != _rangeEnd.year;
+
+  Future<void> _loadRange() async {
+    setState(() { _loadingRange = true; });
+    try {
+      final provider = context.read<PointageProvider>();
+      final records = await provider.getPointageForDateRange(_rangeStart, _rangeEnd);
+      if (mounted) setState(() { _rangeRecords = records; _loadingRange = false; });
+    } catch (_) {
+      if (mounted) setState(() { _rangeRecords = []; _loadingRange = false; });
+    }
+  }
+
+  void _applyPreset(_PeriodPreset preset) {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    DateTime start, end;
+    switch (preset) {
+      case _PeriodPreset.today:
+        start = todayDate;
+        end = todayDate;
+        break;
+      case _PeriodPreset.week:
+        final weekday = today.weekday;
+        start = todayDate.subtract(Duration(days: weekday - 1));
+        end = todayDate;
+        break;
+      case _PeriodPreset.month:
+        start = DateTime(today.year, today.month, 1);
+        end = todayDate;
+        break;
+      case _PeriodPreset.custom:
+        start = _rangeStart;
+        end = _rangeEnd;
+        break;
+    }
+    setState(() {
+      _preset = preset;
+      _rangeStart = start;
+      _rangeEnd = end;
+      _rangeRecords = null;
+    });
+    if (preset != _PeriodPreset.today) _loadRange();
+  }
+
+  PointageRecord? _getRecordForPeriod(String employeId) {
+    if (_preset == _PeriodPreset.today) return widget.getRecord(employeId);
+    if (_rangeRecords == null) return null;
+    final list = _rangeRecords!.where((r) => r.employeId == employeId && !r.tempAssigned).toList();
+    return list.isEmpty ? null : list.first;
+  }
+
+  /// 8 heures fixes (480 min) par jour de présence confirmée.
+  static const int _shiftMinutes = 8 * 60;
+
+  int _workedMinutesForPeriod(String employeId) {
+    return _presentDaysForPeriod(employeId) * _shiftMinutes;
+  }
+
+  /// Nombre de jours présents sur la période pour un employé.
+  int _presentDaysForPeriod(String employeId) {
+    if (_preset == _PeriodPreset.today) {
+      final r = widget.getRecord(employeId);
+      return (r?.isFinalPresent ?? false) ? 1 : 0;
+    }
+    if (_rangeRecords == null) return 0;
+    return _rangeRecords!.where((r) => r.employeId == employeId && !r.tempAssigned && r.isFinalPresent).length;
+  }
+
+  /// Nombre de jours absents sur la période pour un employé.
+  int _absentDaysForPeriod(String employeId, int totalDays) {
+    return totalDays - _presentDaysForPeriod(employeId);
+  }
+
+  /// Total ساعات إضافية (دقائق) لموظف على الفترة.
+  int _overtimeMinutesForPeriod(String employeId) {
+    if (_preset == _PeriodPreset.today) {
+      final r = widget.getRecord(employeId);
+      return (r?.overtimeMinutes ?? 0) < 0 ? 0 : (r?.overtimeMinutes ?? 0);
+    }
+    if (_rangeRecords == null) return 0;
+    int total = 0;
+    for (final r in _rangeRecords!.where((r) => r.employeId == employeId && !r.tempAssigned)) {
+      total += (r.overtimeMinutes ?? 0) < 0 ? 0 : (r.overtimeMinutes ?? 0);
+    }
+    return total;
+  }
+
+  /// عدد أيام العمل في الفترة (أيام تقويمية).
+  int get _totalDaysInRange {
+    return _rangeEnd.difference(_rangeStart).inDays + 1;
+  }
+
+  static String _minToHStr(int minutes) {
+    if (minutes <= 0) return '0 h';
     final h = minutes ~/ 60;
     final m = minutes % 60;
     if (m == 0) return '$h h';
     return '$h h $m min';
   }
 
-  static String _overtimeHoursStr(int? overtimeMinutes) {
-    if (overtimeMinutes == null || overtimeMinutes <= 0) return '—';
-    final hours = overtimeMinutes / 60;
-    return hours == hours.roundToDouble() ? '${hours.toInt()} h' : '${hours.toStringAsFixed(1).replaceAll('.', ',')} h';
-  }
-
-  String _valueStr(BuildContext context, String? value, String fallback) {
-    if (value == null || value.isEmpty) return fallback;
-    return value;
-  }
 
   @override
   Widget build(BuildContext context) {
-    final notRecorded = tr(context, 'pointage_analysis_not_recorded');
-    final personLabel = tr(context, 'pointage_analysis_person');
-    final arrivalLabel = tr(context, 'pointage_analysis_arrival');
-    final departureLabel = tr(context, 'pointage_analysis_departure');
-    final durationLabel = tr(context, 'pointage_analysis_duration');
-    final overtimeLabel = tr(context, 'pointage_analysis_overtime_h');
-    final subtitle = tr(context, 'pointage_analysis_subtitle');
-    final workersCountLabel = tr(context, 'pointage_analysis_workers_count');
     final mobile = isMobile(context);
     final padding = pagePadding(context);
+    final primary = Theme.of(context).primaryColor;
+    final workTeams = widget.teams.where((t) => !widget.nonWorkingIds.contains(t.equipeId)).toList();
+    final multiDay = _isMultiDay;
+    final totalDays = _totalDaysInRange;
 
-    final workTeams = teams.where((t) => !nonWorkingIds.contains(t.equipeId)).toList();
+    // ─── Sélecteur de période ───────────────────────────────────────────────
+    Widget periodSelector = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        _periodChip(context, _PeriodPreset.today, 'Aujourd\'hui', Icons.today),
+        _periodChip(context, _PeriodPreset.week, 'Cette semaine', Icons.view_week),
+        _periodChip(context, _PeriodPreset.month, 'Ce mois', Icons.calendar_month),
+        _periodChip(context, _PeriodPreset.custom, 'Personnalisé', Icons.date_range),
+      ],
+    );
+
+    Widget customDateRow = const SizedBox.shrink();
+    if (_preset == _PeriodPreset.custom) {
+      final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+      customDateRow = Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          children: [
+            _datePickerBtn(context, 'De: ${fmt(_rangeStart)}', () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _rangeStart,
+                firstDate: DateTime(2023),
+                lastDate: DateTime.now(),
+              );
+              if (picked != null && mounted) {
+                setState(() {
+                  _rangeStart = DateTime(picked.year, picked.month, picked.day);
+                  if (_rangeEnd.isBefore(_rangeStart)) _rangeEnd = _rangeStart;
+                  _rangeRecords = null;
+                });
+                _loadRange();
+              }
+            }),
+            const SizedBox(width: 8),
+            _datePickerBtn(context, 'À: ${fmt(_rangeEnd)}', () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _rangeEnd.isBefore(_rangeStart) ? _rangeStart : _rangeEnd,
+                firstDate: _rangeStart,
+                lastDate: DateTime.now(),
+              );
+              if (picked != null && mounted) {
+                setState(() {
+                  _rangeEnd = DateTime(picked.year, picked.month, picked.day);
+                  _rangeRecords = null;
+                });
+                _loadRange();
+              }
+            }),
+          ],
+        ),
+      );
+    }
+
+    // ─── Résumé de la période ───────────────────────────────────────────────
+    final allWorkers = workTeams.expand((t) => t.workers).toList();
+    final effectiveTotalDays = multiDay ? totalDays : 1;
+    int totalWorkedMin = 0;
+    int totalOvertimeMin = 0;
+    int totalPresentDays = 0;
+    int totalAbsentDays = 0;
+    for (final w in allWorkers) {
+      totalWorkedMin += _workedMinutesForPeriod(w.id);
+      totalOvertimeMin += _overtimeMinutesForPeriod(w.id);
+      totalPresentDays += _presentDaysForPeriod(w.id);
+      totalAbsentDays += _absentDaysForPeriod(w.id, effectiveTotalDays);
+    }
+    final totalAbsenceMin = totalAbsentDays * _shiftMinutes;
+
+    Widget summaryCard = Card(
+      color: primary.withValues(alpha: 0.05),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: primary.withValues(alpha: 0.15)),
+      ),
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Résumé — ${allWorkers.length} employé(s)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: primary)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: [
+                _summaryChip(context, Icons.check_circle_outline, 'Heures travaillées', _minToHStr(totalWorkedMin), Colors.green),
+                _summaryChip(context, Icons.cancel_outlined, 'Heures absences (≈)', _minToHStr(totalAbsenceMin), Colors.red),
+                _summaryChip(context, Icons.more_time, 'Heures sup.', _minToHStr(totalOvertimeMin), Colors.orange),
+                _summaryChip(context, Icons.summarize_outlined, 'Total (travail + sup.)', _minToHStr(totalWorkedMin + totalOvertimeMin), primary),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
     if (workTeams.isEmpty) {
       return SingleChildScrollView(
         padding: EdgeInsets.all(padding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (showHeader) ...[
-              Text(tr(context, 'pointage_analysis_title'), style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
+            if (widget.showHeader) ...[
+              Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 2),
-              Text(subtitle, style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600])),
-              const SizedBox(height: 16),
+              Text('Par équipe — durée, arrivée, départ, heures sup.', style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600])),
+              const SizedBox(height: 12),
             ],
-            Center(child: Text(tr(context, 'report_no_data'), style: TextStyle(fontSize: 13, color: Colors.grey[600]))),
+            periodSelector,
+            customDateRow,
+            const SizedBox(height: 16),
+            Center(child: Text('Aucune donnée', style: TextStyle(fontSize: 13, color: Colors.grey[600]))),
           ],
         ),
       );
     }
 
-    if (mobile) {
-      return ListView(
-        padding: EdgeInsets.all(padding),
+    if (_loadingRange) {
+      return Column(
         children: [
-          if (showHeader) ...[
-            Text(tr(context, 'pointage_analysis_title'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(subtitle, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-            const SizedBox(height: 12),
-          ],
-          ...workTeams.map((t) {
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.symmetric(horizontal: padding, vertical: 6),
-                childrenPadding: EdgeInsets.only(left: padding, right: padding, bottom: padding, top: 4),
-                leading: Icon(Icons.groups, color: Theme.of(context).primaryColor, size: 22),
-                title: Text(
-                  '${t.equipeName} — ${t.chefName}',
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(workersCountLabel.replaceFirst('%s', '${t.workers.length}'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                children: t.workers.map((e) {
-                  final r = getRecord(e.id);
-                  final arrival = r?.arrivalMarkedAt;
-                  final departure = r?.departureMarkedAt;
-                  final duration = _durationStr(arrival, departure);
-                  final overtime = _overtimeHoursStr(r?.overtimeMinutes);
-                  final arrivalVal = arrival != null ? _timeStr(arrival) : notRecorded;
-                  final departureVal = departure != null ? _timeStr(departure) : notRecorded;
-                  final durationVal = (arrival != null && departure != null) ? duration : notRecorded;
-                  final overtimeVal = (r?.overtimeMinutes != null && (r!.overtimeMinutes ?? 0) > 0) ? overtime : notRecorded;
-                  return Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(e.nom, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 8),
-                          _analysisRow(context, arrivalLabel, arrivalVal),
-                          const SizedBox(height: 4),
-                          _analysisRow(context, departureLabel, departureVal),
-                          const SizedBox(height: 4),
-                          _analysisRow(context, durationLabel, durationVal),
-                          const SizedBox(height: 4),
-                          _analysisRow(context, overtimeLabel, overtimeVal),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            );
-          }),
+          Padding(
+            padding: EdgeInsets.all(padding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (widget.showHeader) ...[
+                  Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                ],
+                periodSelector,
+                customDateRow,
+              ],
+            ),
+          ),
+          const Expanded(child: Center(child: CircularProgressIndicator())),
         ],
       );
     }
+
+    // ─── Contenu principal ──────────────────────────────────────────────────
+    final notRecorded = '—';
+    final personLabel = 'Employé';
+    final workedLabel = 'Heures travaillées';
+    final overtimeLabel = 'Heures sup.';
+    final totalLabel = 'Total';
+
+    List<Widget> teamCards = workTeams.map((t) {
+      int teamWorked = 0, teamOvertime = 0;
+      for (final w in t.workers) {
+        teamWorked += _workedMinutesForPeriod(w.id);
+        teamOvertime += _overtimeMinutesForPeriod(w.id);
+      }
+
+      if (mobile) {
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.symmetric(horizontal: padding, vertical: 6),
+            childrenPadding: EdgeInsets.only(left: padding, right: padding, bottom: padding, top: 4),
+            leading: Icon(Icons.groups, color: primary, size: 22),
+            title: Text('${t.equipeName} — ${t.chefName}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${t.workers.length} travailleur(s)', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text('Travaillé: ${_minToHStr(teamWorked)} | Sup: ${_minToHStr(teamOvertime)} | Total: ${_minToHStr(teamWorked + teamOvertime)}', style: TextStyle(fontSize: 11, color: primary)),
+              ],
+            ),
+            children: [
+              ...t.workers.map((e) {
+                final workedMin = _workedMinutesForPeriod(e.id);
+                final overtimeMin = _overtimeMinutesForPeriod(e.id);
+                return Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.nom, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        _analysisRow(context, workedLabel, _minToHStr(workedMin), Colors.blue.shade700),
+                        const SizedBox(height: 4),
+                        _analysisRow(context, overtimeLabel, overtimeMin > 0 ? _minToHStr(overtimeMin) : notRecorded, Colors.orange),
+                        const SizedBox(height: 4),
+                        _analysisRow(context, totalLabel, _minToHStr(workedMin + overtimeMin), primary),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      }
+
+      // Desktop
+      return Card(
+        elevation: 1,
+        margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          childrenPadding: const EdgeInsets.only(left: 14, right: 14, bottom: 14, top: 4),
+          leading: Icon(Icons.groups, color: primary, size: 22),
+          title: Text('${t.equipeName} — ${t.chefName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          subtitle: Text(
+            '${t.workers.length} travailleur(s)  |  Travaillé: ${_minToHStr(teamWorked)}  |  Sup: ${_minToHStr(teamOvertime)}  |  Total: ${_minToHStr(teamWorked + teamOvertime)}',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+          children: [
+            Table(
+              columnWidths: const {
+                0: FlexColumnWidth(2.5),
+                1: FlexColumnWidth(1.5),
+                2: FlexColumnWidth(1.2),
+                3: FlexColumnWidth(1.5),
+              },
+              children: [
+                TableRow(
+                  decoration: BoxDecoration(color: Colors.grey.shade100),
+                  children: [
+                    _cell(personLabel, bold: true),
+                    _cell(workedLabel, bold: true),
+                    _cell(overtimeLabel, bold: true),
+                    _cell(totalLabel, bold: true),
+                  ],
+                ),
+                ...t.workers.map((e) {
+                  final workedMin = _workedMinutesForPeriod(e.id);
+                  final overtimeMin = _overtimeMinutesForPeriod(e.id);
+                  return TableRow(children: [
+                    _cell(e.nom),
+                    _cell(_minToHStr(workedMin), color: Colors.blue.shade700),
+                    _cell(overtimeMin > 0 ? _minToHStr(overtimeMin) : notRecorded, color: overtimeMin > 0 ? Colors.orange : null),
+                    _cell(_minToHStr(workedMin + overtimeMin), color: primary, bold: true),
+                  ]);
+                }),
+                TableRow(
+                  decoration: BoxDecoration(color: primary.withValues(alpha: 0.07)),
+                  children: [
+                    _cell('Total équipe', bold: true),
+                    _cell(_minToHStr(teamWorked), color: Colors.blue.shade700, bold: true),
+                    _cell(_minToHStr(teamOvertime), color: Colors.orange, bold: true),
+                    _cell(_minToHStr(teamWorked + teamOvertime), color: primary, bold: true),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }).toList();
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showHeader) ...[
-            Text(tr(context, 'pointage_analysis_title'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text(subtitle, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-            const SizedBox(height: 20),
+          if (widget.showHeader) ...[
+            Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 2),
+            Text('Par équipe — durée, arrivée, départ, heures sup.', style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600])),
+            const SizedBox(height: 12),
           ],
-          ...workTeams.map((t) {
-            return Card(
-              elevation: 1,
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                childrenPadding: const EdgeInsets.only(left: 14, right: 14, bottom: 14, top: 4),
-                leading: Icon(Icons.groups, color: Theme.of(context).primaryColor, size: 22),
-                title: Text(
-                  '${t.equipeName} — ${t.chefName}',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(workersCountLabel.replaceFirst('%s', '${t.workers.length}'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final useTable = constraints.maxWidth >= 500;
-                      if (useTable) {
-                        return Table(
-                          columnWidths: const {
-                            0: FlexColumnWidth(2),
-                            1: FlexColumnWidth(1.2),
-                            2: FlexColumnWidth(1.2),
-                            3: FlexColumnWidth(1.2),
-                            4: FlexColumnWidth(1),
-                          },
-                          children: [
-                            TableRow(
-                              decoration: BoxDecoration(color: Colors.grey.shade100),
-                              children: [
-                                _cell(personLabel, bold: true),
-                                _cell(arrivalLabel, bold: true),
-                                _cell(departureLabel, bold: true),
-                                _cell(durationLabel, bold: true),
-                                _cell(overtimeLabel, bold: true),
-                              ],
-                            ),
-                            ...t.workers.map((e) {
-                              final r = getRecord(e.id);
-                              final arrival = r?.arrivalMarkedAt;
-                              final departure = r?.departureMarkedAt;
-                              final duration = (arrival != null && departure != null) ? _durationStr(arrival, departure) : notRecorded;
-                              final overtime = (r?.overtimeMinutes != null && (r!.overtimeMinutes ?? 0) > 0) ? _overtimeHoursStr(r.overtimeMinutes) : notRecorded;
-                              return TableRow(
-                                children: [
-                                  _cell(e.nom),
-                                  _cell(arrival != null ? _timeStr(arrival) : notRecorded),
-                                  _cell(departure != null ? _timeStr(departure) : notRecorded),
-                                  _cell(duration),
-                                  _cell(overtime),
-                                ],
-                              );
-                            }),
-                          ],
-                        );
-                      }
-                      return Column(
-                        children: t.workers.map((e) {
-                          final r = getRecord(e.id);
-                          final arrival = r?.arrivalMarkedAt;
-                          final departure = r?.departureMarkedAt;
-                          final duration = (arrival != null && departure != null) ? _durationStr(arrival, departure) : notRecorded;
-                          final overtime = (r?.overtimeMinutes != null && (r!.overtimeMinutes ?? 0) > 0) ? _overtimeHoursStr(r.overtimeMinutes) : notRecorded;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  flex: 2,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                      const SizedBox(height: 4),
-                                      Text('$arrivalLabel: ${arrival != null ? _timeStr(arrival) : notRecorded}', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-                                      Text('$departureLabel: ${departure != null ? _timeStr(departure) : notRecorded}', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-                                      Text('$durationLabel: $duration', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-                                      Text('$overtimeLabel: $overtime', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            );
-          }),
+          periodSelector,
+          customDateRow,
+          const SizedBox(height: 12),
+          summaryCard,
+          ...teamCards,
         ],
       ),
     );
   }
 
-  static Widget _analysisRow(BuildContext context, String label, String value) {
+  Widget _periodChip(BuildContext context, _PeriodPreset preset, String label, IconData icon) {
+    final selected = _preset == preset;
+    final color = Theme.of(context).primaryColor;
+    return FilterChip(
+      selected: selected,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: selected ? color : Colors.grey.shade700),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: selected ? color : Colors.grey.shade800)),
+        ],
+      ),
+      onSelected: (_) => _applyPreset(preset),
+      selectedColor: color.withValues(alpha: 0.12),
+      checkmarkColor: color,
+      side: BorderSide(color: selected ? color.withValues(alpha: 0.4) : Colors.grey.shade300),
+      backgroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    );
+  }
+
+  Widget _datePickerBtn(BuildContext context, String label, VoidCallback onTap) {
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: const Icon(Icons.calendar_today, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 13)),
+      style: TextButton.styleFrom(
+        foregroundColor: Theme.of(context).primaryColor,
+        backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.07),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  static Widget _summaryChip(BuildContext context, IconData icon, String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, style: TextStyle(fontSize: 10, color: color.withValues(alpha: 0.8))),
+              Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _analysisRow(BuildContext context, String label, String value, Color? valueColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.baseline,
       textBaseline: TextBaseline.alphabetic,
       children: [
-        SizedBox(width: 110, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500))),
-        Expanded(child: Text(value, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis)),
+        SizedBox(width: 130, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500))),
+        Expanded(child: Text(value, style: TextStyle(fontSize: 13, color: valueColor, fontWeight: valueColor != null ? FontWeight.w600 : null), overflow: TextOverflow.ellipsis)),
       ],
     );
   }
 
-  static Widget _cell(String text, {bool bold = false}) {
+  static Widget _cell(String text, {bool bold = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       child: Text(
         text,
-        style: TextStyle(fontSize: 13, fontWeight: bold ? FontWeight.bold : FontWeight.normal),
+        style: TextStyle(fontSize: 13, fontWeight: bold ? FontWeight.bold : FontWeight.normal, color: color),
         overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Formation — gestion des formations pour les employés
+// ─────────────────────────────────────────────────────────────────────────────
+class _FormationManagementPage extends StatefulWidget {
+  final List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams;
+  final PointageProvider pointageProvider;
+  final List<Employe> employes;
+
+  const _FormationManagementPage({
+    required this.teams,
+    required this.pointageProvider,
+    required this.employes,
+  });
+
+  @override
+  State<_FormationManagementPage> createState() => _FormationManagementPageState();
+}
+
+class _FormationManagementPageState extends State<_FormationManagementPage> {
+  String? _selectedEquipeId;
+  final Set<String> _selectedEmployeIds = {};
+  DateTime _startDate = DateTime.now();
+  DateTime _endDate = DateTime.now();
+  bool _saving = false;
+
+  // Formation records already active (loaded once per equipe selection)
+  Set<String> _alreadyInFormationIds = {};
+  bool _loadingFormation = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.teams.isNotEmpty) {
+      _selectedEquipeId = widget.teams.first.equipeId;
+      _loadFormationStatus();
+    }
+    final today = DateTime.now();
+    _startDate = DateTime(today.year, today.month, today.day);
+    _endDate = _startDate;
+  }
+
+  List<Employe> get _currentWorkers {
+    if (_selectedEquipeId == null) return [];
+    final t = widget.teams.where((t) => t.equipeId == _selectedEquipeId).toList();
+    return t.isEmpty ? [] : t.first.workers;
+  }
+
+  Future<void> _loadFormationStatus() async {
+    setState(() { _loadingFormation = true; _alreadyInFormationIds = {}; });
+    final ids = <String>{};
+    for (final e in _currentWorkers) {
+      final r = await widget.pointageProvider.getRecordForEmployeeForDate(e.id, _startDate);
+      if (r?.adminFinalStatus == AttendanceStatus.training) ids.add(e.id);
+    }
+    if (mounted) setState(() { _alreadyInFormationIds = ids; _loadingFormation = false; });
+  }
+
+  Future<void> _save() async {
+    if (_selectedEmployeIds.isEmpty) return;
+    final team = widget.teams.where((t) => t.equipeId == _selectedEquipeId).toList();
+    if (team.isEmpty) return;
+    setState(() => _saving = true);
+    final t = team.first;
+    final start = DateTime(_startDate.year, _startDate.month, _startDate.day);
+    final end = DateTime(_endDate.year, _endDate.month, _endDate.day);
+    for (var d = start; !d.isAfter(end); d = d.add(const Duration(days: 1))) {
+      for (final id in _selectedEmployeIds) {
+        final empList = _currentWorkers.where((w) => w.id == id).toList();
+        if (empList.isEmpty) continue;
+        final e = empList.first;
+        await widget.pointageProvider.setAdminOverrideForEmployee(
+          employeId: e.id,
+          employeNom: e.nom,
+          employeCin: e.cin,
+          equipeId: t.equipeId,
+          equipeName: t.equipeName,
+          chefName: t.chefName,
+          status: AttendanceStatus.training,
+          viewDate: d,
+          trainingStartAt: start,
+          trainingEndAt: DateTime(end.year, end.month, end.day, 23, 59, 59),
+        );
+      }
+    }
+    if (mounted) {
+      setState(() { _saving = false; _selectedEmployeIds.clear(); });
+      await _loadFormationStatus();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Formation planifiée avec succès'),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).primaryColor;
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
+    final workers = _currentWorkers;
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(padding),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ─── Titre ───────────────────────────────────────────────────────
+          Row(
+            children: [
+              Icon(Icons.school, color: Colors.blue.shade700, size: 22),
+              const SizedBox(width: 8),
+              Text(
+                'Gestion des Formations',
+                style: TextStyle(fontSize: mobile ? 16 : 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Planifiez une formation pour un ou plusieurs employés.',
+            style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 20),
+
+          // ─── Formulaire ───────────────────────────────────────────────────
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: EdgeInsets.all(mobile ? 14 : 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Sélection équipe
+                  Text('Équipe', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 13 : 14)),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<String>(
+                    value: _selectedEquipeId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: widget.teams
+                        .map((t) => DropdownMenuItem(
+                              value: t.equipeId,
+                              child: Text('${t.equipeName} — ${t.chefName}', overflow: TextOverflow.ellipsis),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      setState(() {
+                        _selectedEquipeId = v;
+                        _selectedEmployeIds.clear();
+                      });
+                      _loadFormationStatus();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Période
+                  Text('Période de formation', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 13 : 14)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DateButton(
+                          label: 'Du',
+                          date: _startDate,
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _startDate,
+                              firstDate: DateTime(2023),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (picked != null && mounted) {
+                              setState(() {
+                                _startDate = DateTime(picked.year, picked.month, picked.day);
+                                if (_endDate.isBefore(_startDate)) _endDate = _startDate;
+                                _selectedEmployeIds.clear();
+                              });
+                              _loadFormationStatus();
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _DateButton(
+                          label: 'Au',
+                          date: _endDate,
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _endDate.isBefore(_startDate) ? _startDate : _endDate,
+                              firstDate: _startDate,
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (picked != null && mounted) {
+                              setState(() => _endDate = DateTime(picked.year, picked.month, picked.day));
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Liste des employés
+                  Text('Employés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 13 : 14)),
+                  const SizedBox(height: 6),
+                  if (_loadingFormation)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (workers.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text('Aucun employé dans cette équipe.', style: TextStyle(color: Colors.grey[600])),
+                    )
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: workers.map((e) {
+                          final alreadyIn = _alreadyInFormationIds.contains(e.id);
+                          final selected = _selectedEmployeIds.contains(e.id);
+                          return CheckboxListTile(
+                            dense: true,
+                            value: selected,
+                            onChanged: alreadyIn
+                                ? null
+                                : (v) => setState(() {
+                                      if (v == true) {
+                                        _selectedEmployeIds.add(e.id);
+                                      } else {
+                                        _selectedEmployeIds.remove(e.id);
+                                      }
+                                    }),
+                            title: Text(
+                              e.nom,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                color: alreadyIn ? Colors.grey : null,
+                              ),
+                            ),
+                            subtitle: alreadyIn
+                                ? Text(
+                                    'Déjà en formation — ${_fmtDate(_startDate)}',
+                                    style: TextStyle(fontSize: 11, color: Colors.blue.shade600),
+                                  )
+                                : null,
+                            secondary: alreadyIn
+                                ? Icon(Icons.school, size: 18, color: Colors.blue.shade400)
+                                : null,
+                            controlAffinity: ListTileControlAffinity.leading,
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+
+                  // Bouton enregistrer
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: (_selectedEmployeIds.isEmpty || _saving)
+                          ? null
+                          : _save,
+                      icon: _saving
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.school, size: 18),
+                      label: Text(
+                        _saving
+                            ? 'Enregistrement...'
+                            : 'Planifier la formation (${_fmtDate(_startDate)} → ${_fmtDate(_endDate)})',
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.blue.shade700,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ─── Employés actuellement en formation ──────────────────────────
+          if (_alreadyInFormationIds.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
+                const SizedBox(width: 6),
+                Text(
+                  'En formation le ${_fmtDate(_startDate)}',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: Colors.blue.shade700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...workers.where((w) => _alreadyInFormationIds.contains(w.id)).map((e) => Card(
+                  color: Colors.blue.shade50,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.school, color: Colors.blue.shade700, size: 20),
+                    title: Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    trailing: Icon(Icons.check_circle, color: Colors.blue.shade400, size: 18),
+                  ),
+                )),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DateButton extends StatelessWidget {
+  final String label;
+  final DateTime date;
+  final VoidCallback onTap;
+
+  const _DateButton({required this.label, required this.date, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).primaryColor;
+    final fmt = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade400),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.calendar_today, size: 16, color: color),
+            const SizedBox(width: 6),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                Text(fmt, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

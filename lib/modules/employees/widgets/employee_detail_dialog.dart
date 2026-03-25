@@ -4,6 +4,7 @@ import '../../../core/locale/app_locale.dart';
 import '../../../shared/widgets/smart_avatar.dart';
 import '../../pointage/pointage_provider.dart';
 import '../models/employe_model.dart';
+import '../../magasin/magasin_provider.dart';
 import '../services/pdf_service.dart';
 import '../employees_provider.dart';
 import '../conges_provider.dart';
@@ -32,6 +33,18 @@ class EmployeeDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final e = employe;
+    final magasin = context.watch<MagasinProvider>();
+    final nomKey = e.nom.trim().toLowerCase();
+    final equipementsSortis = magasin.loading
+        ? <Mouvement>[]
+        : magasin.sorties
+            .where((m) =>
+                (m.preneurNom ?? '').trim().toLowerCase() == nomKey)
+            .toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+
+    String fmtDate(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final maxWidth = MediaQuery.sizeOf(context).width * 0.95;
     final dialogWidth = (640 > maxWidth) ? maxWidth : 640.0;
     if (!isDirecteur) {
@@ -207,6 +220,94 @@ class EmployeeDetailDialog extends StatelessWidget {
                           if (e.telephone2.isNotEmpty)
                             _row('Téléphone 2', e.telephone2),
                           _row('Email', e.email),
+                        ]),
+                        const SizedBox(height: 12),
+                        _card(children: [
+                          Text(
+                            'Équipements / Matériel sortis',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          if (!magasin.firebaseAvailable)
+                            Text(
+                              'Magasin non disponible',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else if (magasin.loading)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 12),
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          else if (equipementsSortis.isEmpty)
+                            Text(
+                              'Aucune sortie enregistrée pour cet employé.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else
+                            ...equipementsSortis
+                                .take(15)
+                                .map((m) => Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 10),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            fmtDate(m.date),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.grey.shade800,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${m.nomProduit} · ${m.categorie}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            'Réf: ${m.reference.isNotEmpty ? m.reference : "—"}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade600,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            'Qté: ${m.totalQte}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade700,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )),
                         ]),
                       ]),
                     ),
