@@ -51,7 +51,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => PointageProvider()),
         ChangeNotifierProvider(create: (_) => AbsenceReasonsProvider()),
         ChangeNotifierProvider(create: (_) => ShiftsProvider()),
-        ChangeNotifierProvider(create: (_) => MagasinProvider()),
+        ChangeNotifierProvider(create: (_) => MagasinProvider()..init()),
         ChangeNotifierProvider(create: (_) => CongesProvider()),
         ChangeNotifierProvider(create: (_) => OvertimeProvider()),
       ],

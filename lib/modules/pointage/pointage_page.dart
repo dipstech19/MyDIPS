@@ -369,6 +369,8 @@ class _PointagePageState extends State<PointagePage> {
     }
 
     // Base members from team definition — always keep them in their original team.
+    // Include the chef (team leader) so they appear in the pointage list.
+    if (equipe.chefId.isNotEmpty) addIfValid(equipe.chefId);
     for (final id in equipe.membreIds) {
       addIfValid(id);
     }
