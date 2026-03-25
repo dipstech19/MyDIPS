@@ -10,13 +10,17 @@ import '../modules/Demandes/demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
-import '../modules/magasin/gestion_magasin_firebase.dart';
+import '../modules/magasin/gestion_magasin.dart';
 import '../modules/magasin/magasin_provider.dart';
 import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
+import '../modules/pointage/formation_page.dart';
+import '../modules/groupes/groupe_pointage_page.dart';
 import '../modules/shifts/shifts_page.dart';
+import '../modules/overtime/overtime_page.dart';
+import '../modules/overtime/overtime_provider.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -29,86 +33,139 @@ class _MainLayoutState extends State<MainLayout> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés (اسم/صورة/CIN)، Pointage، Shifts، Paramètres (معلوماته فقط). الأدمن: كل القائمة.
-  List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe) {
+  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés، Pointage، Shifts، Paramètres. مسؤول مجموعة: Pointage فقط.
+  List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
     if (isChauffeur) {
       return [
         _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
-        _NavItem(icon: Icons.note_add, label: tr(context, 'nav_send_report')),
+        _NavItem(
+            icon: Icons.note_add, label: tr(context, 'nav_send_report')),
+      ];
+    }
+    if (isGroupe) {
+      return [
+        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
       ];
     }
     if (isChefEquipe) {
       return [
-        _NavItem(icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
+        _NavItem(
+            icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
         _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
-        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
-        _NavItem(icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
-        _NavItem(icon: Icons.settings, label: tr(context, 'nav_settings')),
+        _NavItem(
+            icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        _NavItem(
+            icon: Icons.more_time, label: 'Heures Sup.'),
+        _NavItem(
+            icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+        _NavItem(
+            icon: Icons.settings, label: tr(context, 'nav_settings')),
       ];
     }
     return [
       _NavItem(icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
       _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
-      _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
-      _NavItem(icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
-      _NavItem(icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
-      _NavItem(icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
-      _NavItem(icon: Icons.settings, label: tr(context, 'nav_settings')),
+      _NavItem(
+          icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+      _NavItem(
+          icon: Icons.more_time, label: 'Heures Sup.'),
+      _NavItem(
+          icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+      _NavItem(
+          icon: Icons.school, label: 'Formation'),
+      _NavItem(
+          icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
+      _NavItem(
+          icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
+      _NavItem(
+          icon: Icons.settings, label: tr(context, 'nav_settings')),
       _NavItem(icon: Icons.inbox, label: 'Demandes'),
       _NavItem(icon: Icons.local_shipping, label: 'Logistique'),
     ];
   }
 
-  Widget _buildSidebar(BuildContext context, AuthProvider auth, List<_NavItem> items, {VoidCallback? onItemTap}) {
+  Widget _buildSidebarContent(
+      BuildContext context,
+      AuthProvider auth,
+      List<_NavItem> items, {
+        VoidCallback? onItemTap,
+      }) {
     final locale = context.watch<LocaleProvider>();
     return Container(
       width: 220,
       color: const Color(0xFF1565C0),
       child: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            child: const Column(
-              children: [
-                Icon(Icons.business, color: Colors.white, size: 44),
-                SizedBox(height: 8),
-                Text('DIPS', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 11)),
-              ],
+          // ── Header ─────────────────────────────────────────────────────────
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: const Column(
+                children: [
+                  Icon(Icons.business, color: Colors.white, size: 44),
+                  SizedBox(height: 8),
+                  Text(
+                    'DIPS',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Système de Gestion',
+                    style:
+                    TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ],
+              ),
             ),
           ),
-          Builder(
-            builder: (ctx) {
-              final auth = ctx.watch<AuthProvider>();
-              final site = ctx.watch<SiteProvider>();
-              final isSuperAdmin = auth.currentUser?.isSuperAdmin ?? false;
-              if (!isSuperAdmin) return const SizedBox.shrink();
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: DropdownButton<String>(
-                    value: site.selectedSiteId ?? SiteId.all,
-                    isExpanded: true,
-                    dropdownColor: const Color(0xFF1565C0),
-                    underline: const SizedBox(),
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                    items: [
-                      DropdownMenuItem(value: SiteId.all, child: Text(tr(ctx, 'site_all'))),
-                      DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
-                      DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
-                    ],
-                    onChanged: (v) => site.setSelectedSite(v),
-                  ),
+
+          // ── Site selector (super admin only) ───────────────────────────────
+          Builder(builder: (ctx) {
+            final authInner = ctx.watch<AuthProvider>();
+            final site = ctx.watch<SiteProvider>();
+            final isSuperAdmin =
+                authInner.currentUser?.isSuperAdmin ?? false;
+            if (!isSuperAdmin) return const SizedBox.shrink();
+            return Padding(
+              padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-              );
-            },
-          ),
+                child: DropdownButton<String>(
+                  value: site.selectedSiteId ?? SiteId.all,
+                  isExpanded: true,
+                  dropdownColor: const Color(0xFF1565C0),
+                  underline: const SizedBox(),
+                  style:
+                  const TextStyle(color: Colors.white, fontSize: 12),
+                  items: [
+                    DropdownMenuItem(
+                        value: SiteId.all,
+                        child: Text(tr(ctx, 'site_all'))),
+                    DropdownMenuItem(
+                        value: SiteId.jadida,
+                        child: Text(SiteId.labelFr(SiteId.jadida))),
+                    DropdownMenuItem(
+                        value: SiteId.safi,
+                        child: Text(SiteId.labelFr(SiteId.safi))),
+                  ],
+                  onChanged: (v) => site.setSelectedSite(v),
+                ),
+              ),
+            );
+          }),
+
           const Divider(color: Colors.white24),
+
+          // ── Nav items ──────────────────────────────────────────────────────
           Expanded(
             child: ListView.builder(
               itemCount: items.length,
@@ -116,14 +173,29 @@ class _MainLayoutState extends State<MainLayout> {
                 final item = items[index];
                 final isSelected = _selectedIndex == index;
                 return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  margin: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.white.withOpacity(0.2) : Colors.transparent,
+                    color: isSelected
+                        ? Colors.white.withOpacity(0.2)
+                        : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: ListTile(
-                    leading: Icon(item.icon, color: isSelected ? Colors.white : Colors.white70),
-                    title: Text(item.label, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                    leading: Icon(item.icon,
+                        color:
+                        isSelected ? Colors.white : Colors.white70),
+                    title: Text(
+                      item.label,
+                      style: TextStyle(
+                        color:
+                        isSelected ? Colors.white : Colors.white70,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     onTap: () {
                       setState(() => _selectedIndex = index);
                       onItemTap?.call();
@@ -133,46 +205,144 @@ class _MainLayoutState extends State<MainLayout> {
               },
             ),
           ),
+
+          // ── Footer ─────────────────────────────────────────────────────────
           const Divider(color: Colors.white24),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-                  child: Row(children: [
-                    CircleAvatar(radius: 16, backgroundColor: Colors.white.withOpacity(0.2), child: Text((auth.currentUser?.nom.isNotEmpty == true) ? auth.currentUser!.nom[0] : 'U', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14))),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(auth.currentUser?.nom ?? '', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
-                        Container(
-                          margin: const EdgeInsets.only(top: 2),
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: auth.isDirecteur ? Colors.amber.withOpacity(0.3) : auth.isChauffeur ? Colors.orange.withOpacity(0.3) : Colors.green.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor:
+                          Colors.white.withOpacity(0.2),
                           child: Text(
-                            auth.isDirecteur ? tr(context, 'role_directeur') : auth.isChauffeur ? tr(context, 'role_chauffeur') : tr(context, 'role_chef_equipe'),
-                            style: TextStyle(color: auth.isDirecteur ? Colors.amber[200] : auth.isChauffeur ? Colors.orange[200] : Colors.green[200], fontSize: 10, fontWeight: FontWeight.w600),
+                            (auth.currentUser?.nom.isNotEmpty == true)
+                                ? auth.currentUser!.nom[0]
+                                : 'U',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14),
                           ),
                         ),
-                      ]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                auth.currentUser?.nom ?? '',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Container(
+                                margin: const EdgeInsets.only(top: 2),
+                                padding:
+                                const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: auth.isDirecteur
+                                      ? Colors.amber
+                                      .withOpacity(0.3)
+                                      : auth.isChauffeur
+                                      ? Colors.orange
+                                      .withOpacity(0.3)
+                                      : Colors.green
+                                      .withOpacity(0.3),
+                                  borderRadius:
+                                  BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  auth.isDirecteur
+                                      ? tr(context, 'role_directeur')
+                                      : auth.isChauffeur
+                                      ? tr(context,
+                                      'role_chauffeur')
+                                      : tr(context,
+                                      'role_chef_equipe'),
+                                  style: TextStyle(
+                                    color: auth.isDirecteur
+                                        ? Colors.amber[200]
+                                        : auth.isChauffeur
+                                        ? Colors.orange[200]
+                                        : Colors.green[200],
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.logout,
+                              color: Colors.white70, size: 18),
+                          tooltip: tr(context, 'logout'),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _confirmLogout(context),
+                        ),
+                      ],
                     ),
-                    IconButton(icon: const Icon(Icons.logout, color: Colors.white70, size: 18), tooltip: tr(context, 'logout'), padding: EdgeInsets.zero, constraints: const BoxConstraints(), onPressed: () => _confirmLogout(context)),
-                  ]),
-                ),
-                const SizedBox(height: 6),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  TextButton(onPressed: () => locale.setLocale('fr'), style: TextButton.styleFrom(foregroundColor: locale.locale == 'fr' ? Colors.white : Colors.white70, padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero), child: Text(tr(context, 'french'), style: const TextStyle(fontSize: 11))),
-                  Text('|', style: TextStyle(color: Colors.white54, fontSize: 11)),
-                  TextButton(onPressed: () => locale.setLocale('ar'), style: TextButton.styleFrom(foregroundColor: locale.locale == 'ar' ? Colors.white : Colors.white70, padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero), child: Text(tr(context, 'arabic'), style: const TextStyle(fontSize: 11))),
-                ]),
-                const SizedBox(height: 4),
-                const Text('v1.0.0', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      TextButton(
+                        onPressed: () => locale.setLocale('fr'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: locale.locale == 'fr'
+                              ? Colors.white
+                              : Colors.white70,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8),
+                          minimumSize: Size.zero,
+                        ),
+                        child: Text(tr(context, 'french'),
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                      const Text('|',
+                          style: TextStyle(
+                              color: Colors.white54, fontSize: 11)),
+                      TextButton(
+                        onPressed: () => locale.setLocale('ar'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: locale.locale == 'ar'
+                              ? Colors.white
+                              : Colors.white70,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8),
+                          minimumSize: Size.zero,
+                        ),
+                        child: Text(tr(context, 'arabic'),
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text('v1.0.0',
+                      style: TextStyle(
+                          color: Colors.white38, fontSize: 11)),
+                ],
+              ),
             ),
           ),
         ],
@@ -185,14 +355,22 @@ class _MainLayoutState extends State<MainLayout> {
     final auth = context.watch<AuthProvider>();
     final isChauffeur = auth.isChauffeur;
     final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
-    final items = _navItems(context, isChauffeur, isChefEquipe);
+    final isGroupe = auth.isGroupeResponsable;
+    final items = _navItems(context, isChauffeur, isChefEquipe, isGroupe);
     final mobile = isMobile(context);
+
+    // Clamp index in case item list changes between role switches
+    final safeIndex = _selectedIndex.clamp(0, items.length - 1);
 
     if (mobile) {
       return Scaffold(
         key: _scaffoldKey,
         appBar: AppBar(
-          title: Text(items[_selectedIndex.clamp(0, items.length - 1)].label, style: const TextStyle(fontSize: 18)),
+          title: Text(
+            items[safeIndex].label,
+            style: const TextStyle(fontSize: 18),
+            overflow: TextOverflow.ellipsis,
+          ),
           backgroundColor: const Color(0xFF1565C0),
           foregroundColor: Colors.white,
           leading: IconButton(
@@ -202,10 +380,15 @@ class _MainLayoutState extends State<MainLayout> {
         ),
         drawer: Drawer(
           child: Builder(
-            builder: (ctx) => _buildSidebar(context, auth, items, onItemTap: () => Navigator.of(ctx).pop()),
+            builder: (ctx) => _buildSidebarContent(
+              context,
+              auth,
+              items,
+              onItemTap: () => Navigator.of(ctx).pop(),
+            ),
           ),
         ),
-        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe)),
+        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe)),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex.clamp(0, items.length - 1),
           onTap: (i) => setState(() => _selectedIndex = i),
@@ -217,15 +400,16 @@ class _MainLayoutState extends State<MainLayout> {
       );
     }
 
+    // ── Desktop / Tablet layout ────────────────────────────────────────────
     return Scaffold(
       body: Row(
         children: [
-          _buildSidebar(context, auth, items),
+          _buildSidebarContent(context, auth, items),
           Expanded(
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: 1200),
-                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe),
+                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe),
               ),
             ),
           ),
@@ -238,7 +422,8 @@ class _MainLayoutState extends State<MainLayout> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape:
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text(tr(context, 'logout')),
         content: Text(tr(context, 'logout_confirm')),
         actions: [
@@ -262,22 +447,34 @@ class _MainLayoutState extends State<MainLayout> {
     );
   }
 
-  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe) {
+  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
     if (isChauffeur) {
       if (index == 0) return const DriverPointagePage();
       if (index == 1) return const ReportPage();
       return const DriverPointagePage();
     }
+    if (isGroupe) {
+      return const GroupePointagePage();
+    }
     if (isChefEquipe) {
       switch (index) {
-        case 0: return const _DashboardPage();
-        case 1: return const EmployeesPage();
-        case 2: return const PointagePage();
-        case 3: return const ShiftsPage();
-        case 4: return const ParametresPage();
-        default: return const _DashboardPage();
+        case 0:
+          return const _DashboardPage();
+        case 1:
+          return const EmployeesPage();
+        case 2:
+          return const PointagePage();
+        case 3:
+          return const OvertimePage();
+        case 4:
+          return const ShiftsPage();
+        case 5:
+          return const ParametresPage();
+        default:
+          return const _DashboardPage();
       }
     }
+
     switch (index) {
       case 0:
         return const _DashboardPage();
@@ -286,20 +483,27 @@ class _MainLayoutState extends State<MainLayout> {
       case 2:
         return const PointagePage();
       case 3:
-        return const ShiftsPage();
+        return const OvertimePage();
       case 4:
-        return const GestionMagasinFirebase();
+        return const ShiftsPage();
       case 5:
+        return const FormationPage();
+      case 6:
+        return GestionMagasinPage();
+      case 7:
         return const _PlaceholderPage(
           icon: Icons.bar_chart,
           title: 'Rapports',
           subtitle: 'Bientôt disponible',
         );
-      case 6:
-        return const ParametresPage();
-      case 7:
-        return const DemandesPage();
       case 8:
+        return const ParametresPage();
+      case 9:
+        final auth = context.read<AuthProvider>();
+        return DemandesPage(
+          role: auth.isDirecteur ? UserRole.administrateur : UserRole.demandeur,
+        );
+      case 10:
         return const LogistiquePage();
       default:
         return const _PlaceholderPage(
@@ -311,13 +515,18 @@ class _MainLayoutState extends State<MainLayout> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NavItem
+// ─────────────────────────────────────────────────────────────────────────────
 class _NavItem {
   final IconData icon;
   final String label;
   _NavItem({required this.icon, required this.label});
 }
 
-/// صفحة مؤقتة (Rapports, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+// Placeholder page
+// ─────────────────────────────────────────────────────────────────────────────
 class _PlaceholderPage extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -353,7 +562,9 @@ class _PlaceholderPage extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               subtitle,
-              style: TextStyle(fontSize: mobile ? 13 : 14, color: Colors.grey[600]),
+              style: TextStyle(
+                  fontSize: mobile ? 13 : 14,
+                  color: Colors.grey[600]),
               textAlign: TextAlign.center,
             ),
           ],
@@ -363,7 +574,9 @@ class _PlaceholderPage extends StatelessWidget {
   }
 }
 
-// ===== DASHBOARD =====
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
 class _DashboardPage extends StatelessWidget {
   const _DashboardPage();
 
@@ -376,136 +589,129 @@ class _DashboardPage extends StatelessWidget {
     final magasin = context.watch<MagasinProvider>();
     final mobile = isMobile(context);
     final padding = pagePadding(context);
+
     final filteredEmployes = SiteId.filterBySite(
       emp.employes,
       auth.currentUser?.allowedSiteIds,
-      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
-      (e) => e.siteId,
+      auth.currentUser?.isSuperAdmin == true
+          ? site.selectedSiteId
+          : null,
+          (e) => e.siteId,
     );
-    final employesCount = filteredEmployes.length;
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
       auth.currentUser?.allowedSiteIds,
-      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
-      (p) => p.siteId,
+      auth.currentUser?.isSuperAdmin == true
+          ? site.selectedSiteId
+          : null,
+          (p) => p.siteId,
     );
-    final stockTotal = filteredProduits.fold<int>(0, (s, p) => s + p.total);
+
+    final employesCount = filteredEmployes.length;
+    final stockTotal =
+    filteredProduits.fold<int>(0, (s, p) => s + p.total);
     final presentLabel = '${pointage.todayPresentCount}';
     final stockLabel = '$stockTotal';
     final rapportsLabel = '${pointage.monthlyReportsCount}';
+
+    final cards = [
+      _StatCard(
+          title: 'Employés',
+          value: '$employesCount',
+          icon: Icons.people,
+          color: Colors.blue),
+      _StatCard(
+          title: "Présents aujourd'hui",
+          value: presentLabel,
+          icon: Icons.check_circle,
+          color: Colors.green),
+      _StatCard(
+          title: 'Produits en stock',
+          value: stockLabel,
+          icon: Icons.inventory_2,
+          color: Colors.orange),
+      _StatCard(
+          title: 'Rapports ce mois',
+          value: rapportsLabel,
+          icon: Icons.bar_chart,
+          color: Colors.purple),
+    ];
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Greeting — never overflows
           Text(
             'Bonjour, ${auth.currentUser?.nom ?? ''} 👋',
             style: TextStyle(
               fontSize: mobile ? 20 : 26,
               fontWeight: FontWeight.bold,
             ),
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
           Text(
             'Bienvenue dans le système de gestion DIPS',
-            style: TextStyle(fontSize: mobile ? 12 : 14, color: Colors.grey[600]),
+            style: TextStyle(
+                fontSize: mobile ? 12 : 14, color: Colors.grey[600]),
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 20),
-          if (mobile)
-            Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Employés',
-                        value: '$employesCount',
-                        icon: Icons.people,
-                        color: Colors.blue,
-                      ),
-                    ),
+
+          // Stat cards — wrap on narrow screens, row on wide
+          LayoutBuilder(builder: (ctx, constraints) {
+            // Below 520 px: 2 × 2 grid
+            if (constraints.maxWidth < 520) {
+              return Column(
+                children: [
+                  Row(children: [
+                    Expanded(child: cards[0]),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Présents aujourd\'hui',
-                        value: presentLabel,
-                        icon: Icons.check_circle,
-                        color: Colors.green,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Produits en stock',
-                        value: stockLabel,
-                        icon: Icons.inventory_2,
-                        color: Colors.orange,
-                      ),
-                    ),
+                    Expanded(child: cards[1]),
+                  ]),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: cards[2]),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        title: 'Rapports ce mois',
-                        value: rapportsLabel,
-                        icon: Icons.bar_chart,
-                        color: Colors.purple,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            )
-          else
-            Row(
+                    Expanded(child: cards[3]),
+                  ]),
+                ],
+              );
+            }
+            // 520 – 900 px: 2 × 2 with larger gap
+            if (constraints.maxWidth < 900) {
+              return Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: cards
+                    .map((c) => SizedBox(
+                    width:
+                    (constraints.maxWidth - 16) / 2,
+                    child: c))
+                    .toList(),
+              );
+            }
+            // Wide: single row
+            return Row(
               children: [
-                Expanded(
-                  child: _StatCard(
-                    title: 'Employés',
-                    value: '$employesCount',
-                    icon: Icons.people,
-                    color: Colors.blue,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Présents aujourd\'hui',
-                    value: presentLabel,
-                    icon: Icons.check_circle,
-                    color: Colors.green,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Produits en stock',
-                    value: stockLabel,
-                    icon: Icons.inventory_2,
-                    color: Colors.orange,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Rapports ce mois',
-                    value: rapportsLabel,
-                    icon: Icons.bar_chart,
-                    color: Colors.purple,
-                  ),
-                ),
+                for (int i = 0; i < cards.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 16),
+                  Expanded(child: cards[i]),
+                ],
               ],
-            ),
+            );
+          }),
         ],
       ),
     );
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// StatCard — overflow-safe
+// ─────────────────────────────────────────────────────────────────────────────
 class _StatCard extends StatelessWidget {
   final String title;
   final String value;
@@ -529,41 +735,47 @@ class _StatCard extends StatelessWidget {
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Icon badge — fixed size, never shrinks
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(value,
-                        style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: color)),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 12),
+          // Text column — takes remaining space, clips gracefully
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: color),
                   ),
-                  Text(title,
-                      style: const TextStyle(
-                          color: Colors.grey, fontSize: 12),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1),
-                ],
-              ),
+                ),
+                Text(
+                  title,
+                  style: const TextStyle(
+                      color: Colors.grey, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
     );
   }
 }

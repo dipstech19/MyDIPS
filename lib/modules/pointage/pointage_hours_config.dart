@@ -26,13 +26,17 @@ class PointageHoursConfig {
 
   /// يمكن تسجيل الدخول الآن؟
   /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
-  bool canMarkArrivalNow(DateTime now) {
+  bool canMarkArrivalNow(DateTime now,
+      {Duration graceBefore = Duration.zero,
+      Duration graceAfter = Duration.zero}) {
     return true;
   }
 
   /// يمكن تسجيل الخروج الآن؟
   /// وضع الاختبار: نسمح بالتسجيل في أي وقت (دون تقييد بزمن).
-  bool canMarkDepartureNow(DateTime now) {
+  bool canMarkDepartureNow(DateTime now,
+      {Duration graceBefore = Duration.zero,
+      Duration graceAfter = Duration.zero}) {
     return true;
   }
 

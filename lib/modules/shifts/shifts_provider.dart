@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'data/shifts_repository.dart';
@@ -8,17 +9,15 @@ class ShiftsProvider extends ChangeNotifier {
   ShiftsRepository? _repo;
   RotationConfig? _config;
   Map<String, Map<String, ShiftType>> _overrides = {};
-  bool _loading = true;
+  bool _loading = false;
   String? _error;
 
   ShiftsProvider() {
     if (_firebaseAvailable) {
       _repo = ShiftsRepository();
       _loadAll();
-    } else {
-      _loading = false;
-      notifyListeners();
     }
+    // If Firebase not available, loading stays false, no config shown.
   }
 
   bool get loading => _loading;
@@ -31,7 +30,10 @@ class ShiftsProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
     try {
-      final data = await _repo!.loadAll();
+      final data = await _repo!.loadAll().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => (config: null, overrides: <String, Map<String, ShiftType>>{}),
+      );
       _config = data.config;
       _overrides = data.overrides;
     } catch (e) {

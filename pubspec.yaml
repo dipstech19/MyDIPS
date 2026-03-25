@@ -31,10 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  provider:
-  firebase_core:
-  cloud_firestore:
-  firebase_storage:
+  provider: ^6.1.1
+  firebase_core: ^3.8.0
+  cloud_firestore: ^5.6.0
+  firebase_storage: ^12.3.0
   pdf:
   printing:
   file_picker:
@@ -42,8 +42,9 @@ dependencies:
   path_provider:
   intl: any
   image_picker:
-  http:
+  http: any
   share_plus:
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

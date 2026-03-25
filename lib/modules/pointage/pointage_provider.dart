@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
 import 'pointage_hours_config.dart';
+import 'services/pointage_export_service.dart';
 
 class PointageProvider extends ChangeNotifier {
   final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
@@ -29,6 +30,14 @@ class PointageProvider extends ChangeNotifier {
   bool get loading => _loading;
   String? get error => _error;
   bool get firebaseAvailable => _firebaseAvailable;
+
+  bool _ignoreTimeWindowsForTest = false;
+  bool get ignoreTimeWindowsForTest => _ignoreTimeWindowsForTest;
+  void setIgnoreTimeWindowsForTest(bool value) {
+    if (_ignoreTimeWindowsForTest == value) return;
+    _ignoreTimeWindowsForTest = value;
+    notifyListeners();
+  }
 
   StreamSubscription? _subPointage;
   StreamSubscription? _subReports;
@@ -139,14 +148,37 @@ class PointageProvider extends ChangeNotifier {
   bool isEquipeNonWorking(String equipeId) => _nonWorkingEquipeIds.contains(equipeId);
 
   PointageRecord? getRecordForEmployee(String employeId) {
+    // Prefer the non-renfort (original) record when multiple exist.
     final list = _todayPointage.where((p) => p.employeId == employeId).toList();
-    return list.isEmpty ? null : list.first;
+    if (list.isEmpty) return null;
+    final nonRenfort = list.where((r) => !r.tempAssigned).toList();
+    return nonRenfort.isNotEmpty ? nonRenfort.first : list.first;
+  }
+
+  /// Returns the record for a specific employee in a specific team.
+  /// For Renfort workers, this returns the independent Renfort record for the target team,
+  /// not the original team's record.
+  PointageRecord? getRecordForEmployeeInEquipe(String employeId, String equipeId) {
+    final list = _todayPointage.where((p) => p.employeId == employeId).toList();
+    if (list.isEmpty) return null;
+    // First try exact equipeId match.
+    final exact = list.where((r) => r.equipeId == equipeId).toList();
+    if (exact.isNotEmpty) return exact.first;
+    // Fallback: return the non-renfort record.
+    final nonRenfort = list.where((r) => !r.tempAssigned).toList();
+    return nonRenfort.isNotEmpty ? nonRenfort.first : list.first;
   }
 
   /// جلب سجلات يوم معيّن (للسائق عندما الفريق في وردية ليلية قبل 07:00).
   Future<List<PointageRecord>> getPointageRecordsForDate(DateTime date) async {
     if (!_firebaseAvailable || _repo == null) return [];
     return _repo!.getPointageForDate(date);
+  }
+
+  /// جلب كل سجلات البوانتاج لنطاق تاريخ (من start إلى end شامل) — للإحصائيات متعددة الأيام.
+  Future<List<PointageRecord>> getPointageForDateRange(DateTime start, DateTime end) async {
+    if (!_firebaseAvailable || _repo == null) return [];
+    return _repo!.getPointageForDateRange(start, end);
   }
 
   /// سجل نقطاج لموظف في تاريخ معيّن (للتحقق من «في تكويني» في الحوار)
@@ -166,6 +198,12 @@ class PointageProvider extends ChangeNotifier {
     if (record.adminFinalStatus != null) {
       return record.adminFinalStatus!;
     }
+    // Chef overrides driver.
+    if (record.chefStatus != ChefPointageStatus.unset) {
+      return record.chefStatus == ChefPointageStatus.present
+          ? AttendanceStatus.present
+          : AttendanceStatus.absent;
+    }
     switch (record.reconciledStatus) {
       case ReconciledStatus.confirmedPresent:
         return AttendanceStatus.present;
@@ -183,15 +221,11 @@ class PointageProvider extends ChangeNotifier {
         case DriverPointageStatus.absent:
           return AttendanceStatus.absent;
         case DriverPointageStatus.enVehicule:
-          return AttendanceStatus.notInVehicle;
+          // Legacy value (driver "in vehicle") treated as present.
+          return AttendanceStatus.present;
         case DriverPointageStatus.unset:
           break;
       }
-    }
-    if (record.chefStatus != ChefPointageStatus.unset) {
-      return record.chefStatus == ChefPointageStatus.present
-          ? AttendanceStatus.present
-          : AttendanceStatus.absent;
     }
     return AttendanceStatus.unmarked;
   }
@@ -209,10 +243,12 @@ class PointageProvider extends ChangeNotifier {
   }
 
   bool isDriverLockedForEmployee(String employeId) {
+    if (_ignoreTimeWindowsForTest) return false;
     return getRecordForEmployee(employeId)?.driverLocked ?? false;
   }
 
   bool isChefLockedForEmployee(String employeId) {
+    if (_ignoreTimeWindowsForTest) return false;
     return getRecordForEmployee(employeId)?.chefLocked ?? false;
   }
 
@@ -274,7 +310,8 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -289,7 +326,12 @@ class PointageProvider extends ChangeNotifier {
       createdAt: now,
       driverStatus: driverStatus,
     );
-    await _repo!.setDriverStatus(record, driverStatus, driverId);
+    await _repo!.setDriverStatus(
+      record,
+      driverStatus,
+      driverId,
+      ignoreLock: _ignoreTimeWindowsForTest,
+    );
     return true;
   }
 
@@ -310,7 +352,8 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -326,7 +369,58 @@ class PointageProvider extends ChangeNotifier {
       chefStatus: chefStatus,
       absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
     );
-    await _repo!.setChefStatus(record, chefStatus, chefId, absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null);
+    await _repo!.setChefStatus(
+      record,
+      chefStatus,
+      chefId,
+      absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
+      ignoreLock: _ignoreTimeWindowsForTest,
+    );
+    return true;
+  }
+
+  /// تسجيل حضور عامل renfort (محوَّل مؤقتاً) باستخدام سجله المستقل في الفريق الثاني.
+  /// يستخدم record.id للكتابة على الـ docId الصحيح وليس السجل الأصلي.
+  Future<bool> markRenfortChefAttendance({
+    required PointageRecord renfortRecord,
+    required ChefPointageStatus chefStatus,
+    String? chefId,
+    String? absenceReason,
+    PointageHoursConfig? configOverride,
+  }) async {
+    if (!_firebaseAvailable) return false;
+    final config = configOverride ?? PointageHoursConfig.instance;
+    final now = DateTime.now();
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    await _repo!.setChefStatus(
+      renfortRecord,
+      chefStatus,
+      chefId,
+      absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
+      ignoreLock: _ignoreTimeWindowsForTest,
+    );
+    return true;
+  }
+
+  /// تأكيد الساعات الإضافية (للشيفت الموالي) على نفس record (نفس date/docId).
+  Future<bool> markOvertimeChefAttendance({
+    required PointageRecord record,
+    required ChefPointageStatus overtimeChefStatus,
+    String? chefId,
+    PointageHoursConfig? configOverride,
+  }) async {
+    if (!_firebaseAvailable) return false;
+    final config = configOverride ?? PointageHoursConfig.instance;
+    final now = DateTime.now();
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    await _repo!.setOvertimeChefStatus(
+      record,
+      overtimeChefStatus,
+      chefId,
+      ignoreLock: _ignoreTimeWindowsForTest,
+    );
     return true;
   }
 
@@ -336,7 +430,8 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitDriverReport(pointageDate);
     return true;
@@ -348,38 +443,88 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!config.canMarkArrivalNow(now)) return false;
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitChefReport(equipeId, pointageDate);
     return true;
   }
 
-  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية واختيار وردية الساعات الإضافية).
+  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية).
   /// يُرجع true إذا تم التسجيل، false إذا كان خارج نافذة الخروج.
   Future<bool> setDepartureStatus({
     required PointageRecord record,
     required DepartureStatus status,
     int? overtimeMinutes,
-    String? overtimeTargetEquipeId,
-    String? overtimeTargetEquipeName,
+    String? incompleteShiftReason,
+    int? workedMinutesBeforeStop,
     PointageHoursConfig? configOverride,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
-    if (!config.canMarkDepartureNow(DateTime.now())) return false;
+    final now = DateTime.now();
+    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+    if (!config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    int? resolvedOvertime = overtimeMinutes;
+    if (status == DepartureStatus.finished) {
+      if (record.tempAssigned) {
+        // Renfort (heures sup):
+        // - If the worker is present (chef/driver marked present) in the target team => count overtime.
+        // - Otherwise overtime is 0.
+        final defaultOtMinutes = (PointageExportService.hoursPerDay * 60).toInt();
+        final isPresentInTarget = record.isFinalPresent;
+        if (!isPresentInTarget) {
+          resolvedOvertime = 0;
+        } else if (record.workedMinutesBeforeStop != null && record.workedMinutesBeforeStop! > 0) {
+          // If the worker previously didn't complete the shift (N'a pas terminé) and provided worked minutes,
+          // convert those worked minutes directly to overtime minutes in the target team.
+          resolvedOvertime = record.workedMinutesBeforeStop;
+        } else if (record.overtimeChefStatus == ChefPointageStatus.present) {
+          // Use overtimeArrivalMarkedAt when available; otherwise default to 8h.
+          final otArrival = record.overtimeArrivalMarkedAt;
+          if (otArrival != null) {
+            final mins = now.difference(otArrival).inMinutes;
+            resolvedOvertime = mins < 0 ? 0 : mins;
+          } else {
+            resolvedOvertime = defaultOtMinutes;
+          }
+          // Ensure at least one full shift is counted as overtime.
+          if (resolvedOvertime < defaultOtMinutes) resolvedOvertime = defaultOtMinutes;
+        } else {
+          // Fallback: if overtimeChefStatus isn't explicitly set, still count default 8h when present.
+          resolvedOvertime = defaultOtMinutes;
+        }
+      } else {
+        // Normal worker (not Renfort): "Fin du travail" = 8 natural hours, no overtime by default.
+        // overtimeMinutes stays as passed in (could be null/0 unless explicitly entered by user).
+        resolvedOvertime = overtimeMinutes ?? 0;
+      }
+    }
     await _repo!.setDepartureStatus(
       record,
       status,
-      overtimeMinutes: overtimeMinutes,
-      overtimeTargetEquipeId: overtimeTargetEquipeId,
-      overtimeTargetEquipeName: overtimeTargetEquipeName,
+      overtimeMinutes: resolvedOvertime,
+      incompleteShiftReason: incompleteShiftReason,
+      workedMinutesBeforeStop: workedMinutesBeforeStop,
     );
     return true;
   }
 
-  Future<void> setAdminOverride(String pointageDocId, AttendanceStatus? status, {String? absenceReason}) async {
+  Future<void> setAdminOverride(
+    String pointageDocId,
+    AttendanceStatus? status, {
+    String? absenceReason,
+    DateTime? trainingStartAt,
+    DateTime? trainingEndAt,
+  }) async {
     if (!_firebaseAvailable) return;
-    await _repo!.setAdminOverride(pointageDocId, status, absenceReason: status == AttendanceStatus.absent ? absenceReason : null);
+    await _repo!.setAdminOverride(
+      pointageDocId,
+      status,
+      absenceReason: status == AttendanceStatus.absent ? absenceReason : null,
+      trainingStartAt: status == AttendanceStatus.training ? trainingStartAt : null,
+      trainingEndAt: status == AttendanceStatus.training ? trainingEndAt : null,
+    );
   }
 
   /// تعيين الحضور النهائي من الأدمن (يُنشئ سجلاً إن لم يكن موجوداً). يدعم أي تاريخ [viewDate].
@@ -393,6 +538,8 @@ class PointageProvider extends ChangeNotifier {
     required AttendanceStatus status,
     String? absenceReason,
     DateTime? viewDate,
+    DateTime? trainingStartAt,
+    DateTime? trainingEndAt,
   }) async {
     if (!_firebaseAvailable) return;
     final date = viewDate ?? DateTime.now();
@@ -404,8 +551,16 @@ class PointageProvider extends ChangeNotifier {
       existing = await _repo!.getByEmployeAndDate(employeId, day);
     }
     if (existing != null) {
-      await _repo!.setAdminOverride(existing.id, status, absenceReason: status == AttendanceStatus.absent ? absenceReason : null);
+      await _repo!.setAdminOverride(
+        existing.id,
+        status,
+        absenceReason: status == AttendanceStatus.absent ? absenceReason : null,
+        trainingStartAt: status == AttendanceStatus.training ? trainingStartAt : null,
+        trainingEndAt: status == AttendanceStatus.training ? trainingEndAt : null,
+      );
     } else {
+      final now = DateTime.now();
+      final confirmDeparture = status == AttendanceStatus.present || status == AttendanceStatus.training;
       final record = PointageRecord(
         id: '',
         employeId: employeId,
@@ -416,12 +571,52 @@ class PointageProvider extends ChangeNotifier {
         chefName: chefName,
         status: status,
         date: day,
-        createdAt: DateTime.now(),
+        createdAt: now,
         adminFinalStatus: status,
         absenceReason: status == AttendanceStatus.absent ? absenceReason : null,
+        arrivalMarkedAt: confirmDeparture ? now : null,
+        departureStatus: confirmDeparture ? DepartureStatus.finished : DepartureStatus.unset,
+        departureMarkedAt: confirmDeparture ? now : null,
+        trainingStartAt: status == AttendanceStatus.training ? trainingStartAt : null,
+        trainingEndAt: status == AttendanceStatus.training ? trainingEndAt : null,
       );
       await _repo!.createRecordWithAdminOverride(record);
     }
+  }
+
+  /// Affectation temporaire d'un employé vers une autre équipe pour une journée (renfort).
+  /// Crée un sجل SÉPARÉ (docId différent) pour le fريق cible afin que les pointages
+  /// des deux équipes soient totalement indépendants.
+  Future<void> assignEmployeeTemp({
+    required String employeId,
+    required String employeNom,
+    required String employeCin,
+    required String targetEquipeId,
+    required String targetEquipeName,
+    required String targetChefName,
+    required String originalEquipeId,
+    required DateTime day,
+    String? shiftOverride,
+    int defaultOvertimeMinutes = 480,
+  }) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    final d = DateTime(day.year, day.month, day.day);
+    // Clean the original record if it was wrongly marked as tempAssigned by the old system.
+    await _repo!.cleanOriginalRecordFromRenfort(employeId, d);
+    // Create an INDEPENDENT record for the target team.
+    // The original team's record is untouched so its chef/driver statuses remain separate.
+    await _repo!.createOrUpdateRenfortRecord(
+      employeId: employeId,
+      employeNom: employeNom,
+      employeCin: employeCin,
+      targetEquipeId: targetEquipeId,
+      targetEquipeName: targetEquipeName,
+      targetChefName: targetChefName,
+      originalEquipeId: originalEquipeId,
+      day: d,
+      shiftOverride: shiftOverride,
+      defaultOvertimeMinutes: defaultOvertimeMinutes,
+    );
   }
 
   Future<void> submitDailyReport({
@@ -451,6 +646,39 @@ class PointageProvider extends ChangeNotifier {
       notes: notes,
     );
     await _repo!.submitReport(report);
+  }
+
+  /// Réinitialise les données pointage (pointages + rapports) sur une plage.
+  Future<void> clearPointageAndReportsInDateRange(DateTime start, DateTime end) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    await _repo!.clearPointageAndReportsInDateRange(start, end);
+    if (_selectedReportDate != null) {
+      selectReportDate(_selectedReportDate);
+    }
+  }
+
+  /// تنظيف كل السجلات الملوثة من النظام القديم (tempAssigned في السجل الأصلي).
+  /// يُستخدم مرة واحدة لإصلاح البيانات الموجودة في Firestore.
+  Future<void> fixLegacyRenfortRecords() async {
+    if (!_firebaseAvailable || _repo == null) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // Get all today's records that are tempAssigned but use the OLD docId format (no _renfort_ in id).
+    final records = _todayPointage.where((r) {
+      return r.tempAssigned && !r.id.contains('_renfort_');
+    }).toList();
+    for (final r in records) {
+      // Fix: remove tempAssigned from the original record.
+      await _repo!.updatePointageFields(r.id, {
+        'tempAssigned': false,
+        'originalEquipeId': null,
+        // Restore equipeId to the original if we can (using originalEquipeId stored in the record).
+        if ((r.originalEquipeId ?? '').isNotEmpty) 'equipeId': r.originalEquipeId,
+        if ((r.originalEquipeId ?? '').isNotEmpty) 'equipeName': r.equipeName,
+      });
+    }
+    // Reload.
+    selectReportDate(today);
   }
 
   @override
