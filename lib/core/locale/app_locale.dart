@@ -85,7 +85,7 @@ class AppTranslations {
     'cin_label': 'CIN',
     'chef_label': 'Chef',
     'language': 'Langue',
-    'arabic': 'العربية',
+    'arabic': 'Arabe',
     'french': 'Français',
     'report_presence_title': 'Rapport de présence',
     'report_presents': 'Présents',

@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../core/auth/app_permissions.dart';
 import '../core/auth/auth_provider.dart';
 import '../core/locale/app_locale.dart';
 import '../core/site/site_model.dart';
 import '../core/site/site_provider.dart';
 import '../core/utils/responsive.dart';
 import '../modules/Paramètres/paramètres.dart';
-import '../modules/Demandes/demandes_page.dart';
+import '../modules/Demandes/leave_demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
 import '../modules/employees/employees_provider.dart';
@@ -16,11 +17,11 @@ import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
-import '../modules/pointage/formation_page.dart';
-import '../modules/groupes/groupe_pointage_page.dart';
-import '../modules/shifts/shifts_page.dart';
+import '../modules/pointage/validated_excels_page.dart';
 import '../modules/overtime/overtime_page.dart';
 import '../modules/overtime/overtime_provider.dart';
+import '../modules/groupes/groupe_pointage_page.dart';
+import '../modules/shifts/shifts_page.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -32,55 +33,71 @@ class MainLayout extends StatefulWidget {
 class _MainLayoutState extends State<MainLayout> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  String? _listeningOvertimeEquipeId;
 
   /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés، Pointage، Shifts، Paramètres. مسؤول مجموعة: Pointage فقط.
-  List<_NavItem> _navItems(BuildContext context, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
+  List<_NavItem> _navItems(
+    BuildContext context,
+    bool isChauffeur,
+    bool isChefEquipe,
+    bool isGroupe, {
+    int overtimeBadgeCount = 0,
+  }) {
+    final auth = context.read<AuthProvider>();
     if (isChauffeur) {
       return [
-        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        _NavItem(key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
         _NavItem(
-            icon: Icons.note_add, label: tr(context, 'nav_send_report')),
+            key: 'report', icon: Icons.note_add, label: tr(context, 'nav_send_report')),
       ];
     }
     if (isGroupe) {
       return [
-        _NavItem(icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        _NavItem(key: 'groupe_pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
       ];
     }
     if (isChefEquipe) {
       return [
         _NavItem(
-            icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
-        _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
+            key: 'dashboard', icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
         _NavItem(
-            icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+            key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
         _NavItem(
-            icon: Icons.more_time, label: 'Heures Sup.'),
+            key: 'overtime',
+            icon: Icons.access_time_filled,
+            label: 'Heures Sup.',
+            badgeCount: overtimeBadgeCount),
         _NavItem(
-            icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
-        _NavItem(
-            icon: Icons.settings, label: tr(context, 'nav_settings')),
+            key: 'settings', icon: Icons.settings, label: tr(context, 'nav_settings')),
+        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes'),
       ];
     }
     return [
-      _NavItem(icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
-      _NavItem(icon: Icons.people, label: tr(context, 'nav_employees')),
-      _NavItem(
-          icon: Icons.access_time, label: tr(context, 'nav_pointage')),
-      _NavItem(
-          icon: Icons.more_time, label: 'Heures Sup.'),
-      _NavItem(
-          icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
-      _NavItem(
-          icon: Icons.school, label: 'Formation'),
-      _NavItem(
-          icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
-      _NavItem(
-          icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
-      _NavItem(
-          icon: Icons.settings, label: tr(context, 'nav_settings')),
-      _NavItem(icon: Icons.inbox, label: 'Demandes'),
-      _NavItem(icon: Icons.local_shipping, label: 'Logistique'),
+      _NavItem(key: 'dashboard', icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
+      if (auth.hasPermission(AppPermissions.employeesView))
+        _NavItem(key: 'employees', icon: Icons.people, label: tr(context, 'nav_employees')),
+      if (auth.hasPermission(AppPermissions.pointageView))
+        _NavItem(
+            key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+      if (auth.hasPermission(AppPermissions.overtimeView))
+        _NavItem(
+            key: 'overtime', icon: Icons.access_time_filled, label: 'Heures Sup.'),
+      if (auth.hasPermission(AppPermissions.shiftsView))
+        _NavItem(
+            key: 'shifts', icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+      if (auth.hasPermission(AppPermissions.stockView))
+        _NavItem(
+            key: 'stock', icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
+      if (auth.hasPermission(AppPermissions.reportsView))
+        _NavItem(
+            key: 'reports', icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
+      if (auth.hasPermission(AppPermissions.settingsView))
+        _NavItem(
+            key: 'settings', icon: Icons.settings, label: tr(context, 'nav_settings')),
+      if (auth.hasPermission(AppPermissions.demandesView))
+        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes'),
+      if (auth.hasPermission(AppPermissions.logistiqueView))
+        _NavItem(key: 'logistique', icon: Icons.local_shipping, label: 'Logistique'),
     ];
   }
 
@@ -185,16 +202,47 @@ class _MainLayoutState extends State<MainLayout> {
                     leading: Icon(item.icon,
                         color:
                         isSelected ? Colors.white : Colors.white70),
-                    title: Text(
-                      item.label,
-                      style: TextStyle(
-                        color:
-                        isSelected ? Colors.white : Colors.white70,
-                        fontWeight: isSelected
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                    title: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            item.label,
+                            style: TextStyle(
+                              color:
+                              isSelected ? Colors.white : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (item.badgeCount > 0) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            constraints:
+                                const BoxConstraints(minWidth: 16, minHeight: 16),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              item.badgeCount > 99
+                                  ? '99+'
+                                  : item.badgeCount.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                height: 1.0,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     onTap: () {
                       setState(() => _selectedIndex = index);
@@ -356,7 +404,27 @@ class _MainLayoutState extends State<MainLayout> {
     final isChauffeur = auth.isChauffeur;
     final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
     final isGroupe = auth.isGroupeResponsable;
-    final items = _navItems(context, isChauffeur, isChefEquipe, isGroupe);
+    if (isChefEquipe) {
+      final equipeId = auth.equipeId;
+      if (equipeId != null &&
+          equipeId.isNotEmpty &&
+          _listeningOvertimeEquipeId != equipeId) {
+        _listeningOvertimeEquipeId = equipeId;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          context.read<OvertimeProvider>().listenTodayForEquipe(equipeId);
+        });
+      }
+    }
+    final overtimeBadgeCount =
+        isChefEquipe ? context.watch<OvertimeProvider>().todayAssignments.length : 0;
+    final items = _navItems(
+      context,
+      isChauffeur,
+      isChefEquipe,
+      isGroupe,
+      overtimeBadgeCount: overtimeBadgeCount,
+    );
     final mobile = isMobile(context);
 
     // Clamp index in case item list changes between role switches
@@ -388,7 +456,7 @@ class _MainLayoutState extends State<MainLayout> {
             ),
           ),
         ),
-        body: SafeArea(child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe)),
+        body: SafeArea(child: _buildPage(context, items[safeIndex].key, isChauffeur, isChefEquipe, isGroupe)),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex.clamp(0, items.length - 1),
           onTap: (i) => setState(() => _selectedIndex = i),
@@ -409,7 +477,7 @@ class _MainLayoutState extends State<MainLayout> {
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: 1200),
-                child: _buildPage(context, _selectedIndex, isChauffeur, isChefEquipe, isGroupe),
+                child: _buildPage(context, items[safeIndex].key, isChauffeur, isChefEquipe, isGroupe),
               ),
             ),
           ),
@@ -447,63 +515,55 @@ class _MainLayoutState extends State<MainLayout> {
     );
   }
 
-  Widget _buildPage(BuildContext context, int index, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
+  Widget _buildPage(BuildContext context, String pageKey, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
     if (isChauffeur) {
-      if (index == 0) return const DriverPointagePage();
-      if (index == 1) return const ReportPage();
+      if (pageKey == 'pointage') return const DriverPointagePage();
+      if (pageKey == 'report') return const ReportPage();
       return const DriverPointagePage();
     }
     if (isGroupe) {
       return const GroupePointagePage();
     }
     if (isChefEquipe) {
-      switch (index) {
-        case 0:
-          return const _DashboardPage();
-        case 1:
-          return const EmployeesPage();
-        case 2:
+      switch (pageKey) {
+        case 'dashboard':
+          return const _ChefDashboardPage();
+        case 'pointage':
           return const PointagePage();
-        case 3:
+        case 'overtime':
           return const OvertimePage();
-        case 4:
-          return const ShiftsPage();
-        case 5:
+        case 'settings':
           return const ParametresPage();
+        case 'demandes':
+          return const DemandesPage(role: UserRole.demandeur);
         default:
-          return const _DashboardPage();
+          return const _ChefDashboardPage();
       }
     }
 
-    switch (index) {
-      case 0:
+    switch (pageKey) {
+      case 'dashboard':
         return const _DashboardPage();
-      case 1:
+      case 'employees':
         return const EmployeesPage();
-      case 2:
+      case 'pointage':
         return const PointagePage();
-      case 3:
+      case 'overtime':
         return const OvertimePage();
-      case 4:
+      case 'shifts':
         return const ShiftsPage();
-      case 5:
-        return const FormationPage();
-      case 6:
+      case 'stock':
         return GestionMagasinPage();
-      case 7:
-        return const _PlaceholderPage(
-          icon: Icons.bar_chart,
-          title: 'Rapports',
-          subtitle: 'Bientôt disponible',
-        );
-      case 8:
+      case 'reports':
+        return const ValidatedExcelsPage();
+      case 'settings':
         return const ParametresPage();
-      case 9:
+      case 'demandes':
         final auth = context.read<AuthProvider>();
         return DemandesPage(
           role: auth.isDirecteur ? UserRole.administrateur : UserRole.demandeur,
         );
-      case 10:
+      case 'logistique':
         return const LogistiquePage();
       default:
         return const _PlaceholderPage(
@@ -519,9 +579,16 @@ class _MainLayoutState extends State<MainLayout> {
 // NavItem
 // ─────────────────────────────────────────────────────────────────────────────
 class _NavItem {
+  final String key;
   final IconData icon;
   final String label;
-  _NavItem({required this.icon, required this.label});
+  final int badgeCount;
+  _NavItem({
+    required this.key,
+    required this.icon,
+    required this.label,
+    this.badgeCount = 0,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -704,6 +771,73 @@ class _DashboardPage extends StatelessWidget {
             );
           }),
         ],
+      ),
+    );
+  }
+}
+
+class _ChefDashboardPage extends StatelessWidget {
+  const _ChefDashboardPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
+    final user = auth.currentUser;
+    final hasPhoto = (user?.photoUrl ?? '').trim().isNotEmpty;
+    final displayName = user?.nom.isNotEmpty == true ? user!.nom : 'Chef d\'équipe';
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(padding),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: mobile ? 38 : 48,
+                    backgroundColor: const Color(0xFF1565C0).withOpacity(0.12),
+                    backgroundImage: hasPhoto ? NetworkImage(user!.photoUrl!) : null,
+                    child: hasPhoto
+                        ? null
+                        : Text(
+                            displayName[0].toUpperCase(),
+                            style: TextStyle(
+                              fontSize: mobile ? 26 : 32,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF1565C0),
+                            ),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Bonjour, $displayName',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: mobile ? 22 : 26,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Bienvenue dans votre espace Chef d\'équipe',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: mobile ? 13 : 14,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -279,6 +279,7 @@ class DriverStatusChips extends StatelessWidget {
   final ValueChanged<AttendanceState> onSelect;
   final String presentLabel;
   final String absentLabel;
+  // Kept for backward compatibility; not used in UI.
   final String notInVehicleLabel;
   const DriverStatusChips({super.key, required this.current, required this.onSelect, required this.presentLabel, required this.absentLabel, required this.notInVehicleLabel});
 
@@ -286,14 +287,16 @@ class DriverStatusChips extends StatelessWidget {
   Widget build(BuildContext context) {
     if (current == AttendanceState.present) return _StatusChip(label: presentLabel, icon: Icons.check, color: AppColors.green, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
     if (current == AttendanceState.absent) return _StatusChip(label: absentLabel, icon: Icons.close, color: AppColors.red, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
-    if (current == AttendanceState.notInVehicle) return _StatusChip(label: notInVehicleLabel, icon: Icons.directions_car, color: AppColors.yellow, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
+    // "Not in vehicle" is treated like absent and hidden as a separate option.
+    if (current == AttendanceState.notInVehicle) {
+      return _StatusChip(label: absentLabel, icon: Icons.close, color: AppColors.red, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
+    }
     return Wrap(
       spacing: 6,
       runSpacing: 6,
       children: [
         _StatusChip(label: presentLabel, icon: Icons.check, color: AppColors.green, selected: false, onTap: () => onSelect(AttendanceState.present)),
         _StatusChip(label: absentLabel, icon: Icons.close, color: AppColors.red, selected: false, onTap: () => onSelect(AttendanceState.absent)),
-        _StatusChip(label: notInVehicleLabel, icon: Icons.directions_car, color: AppColors.yellow, selected: false, onTap: () => onSelect(AttendanceState.notInVehicle)),
       ],
     );
   }

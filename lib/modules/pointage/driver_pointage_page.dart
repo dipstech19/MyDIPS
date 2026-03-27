@@ -28,6 +28,22 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
   String? _selectedEquipeId;
   bool _nonWorkingLoadRequested = false;
 
+  String? _departureStatusLabel(BuildContext context, PointageRecord record) {
+    if (record.departureStatus == DepartureStatus.finished) {
+      final t = record.departureMarkedAt;
+      if (t != null) {
+        final hh = t.hour.toString().padLeft(2, '0');
+        final mm = t.minute.toString().padLeft(2, '0');
+        return 'Terminé ($hh:$mm)';
+      }
+      return tr(context, 'departure_finished');
+    }
+    if (record.departureStatus == DepartureStatus.stillWorking) {
+      return 'En cours';
+    }
+    return null;
+  }
+
   static AttendanceState _driverStatusToState(DriverPointageStatus s) {
     switch (s) {
       case DriverPointageStatus.present:
@@ -266,7 +282,8 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 
                     for (final e in workersForExport) {
                       final record = pointageProvider.getRecordForEmployee(e.id);
-                      final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
+                      final isLeave = record?.adminFinalStatus == AttendanceStatus.leave;
+                      final s = isLeave ? AttendanceState.present : _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
 
                       if (s == AttendanceState.present) {
                         // Sortie confirmée = P2 (sinon = seulement P1)
@@ -515,6 +532,20 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    if (_departureStatusLabel(context, record) != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          _departureStatusLabel(context, record)!,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: record.departureStatus == DepartureStatus.finished
+                                                ? Colors.green.shade700
+                                                : Colors.orange.shade700,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
                                     if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 2),
@@ -549,6 +580,20 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              if (_departureStatusLabel(context, record) != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    _departureStatusLabel(context, record)!,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: record.departureStatus == DepartureStatus.finished
+                                          ? Colors.green.shade700
+                                          : Colors.orange.shade700,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
                               if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 2),

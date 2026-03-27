@@ -37,6 +37,8 @@ class AdminUser {
       'role': role,
       'actif': actif,
       'permissions': permissions,
+      'siteIds': siteIds,
+      'password': password,
       'dateCreation': Timestamp.fromDate(dateCreation),
     };
   }

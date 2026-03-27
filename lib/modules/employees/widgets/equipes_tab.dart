@@ -13,6 +13,8 @@ class EquipesTab extends StatefulWidget {
   final List<Equipe> equipes;
   final List<Employe> employes;
   final bool isDirecteur;
+  final bool canManageTeams;
+  final bool canManageMembers;
   final Function(Equipe) onAddEquipe;
   final Function(Equipe) onDeleteEquipe;
 
@@ -21,6 +23,8 @@ class EquipesTab extends StatefulWidget {
     required this.equipes,
     required this.employes,
     required this.isDirecteur,
+    required this.canManageTeams,
+    required this.canManageMembers,
     required this.onAddEquipe,
     required this.onDeleteEquipe,
   });
@@ -210,7 +214,7 @@ class _EquipesTabState extends State<EquipesTab> {
             Text('${widget.equipes.length} équipe(s)',
                 style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             // ✅ زر Nouvelle Équipe فقط للـ Directeur
-            if (widget.isDirecteur)
+            if (widget.canManageTeams)
               Row(
                 children: [
                   OutlinedButton.icon(
@@ -360,7 +364,7 @@ class _EquipesTabState extends State<EquipesTab> {
                             ),
                             const SizedBox(width: 8),
                             // Actions — Supprimer uniquement pour le Directeur, pas pour le Chef d'équipe
-                            if (widget.isDirecteur)
+                            if (widget.canManageTeams)
                               IconButton(
                                 icon: const Icon(Icons.delete_outline,
                                     size: 18),
@@ -414,7 +418,7 @@ class _EquipesTabState extends State<EquipesTab> {
                                         fontSize: 13,
                                         color: Color(0xFF1565C0))),
                                 // ✅ Directeur أو Chef ديال هاد الفريق
-                                if (widget.isDirecteur || eq.chefId == _getCurrentUserId())
+                                if (widget.canManageMembers || eq.chefId == _getCurrentUserId())
                                   TextButton.icon(
                                     onPressed: () => _showAddMembreDialog(context, eq),
                                     icon: const Icon(Icons.person_add, size: 16),
@@ -512,7 +516,7 @@ class _EquipesTabState extends State<EquipesTab> {
               ],
             ),
           ),
-          if (!isChef && widget.isDirecteur)
+          if (!isChef && widget.canManageMembers)
             IconButton(
               tooltip: 'Retirer',
               icon: Icon(Icons.remove_circle_outline, color: Colors.red[400], size: 20),

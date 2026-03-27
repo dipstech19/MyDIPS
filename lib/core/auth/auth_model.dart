@@ -10,6 +10,7 @@ class AppUser {
   final String? groupeId;
   final String? photoUrl;
   final List<String>? siteIds;
+  final List<String> permissions;
 
   AppUser({
     required this.id,
@@ -21,6 +22,7 @@ class AppUser {
     this.groupeId,
     this.photoUrl,
     this.siteIds,
+    this.permissions = const [],
   });
 
   bool get isSuperAdmin =>

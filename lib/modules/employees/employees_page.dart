@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/app_permissions.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
@@ -149,6 +150,13 @@ class _EmployeesPageState extends State<EmployeesPage>
 
     final padding = pagePadding(context);
     final mobile = isMobile(context);
+    final canManageEmployees = auth.hasPermission(AppPermissions.employeesManage);
+    final canDeleteEmployees = auth.hasPermission(AppPermissions.employeesDelete);
+    final canManageTeams = auth.hasPermission(AppPermissions.teamsManage);
+    final canManageMembers = auth.hasAnyPermission([
+      AppPermissions.teamsManage,
+      AppPermissions.employeesManage,
+    ]);
 
     // Show loading indicator
     if (prov.loading) {
@@ -172,7 +180,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                 Text('Gestion des Employés', style: TextStyle(fontSize: titleFontSize(context), fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
                 Text(auth.isDirecteur ? 'Vue complète - ${employes.length} employés' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
-                if (auth.isDirecteur) ...[
+                if (canManageEmployees) ...[
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
@@ -197,7 +205,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     Text(auth.isDirecteur ? 'Vue complète - ${employes.length} employés' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
                   ],
                 ),
-                if (auth.isDirecteur)
+                if (canManageEmployees)
                   ElevatedButton.icon(
                     onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
                     icon: const Icon(Icons.person_add),
@@ -277,11 +285,22 @@ class _EmployeesPageState extends State<EmployeesPage>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildEmployesTab(context, employes, equipes, filtered, auth.isDirecteur, prov),
+                _buildEmployesTab(
+                  context,
+                  employes,
+                  equipes,
+                  filtered,
+                  auth.isDirecteur,
+                  canManageEmployees,
+                  canDeleteEmployees,
+                  prov,
+                ),
                 EquipesTab(
                   equipes: equipes,
                   employes: employes,
                   isDirecteur: auth.isDirecteur,
+                  canManageTeams: canManageTeams,
+                  canManageMembers: canManageMembers,
                   onAddEquipe: (eq) async {
                     await prov.addEquipe(eq);
                   },
@@ -297,7 +316,16 @@ class _EmployeesPageState extends State<EmployeesPage>
     );
   }
 
-  Widget _buildEmployesTab(BuildContext context, List<Employe> employes, List<Equipe> equipes, List<Employe> filtered, bool isDirecteur, EmployeesProvider prov) {
+  Widget _buildEmployesTab(
+    BuildContext context,
+    List<Employe> employes,
+    List<Equipe> equipes,
+    List<Employe> filtered,
+    bool isDirecteur,
+    bool canManageEmployees,
+    bool canDeleteEmployees,
+    EmployeesProvider prov,
+  ) {
     final mobile = isMobile(context);
     return Column(
       children: [
@@ -373,18 +401,42 @@ class _EmployeesPageState extends State<EmployeesPage>
                       child: SizedBox(
                         width: 700,
                         height: constraints.maxHeight,
-                        child: _employesTable(context, employes, filtered, isDirecteur, prov),
+                        child: _employesTable(
+                          context,
+                          employes,
+                          filtered,
+                          isDirecteur,
+                          canManageEmployees,
+                          canDeleteEmployees,
+                          prov,
+                        ),
                       ),
                     );
                   },
                 )
-              : _employesTable(context, employes, filtered, isDirecteur, prov),
+              : _employesTable(
+                  context,
+                  employes,
+                  filtered,
+                  isDirecteur,
+                  canManageEmployees,
+                  canDeleteEmployees,
+                  prov,
+                ),
         ),
       ],
     );
   }
 
-  Widget _employesTable(BuildContext context, List<Employe> employes, List<Employe> filtered, bool isDirecteur, EmployeesProvider prov) {
+  Widget _employesTable(
+    BuildContext context,
+    List<Employe> employes,
+    List<Employe> filtered,
+    bool isDirecteur,
+    bool canManageEmployees,
+    bool canDeleteEmployees,
+    EmployeesProvider prov,
+  ) {
     final mobile = isMobile(context);
     final isChefOnly = !isDirecteur;
     return Container(
@@ -498,7 +550,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                         if (!isChefOnly)
                         SizedBox(
                           width: mobile ? 140 : 160,
-                          child: isDirecteur
+                          child: canManageEmployees
                               ? Row(
                                   mainAxisSize: MainAxisSize.min,
                                   mainAxisAlignment: MainAxisAlignment.end,
@@ -533,21 +585,24 @@ class _EmployeesPageState extends State<EmployeesPage>
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                     ),
-                                    IconButton(
-                                      icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
-                                      tooltip: 'Supprimer l\'employé',
-                                      onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                    ),
+                                    if (canDeleteEmployees)
+                                      IconButton(
+                                        icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
+                                        tooltip: 'Supprimer l\'employé',
+                                        onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                      ),
                                   ],
                                 )
-                              : IconButton(
-                                  icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
-                                  onPressed: () => _showChangeStatutDialog(context, e, prov),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                ),
+                              : (isDirecteur
+                                  ? const SizedBox.shrink()
+                                  : IconButton(
+                                      icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                      onPressed: () => _showChangeStatutDialog(context, e, prov),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                    )),
                         ),
                       ]),
                     ),

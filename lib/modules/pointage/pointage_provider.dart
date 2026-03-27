@@ -560,7 +560,9 @@ class PointageProvider extends ChangeNotifier {
       );
     } else {
       final now = DateTime.now();
-      final confirmDeparture = status == AttendanceStatus.present || status == AttendanceStatus.training;
+      final confirmDeparture = status == AttendanceStatus.present ||
+          status == AttendanceStatus.training ||
+          status == AttendanceStatus.leave;
       final record = PointageRecord(
         id: '',
         employeId: employeId,

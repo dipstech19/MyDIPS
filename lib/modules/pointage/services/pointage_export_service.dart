@@ -17,6 +17,8 @@ class PointageExportRow {
   final String employeNom;
   final String equipeName;
   final int daysWorked;
+  /// Nombre total de shifts planifiés sur la période (hors repos).
+  final int plannedShifts;
   final int daysAbsent;
   final double totalHours;
   final double overtimeHours;
@@ -37,6 +39,7 @@ class PointageExportRow {
     required this.employeNom,
     required this.equipeName,
     required this.daysWorked,
+    required this.plannedShifts,
     required this.daysAbsent,
     required this.totalHours,
     required this.overtimeHours,
@@ -629,6 +632,8 @@ class PointageExportService {
             style = makeDayStyle(bg: '#FFCDD2', fg: '#B71C1C');
           } else if (dayStatus == 'formation') {
             style = makeDayStyle(bg: '#BBDEFB', fg: '#0D47A1');
+          } else if (dayStatus == 'leave') {
+            style = makeDayStyle(bg: '#0D47A1', fg: '#FFFFFF');
           } else if (dayStatus == 'paid_absence') {
             style = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
           } else if (dayStatus == 'rest') {
@@ -643,7 +648,7 @@ class PointageExportService {
         }
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.IntCellValue(r.daysWorked));
+            excel.TextCellValue('${r.daysWorked}/${r.plannedShifts}'));
         sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
             excel.IntCellValue(r.daysAbsent));
@@ -738,6 +743,9 @@ class PointageExportService {
     required List<PointageRecord> records,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
+    /// إذا true: الحضور لا يُحسب إلا إذا كان الدخول والخروج مؤكدين.
+    /// غير المؤكدين يُحوّلون تلقائيًا إلى غياب في الـ Excel.
+    bool requireConfirmedEntryExit = false,
     /// قائمة سجلات الساعات الإضافية (overtime_assignments) لإضافتها لكل موظف.
     List<OvertimeAssignment>? overtimeAssignments,
   }) {
@@ -830,7 +838,28 @@ class PointageExportService {
           final hasOtAssignment = (overtimeByDay[d] ?? 0) > 0;
 
           for (final r in dayRecords) {
-            if (r.isFinalPresent) {
+            final hasConfirmedEntryExit = r.arrivalMarkedAt != null &&
+                r.departureMarkedAt != null &&
+                r.departureStatus == DepartureStatus.finished;
+            // Primary rule: final present status.
+            var canCountAsPresent = r.isFinalPresent &&
+                (!requireConfirmedEntryExit || hasConfirmedEntryExit);
+            // Fallback for historical data: many old records were marked by only one side
+            // (chef OR driver) without full reconciliation. For period exports we still
+            // count them as present unless strict confirmation is explicitly required.
+            if (!canCountAsPresent && !requireConfirmedEntryExit) {
+              final hasLegacyPresenceSignal =
+                  r.status == AttendanceStatus.present ||
+                      r.status == AttendanceStatus.training ||
+                      r.status == AttendanceStatus.leave ||
+                  r.chefStatus == ChefPointageStatus.present ||
+                      r.driverStatus == DriverPointageStatus.present ||
+                      r.adminFinalStatus == AttendanceStatus.present ||
+                      r.adminFinalStatus == AttendanceStatus.training ||
+                      r.adminFinalStatus == AttendanceStatus.leave;
+              canCountAsPresent = hasLegacyPresenceSignal;
+            }
+            if (canCountAsPresent) {
               hasAnyFinalPresent = true;
               // Renfort (tempAssigned + finished): natural 8h belong to the ORIGINAL team.
               // So we DON'T add natural hours here for Renfort records.
@@ -849,12 +878,15 @@ class PointageExportService {
           }
 
           if (hasAnyFinalPresent) {
+            // If the employee is on approved leave for this day, mark it specially
+            // (dark blue) while still counting as "worked/present".
+            final hasLeave = dayRecords.any((r) => r.adminFinalStatus == AttendanceStatus.leave);
             daysWorked++;
             if (hasNaturalHours) totalHours += hoursPerDay;
             overtimeHours += otForDay;
-            // Afficher uniquement "8" pour un jour présent (sans mention HS)
+            // Afficher uniquement "8" pour un jour (présent / congé) sans mention HS
             hoursByDay[d] = '8';
-            dayStatusByDay[d] = 'present';
+            dayStatusByDay[d] = hasLeave ? 'leave' : 'present';
           } else {
             final r = dayRecords.isNotEmpty ? dayRecords.first : null;
             final isPaidAbsence = r != null &&
@@ -881,6 +913,7 @@ class PointageExportService {
       }
 
       final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
+      final plannedShifts = (days.length - restDaysCount).clamp(0, days.length);
       final payableDays = totalHours / hoursPerDay;
       final periodBaseDays = (days.length - restDaysCount).clamp(1, days.length);
       final salairePeriode = emp.salaireNet * (payableDays / periodBaseDays);
@@ -890,6 +923,7 @@ class PointageExportService {
         employeNom: emp.nom,
         equipeName: emp.equipeName,
         daysWorked: daysWorked,
+        plannedShifts: plannedShifts,
         daysAbsent: daysAbsent,
         totalHours: totalHours,
         overtimeHours: overtimeHours,

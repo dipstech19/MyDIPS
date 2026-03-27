@@ -80,12 +80,7 @@ class PointageRepository {
   Future<List<PointageRecord>> getPointageForDateRange(DateTime start, DateTime end) async {
     final from = DateTime(start.year, start.month, start.day);
     final to = DateTime(end.year, end.month, end.day + 1);
-    final snap = await _firestore
-        .collection(_pointageCollection)
-        .where('date', isGreaterThanOrEqualTo: from.toIso8601String())
-        .where('date', isLessThan: to.toIso8601String())
-        .get();
-    return snap.docs.map((d) => PointageRecord.fromMap({...d.data(), 'id': d.id})).toList();
+    return _getPointageRangeMixedDate(from, to);
   }
 
   /// إنشاء أو تحديث سجل نقطاج (للتوافق القديم وللأدمن عند الحاجة)
@@ -319,7 +314,9 @@ class PointageRepository {
     };
 
     // For admin validation, set arrival/departure timestamps so "Statistiques" can show times.
-    if (status == AttendanceStatus.present || status == AttendanceStatus.training) {
+    if (status == AttendanceStatus.present ||
+        status == AttendanceStatus.training ||
+        status == AttendanceStatus.leave) {
       final hasArrival = (data['arrivalMarkedAt'] as String?)?.isNotEmpty == true;
       if (!hasArrival) updates['arrivalMarkedAt'] = nowIso;
       updates['departureStatus'] = DepartureStatus.finished.name;
@@ -513,14 +510,44 @@ class PointageRepository {
     final start = DateTime(startInclusive.year, startInclusive.month, startInclusive.day);
     final endDay = DateTime(endInclusive.year, endInclusive.month, endInclusive.day);
     final end = endDay.add(const Duration(days: 1));
-    final snap = await _firestore
-        .collection(_pointageCollection)
-        .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
-        .where('date', isLessThan: end.toIso8601String())
-        .get();
-    return snap.docs
-        .map((d) => PointageRecord.fromMap({...d.data(), 'id': d.id}))
-        .toList();
+    return _getPointageRangeMixedDate(start, end);
+  }
+
+  /// Handles legacy data where `date` might be String OR Timestamp.
+  /// We query both representations and merge by doc id.
+  Future<List<PointageRecord>> _getPointageRangeMixedDate(
+    DateTime start,
+    DateTime endExclusive,
+  ) async {
+    final byId = <String, PointageRecord>{};
+
+    try {
+      final stringSnap = await _firestore
+          .collection(_pointageCollection)
+          .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
+          .where('date', isLessThan: endExclusive.toIso8601String())
+          .get();
+      for (final d in stringSnap.docs) {
+        byId[d.id] = PointageRecord.fromMap({...d.data(), 'id': d.id});
+      }
+    } catch (_) {
+      // Ignore and continue with timestamp-based query.
+    }
+
+    try {
+      final tsSnap = await _firestore
+          .collection(_pointageCollection)
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+          .where('date', isLessThan: Timestamp.fromDate(endExclusive))
+          .get();
+      for (final d in tsSnap.docs) {
+        byId[d.id] = PointageRecord.fromMap({...d.data(), 'id': d.id});
+      }
+    } catch (_) {
+      // Ignore and return what we already collected.
+    }
+
+    return byId.values.toList();
   }
 
   // ——— Équipes ne travaillant pas (ce jour) ———

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'app_permissions.dart';
 import 'auth_model.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -14,6 +15,39 @@ class AuthProvider extends ChangeNotifier {
   bool get isGroupeResponsable => _currentUser?.role == UserRole.groupeResponsable;
   String? get equipeId => _currentUser?.equipeId;
   String? get groupeId => _currentUser?.groupeId;
+  bool get isSuperAdmin => _currentUser?.isSuperAdmin ?? false;
+  List<String> get permissions => _currentUser?.permissions ?? const [];
+
+  bool hasPermission(String permission) {
+    if (!isDirecteur) return false;
+    if (permissions.contains(AppPermissions.all)) return true;
+    if (isSuperAdmin && permissions.isEmpty) return true; // legacy full admin
+    if (permissions.contains(permission)) return true;
+
+    // Legacy compatibility with old broad permissions.
+    if (permissions.contains('Paramètres') && permission.startsWith('settings.')) return true;
+    if (permissions.contains('Employés') &&
+        (permission.startsWith('employees.') || permission == AppPermissions.teamsManage)) {
+      return true;
+    }
+    if (permissions.contains('Pointage') &&
+        (permission.startsWith('pointage.') ||
+            permission == AppPermissions.overtimeView ||
+            permission == AppPermissions.shiftsView ||
+            permission == AppPermissions.trainingManage)) {
+      return true;
+    }
+    if (permissions.contains('Gestion Magasin') && permission == AppPermissions.stockView) return true;
+    if (permissions.contains('Rapports') && permission == AppPermissions.reportsView) return true;
+    return false;
+  }
+
+  bool hasAnyPermission(List<String> required) {
+    for (final p in required) {
+      if (hasPermission(p)) return true;
+    }
+    return false;
+  }
 
   /// تسجيل الدخول — ثابت ثم سائقين ثم شافات (بالايميل)
   Future<bool> login(String usernameOrEmail, String password) async {
@@ -34,6 +68,7 @@ class AuthProvider extends ChangeNotifier {
         equipeId: staticUser.first.equipeId,
         photoUrl: staticUser.first.photoUrl,
         siteIds: ['all'],
+        permissions: const [AppPermissions.all],
       );
       notifyListeners();
       return true;
@@ -60,6 +95,10 @@ class AuthProvider extends ChangeNotifier {
             if (perms is List<dynamic> && perms.isNotEmpty) {
               siteIds = perms.map((e) => e.toString()).toList();
             }
+            final rawPermissions = data['permissions'];
+            final adminPermissions = rawPermissions is List<dynamic>
+                ? rawPermissions.map((e) => e.toString()).toList()
+                : <String>[];
             _currentUser = AppUser(
               id: adminSnap.docs.first.id,
               nom: '${data['prenom'] ?? ''} ${data['nom'] ?? ''}'.trim(),
@@ -67,6 +106,7 @@ class AuthProvider extends ChangeNotifier {
               password: pwd,
               role: UserRole.directeur,
               siteIds: siteIds,
+              permissions: adminPermissions,
             );
             notifyListeners();
             return true;

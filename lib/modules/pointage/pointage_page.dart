@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/auth/app_permissions.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
 import '../../core/site/site_model.dart';
@@ -17,6 +18,7 @@ import 'pointage_data.dart';
 import 'pointage_provider.dart';
 import 'absence_reasons_provider.dart';
 import 'pointage_hours_config.dart';
+import 'data/excel_validation_repository.dart';
 import '../shifts/shifts_provider.dart';
 import '../overtime/overtime_provider.dart';
 import '../overtime/models/overtime_model.dart';
@@ -43,24 +45,19 @@ class _DriverChefBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String text;
     Color color;
     if (isDriver) {
       final s = value as DriverPointageStatus?;
       if (s == null || s == DriverPointageStatus.unset) {
-        text = '—';
         color = Colors.grey;
       } else {
-        text = s == DriverPointageStatus.present ? 'P' : s == DriverPointageStatus.absent ? 'A' : 'V';
         color = s == DriverPointageStatus.present ? Colors.green : s == DriverPointageStatus.absent ? Colors.red : Colors.orange;
       }
     } else {
       final s = value as ChefPointageStatus?;
       if (s == null || s == ChefPointageStatus.unset) {
-        text = '—';
         color = Colors.grey;
       } else {
-        text = s == ChefPointageStatus.present ? 'P' : 'A';
         color = s == ChefPointageStatus.present ? Colors.green : Colors.red;
       }
     }
@@ -72,7 +69,7 @@ class _DriverChefBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
-      child: Text('$label:$text', style: TextStyle(fontSize: mobile ? 12 : 10, fontWeight: FontWeight.w600, color: color)),
+      child: Text(label, style: TextStyle(fontSize: mobile ? 12 : 10, fontWeight: FontWeight.w700, color: color)),
     );
   }
 }
@@ -249,7 +246,12 @@ enum _AdminPointageView { workers, report, analysis }
 enum _AdminDesignTab { pointages, statistiques, hs, formation }
 
 class _PointagePageState extends State<PointagePage> {
+  final ExcelValidationRepository _excelValidationRepo =
+      ExcelValidationRepository();
   String? _selectedEquipeIdAdmin;
+  String? _lastOvertimeListenEquipeId;
+  DateTime _hsFilterDate = DateTime.now();
+  String? _lastOvertimeListenDateKey;
   DateTime? _reportViewDate;
   _AdminPointageView _adminContentView = _AdminPointageView.workers;
   _AdminDesignTab _adminTab = _AdminDesignTab.pointages;
@@ -260,6 +262,69 @@ class _PointagePageState extends State<PointagePage> {
   bool _adminMonthLoading = false;
   DateTime? _adminMonthLoaded;
   List<PointageRecord> _adminMonthRecords = [];
+
+  void _ensureHsDateListener(OvertimeProvider provider) {
+    final key =
+        '${_hsFilterDate.year}-${_hsFilterDate.month}-${_hsFilterDate.day}';
+    if (_lastOvertimeListenDateKey == key) return;
+    _lastOvertimeListenDateKey = key;
+    provider.listenForDate(_hsFilterDate);
+  }
+
+  bool _canViewValidatedExcel(AuthProvider auth) {
+    if (!auth.isDirecteur) return false;
+    final perms = auth.permissions;
+    if (perms.contains(AppPermissions.all)) return true;
+    return auth.hasPermission(AppPermissions.reportsView) &&
+        (auth.hasPermission(AppPermissions.adminsManage) ||
+            auth.hasPermission(AppPermissions.groupsManage));
+  }
+
+  Future<void> _showValidatedExcelDialog(BuildContext context) async {
+    final records = await _excelValidationRepo.getRecentValidated(limit: 60);
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Fichiers Excel validés'),
+        content: SizedBox(
+          width: 620,
+          child: records.isEmpty
+              ? const Text('Aucun fichier validé pour le moment.')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: records.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final r = records[i];
+                    String fmt(DateTime d) =>
+                        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+                    final range = '${fmt(r.startDate)} → ${fmt(r.endDate)}';
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.verified, color: Colors.green),
+                      title: Text(range),
+                      subtitle: Text(
+                        'Par ${r.createdByName.isEmpty ? r.createdById : r.createdByName} • Scope: ${r.scope}${(r.equipeId ?? '').isNotEmpty ? ' • Équipe: ${r.equipeId}' : ''}',
+                      ),
+                      trailing: const Text(
+                        'Validé',
+                        style: TextStyle(
+                            color: Colors.green, fontWeight: FontWeight.w700),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fermer'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _loadAdminMonthRecords(PointageProvider prov) async {
     if (_adminMonthLoading) return;
@@ -300,6 +365,8 @@ class _PointagePageState extends State<PointagePage> {
         return AttendanceState.unmarked;
       case AttendanceStatus.training:
         return AttendanceState.present; // en formation = considéré présent pour l'affichage
+      case AttendanceStatus.leave:
+        return AttendanceState.present; // congé = considéré présent pour l'affichage
     }
   }
 
@@ -876,6 +943,48 @@ class _PointagePageState extends State<PointagePage> {
                     icon: Icon(Icons.table_chart_outlined, size: iconSize),
                     label: Text('Exporter Excel', style: TextStyle(fontSize: labelSize)),
                   ),
+                  if (_canViewValidatedExcel(auth))
+                    OutlinedButton.icon(
+                      onPressed: () => _showValidatedExcelDialog(context),
+                      style: OutlinedButton.styleFrom(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity:
+                            densePhone ? VisualDensity.compact : VisualDensity.standard,
+                      ),
+                      icon: Icon(Icons.verified_outlined, size: iconSize),
+                      label: Text('Excel validés', style: TextStyle(fontSize: labelSize)),
+                    ),
+                  if (isViewingToday)
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        final unconfirmed = recordsForDate.where((r) {
+                          if (!r.isFinalPresent) return false;
+                          final confirmed = r.arrivalMarkedAt != null &&
+                              r.departureMarkedAt != null &&
+                              r.departureStatus == DepartureStatus.finished;
+                          return !confirmed;
+                        }).length;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              unconfirmed == 0
+                                  ? 'Validation OK: toutes les entrées/sorties du jour sont confirmées.'
+                                  : 'Validation (aujourd\'hui): $unconfirmed présence(s) sans confirmation entrée/sortie.',
+                            ),
+                            behavior: SnackBarBehavior.fixed,
+                          ),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
+                      ),
+                      icon: Icon(Icons.fact_check_outlined, size: iconSize),
+                      label: Text('Vérifier E/S (jour)', style: TextStyle(fontSize: labelSize)),
+                    ),
                   OutlinedButton.icon(
                     onPressed: team == null ? null : () => exportSelectedTeamPdf(),
                     style: OutlinedButton.styleFrom(
@@ -1053,29 +1162,99 @@ class _PointagePageState extends State<PointagePage> {
                   return w;
                 }
                 if (_adminTab == _AdminDesignTab.hs) {
-                  final list = _adminMonthRecords
-                      .where((r) => (r.overtimeMinutes ?? 0) > 0)
-                      .where((r) => _adminFilterEquipeId == null || r.equipeId == _adminFilterEquipeId)
-                      .where((r) => _adminFilterEmployeId == null || r.employeId == _adminFilterEmployeId)
+                  final overtimeProvider = context.watch<OvertimeProvider>();
+                  _ensureHsDateListener(overtimeProvider);
+                  final list = overtimeProvider.dateAssignments
+                      .where((a) => _adminFilterEquipeId == null || a.targetEquipeId == _adminFilterEquipeId)
+                      .where((a) => _adminFilterEmployeId == null || a.employeId == _adminFilterEmployeId)
                       .toList();
                   return Card(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final r = list[i];
-                        final hs = ((r.overtimeMinutes ?? 0) / 60).toStringAsFixed(0);
-                        return ListTile(
-                          title: Text(r.employeNom, style: const TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: Text('${r.equipeName} • ${r.date.year}-${r.date.month.toString().padLeft(2, '0')}-${r.date.day.toString().padLeft(2, '0')}'),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(color: const Color(0xFFF3E8FF), borderRadius: BorderRadius.circular(10)),
-                            child: Text('+$hs h', style: const TextStyle(color: Color(0xFF7C3AED), fontWeight: FontWeight.w800)),
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () async {
+                                    final p = await showDatePicker(
+                                      context: context,
+                                      initialDate: _hsFilterDate,
+                                      firstDate: DateTime(2020),
+                                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                                    );
+                                    if (p != null) {
+                                      setState(() => _hsFilterDate = DateTime(p.year, p.month, p.day));
+                                      if (context.mounted) {
+                                        _lastOvertimeListenDateKey = null;
+                                        _ensureHsDateListener(
+                                          context.read<OvertimeProvider>(),
+                                        );
+                                      }
+                                    }
+                                  },
+                                  icon: const Icon(Icons.calendar_today, size: 16),
+                                  label: Text(
+                                    'Affectations du ${_hsFilterDate.day}/${_hsFilterDate.month}/${_hsFilterDate.year}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton.icon(
+                                onPressed: () => _showAssignHsDialog(context, equipes, employes),
+                                icon: const Icon(Icons.add),
+                                label: const Text('Affecter'),
+                              ),
+                            ],
                           ),
-                        );
-                      },
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: list.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    'Aucune affectation pour cette date.',
+                                    style: TextStyle(color: Colors.grey[600]),
+                                  ),
+                                )
+                              : ListView.separated(
+                                  padding: const EdgeInsets.all(12),
+                                  itemCount: list.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1),
+                                  itemBuilder: (_, i) {
+                                    final a = list[i];
+                                    final hs = (a.overtimeMinutes / 60).toStringAsFixed(0);
+                                    final statusLabel = a.attendanceStatus == OvertimeAttendanceStatus.present
+                                        ? 'Présent'
+                                        : a.attendanceStatus == OvertimeAttendanceStatus.absent
+                                            ? 'Absent'
+                                            : 'Non enregistré';
+                                    final statusColor = a.attendanceStatus == OvertimeAttendanceStatus.present
+                                        ? Colors.green
+                                        : a.attendanceStatus == OvertimeAttendanceStatus.absent
+                                            ? Colors.red
+                                            : Colors.grey;
+                                    return ListTile(
+                                      title: Text(a.employeNom, style: const TextStyle(fontWeight: FontWeight.w700)),
+                                      subtitle: Text('${a.originEquipeName} → ${a.targetEquipeName} • $statusLabel'),
+                                      trailing: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF3E8FF),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          '+$hs h',
+                                          style: TextStyle(color: statusColor, fontWeight: FontWeight.w800),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     ),
                   );
                 }
@@ -1143,25 +1322,6 @@ class _PointagePageState extends State<PointagePage> {
                             padding: const EdgeInsets.all(12),
                             child: Text('Chefs d\'équipe', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade800)),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            child: DropdownButtonFormField<String>(
-                              value: _selectedEquipeIdAdmin,
-                              isExpanded: true,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                labelText: 'Équipe',
-                                isDense: true,
-                              ),
-                              items: allTeams
-                                  .map((t) => DropdownMenuItem(
-                                        value: t.equipeId,
-                                        child: Text('${t.equipeName} — ${t.chefName}', overflow: TextOverflow.ellipsis),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) => setState(() => _selectedEquipeIdAdmin = v),
-                            ),
-                          ),
                           const Divider(height: 1),
                           if (allTeams.isEmpty)
                             Padding(padding: const EdgeInsets.all(16), child: Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600])))
@@ -1174,18 +1334,36 @@ class _PointagePageState extends State<PointagePage> {
                                   final shiftLabel = t.equipeId == 'hors_equipe'
                                       ? null
                                       : shiftsProvider.getShiftForEquipe(t.equipeId, viewDate)?.shortLabel;
+                                  final isSelected = _selectedEquipeIdAdmin == t.equipeId;
                                   return ListTile(
                                     dense: true,
+                                    selected: isSelected,
+                                    selectedTileColor: Theme.of(context).primaryColor.withValues(alpha: 0.10),
+                                    onTap: () => setState(() => _selectedEquipeIdAdmin = t.equipeId),
                                     leading: const Icon(Icons.person, size: 18),
                                     title: Text(
                                       '${t.equipeName} — ${t.chefName}${shiftLabel != null ? ' ($shiftLabel)' : ''}',
-                                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: isSelected ? Theme.of(context).primaryColor : Colors.grey.shade700,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                      ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     trailing: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                      decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
-                                      child: Text('${t.workers.length}', style: const TextStyle(fontSize: 12)),
+                                      decoration: BoxDecoration(
+                                        color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.16) : Colors.grey.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        '${t.workers.length}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: isSelected ? Theme.of(context).primaryColor : null,
+                                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                        ),
+                                      ),
                                     ),
                                   );
                                 },
@@ -1320,6 +1498,36 @@ class _PointagePageState extends State<PointagePage> {
       default:
         break;
     }
+
+    final today = DateTime.now();
+    final todayDay = DateTime(today.year, today.month, today.day);
+    final startDay = DateTime(start.year, start.month, start.day);
+    final endDay = DateTime(end.year, end.month, end.day);
+    final isTodayOnly = startDay == todayDay && endDay == todayDay;
+    final unconfirmedCount = isTodayOnly
+        ? _countUnconfirmedPresenceInRange(
+            start: start,
+            end: end,
+            records: records,
+            employeeIds: filteredEmployees.map((e) => e.id).toSet(),
+          )
+        : 0;
+    var requireConfirmedEntryExit = false;
+    if (isTodayOnly && unconfirmedCount > 0) {
+      final decision = await _showAdminExcelValidationDialog(context, unconfirmedCount: unconfirmedCount);
+      if (decision == null || !mounted) return;
+      if (!decision) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Export annulé: veuillez confirmer entrées/sorties avant génération Excel.'),
+            behavior: SnackBarBehavior.fixed,
+          ),
+        );
+        return;
+      }
+      requireConfirmedEntryExit = decision;
+    }
+
     final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
     final shiftsProvider = context.read<ShiftsProvider>();
     final isRestDay = shiftsProvider.hasConfig
@@ -1337,6 +1545,8 @@ class _PointagePageState extends State<PointagePage> {
       records: records,
       reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
       isRestDay: isRestDay,
+      // Apply strict entry/exit validation only for "today" exports.
+      requireConfirmedEntryExit: isTodayOnly && requireConfirmedEntryExit,
       overtimeAssignments: overtimeAssignments,
     );
     final filePath = await PointageExportService.saveAndOpenExcel(
@@ -1345,16 +1555,87 @@ class _PointagePageState extends State<PointagePage> {
       rows: rows,
       reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
     );
+    final auth = context.read<AuthProvider>();
+    final validatedExport = isTodayOnly && unconfirmedCount == 0;
+    await _excelValidationRepo.logExport(
+      createdById: auth.currentUser?.id ?? '',
+      createdByName: auth.currentUser?.nom ?? '',
+      startDate: start,
+      endDate: end,
+      scope: picked.scope,
+      equipeId: picked.equipeId,
+      validated: validatedExport,
+      filePath: filePath,
+    );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${trOf(context, 'pointage_export_excel_saved')}: $filePath'),
+          content: Text(
+            validatedExport
+                ? '${trOf(context, 'pointage_export_excel_saved')}: $filePath\nExport validé et visible pour RH/Chef de zone.'
+                : '${trOf(context, 'pointage_export_excel_saved')}: $filePath',
+          ),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.fixed,
           duration: const Duration(seconds: 5),
         ),
       );
     }
+  }
+
+  int _countUnconfirmedPresenceInRange({
+    required DateTime start,
+    required DateTime end,
+    required List<PointageRecord> records,
+    required Set<String> employeeIds,
+  }) {
+    final s = DateTime(start.year, start.month, start.day);
+    final e = DateTime(end.year, end.month, end.day);
+    final byKey = <String, bool>{};
+    for (final r in records) {
+      if (!employeeIds.contains(r.employeId)) continue;
+      final d = DateTime(r.date.year, r.date.month, r.date.day);
+      if (d.isBefore(s) || d.isAfter(e)) continue;
+      if (!r.isFinalPresent) continue;
+      final confirmed = r.arrivalMarkedAt != null &&
+          r.departureMarkedAt != null &&
+          r.departureStatus == DepartureStatus.finished;
+      if (!confirmed) {
+        byKey['${r.employeId}-${d.toIso8601String()}'] = true;
+      }
+    }
+    return byKey.length;
+  }
+
+  Future<bool?> _showAdminExcelValidationDialog(
+    BuildContext context, {
+    required int unconfirmedCount,
+  }) async {
+    if (!context.mounted) return null;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Validation Admin avant Excel'),
+        content: Text(
+          'Il y a $unconfirmedCount présence(s) sans entrée/sortie confirmées.\n\n'
+          'Choisissez une option avant export :',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Annuler'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Bloquer et corriger'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Exporter + Non confirmés = Absents'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<({DateTime start, DateTime end})?> _showResetPointageRangeDialog(BuildContext context) async {
@@ -1365,6 +1646,221 @@ class _PointagePageState extends State<PointagePage> {
     return showDialog<({DateTime start, DateTime end})>(
       context: context,
       builder: (_) => _ResetPointageRangeDialog(initialStart: start, initialEnd: end),
+    );
+  }
+
+  Future<void> _showAssignHsDialog(
+    BuildContext context,
+    List<Equipe> equipes,
+    List<Employe> employes,
+  ) async {
+    DateTime shiftEnd(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day + 1, 6);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
+
+    DateTime shiftStart(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 6);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
+
+    final sortedEquipes = List<Equipe>.from(equipes)..sort((a, b) => a.nom.compareTo(b.nom));
+    Equipe? origin;
+    Employe? employee;
+    Equipe? target;
+    DateTime date = DateTime.now().add(const Duration(days: 1));
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final shiftsProvider = context.watch<ShiftsProvider>();
+          final today = DateTime.now();
+          final todayDay = DateTime(today.year, today.month, today.day);
+          final pickedDay = DateTime(date.year, date.month, date.day);
+          final sameDay = pickedDay.year == todayDay.year &&
+              pickedDay.month == todayDay.month &&
+              pickedDay.day == todayDay.day;
+
+          ShiftType? originShift;
+          DateTime? originShiftEnd;
+          if (origin != null && shiftsProvider.hasConfig) {
+            originShift = shiftsProvider.getShiftForEquipe(origin!.id, today);
+            originShiftEnd = shiftEnd(originShift, today);
+          }
+
+          final members = origin == null
+              ? <Employe>[]
+              : employes.where((e) => origin!.membreIds.contains(e.id) || origin!.chefId == e.id).toList();
+          final targets = origin == null ? <Equipe>[] : sortedEquipes.where((q) => q.id != origin!.id).toList();
+          return AlertDialog(
+            title: const Text('Affecter heures supplémentaires'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('1) Équipe d\'origine', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<Equipe>(
+                      value: origin,
+                      decoration: const InputDecoration(labelText: 'Équipe d\'origine', border: OutlineInputBorder()),
+                      items: sortedEquipes.map((q) => DropdownMenuItem(value: q, child: Text(q.nom))).toList(),
+                      onChanged: (v) => setD(() {
+                        origin = v;
+                        employee = null;
+                        target = null;
+                      }),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text('2) Employé', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<Employe>(
+                      value: employee,
+                      decoration: const InputDecoration(labelText: 'Employé', border: OutlineInputBorder()),
+                      items: members.map((e) => DropdownMenuItem(value: e, child: Text(e.nom))).toList(),
+                      onChanged: (v) => setD(() => employee = v),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text('3) Date et équipe cible', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: () => setD(() {
+                            date = todayDay;
+                            target = null;
+                          }),
+                          child: const Text('Aujourd\'hui'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () => setD(() {
+                            date = todayDay.add(const Duration(days: 1));
+                            target = null;
+                          }),
+                          child: const Text('Demain'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final p = await showDatePicker(
+                              context: ctx,
+                              initialDate: date,
+                              firstDate: todayDay,
+                              lastDate: todayDay.add(const Duration(days: 30)),
+                            );
+                            if (p != null) setD(() {
+                              date = DateTime(p.year, p.month, p.day);
+                              target = null;
+                            });
+                          },
+                          icon: const Icon(Icons.calendar_today, size: 16),
+                          label: Text('${date.day}/${date.month}/${date.year}'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (originShift != null && originShift != ShiftType.rest)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade100),
+                        ),
+                        child: Text(
+                          'Shift actuel: ${originShift.shortLabel} (${originShift.timeRange}). '
+                          'Même jour: seulement les shifts qui commencent après la fin (${originShiftEnd != null ? '${originShiftEnd.hour.toString().padLeft(2, '0')}:${originShiftEnd.minute.toString().padLeft(2, '0')}' : '--'}).',
+                          style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    ...targets.map((q) {
+                      ShiftType? targetShift;
+                      String? disabledReason;
+                      if (shiftsProvider.hasConfig) {
+                        targetShift = shiftsProvider.getShiftForEquipe(q.id, pickedDay);
+                        if (targetShift == ShiftType.rest) {
+                          disabledReason = 'En repos ce jour-là';
+                        } else if (sameDay && originShiftEnd != null) {
+                          final targetStart = shiftStart(targetShift!, pickedDay);
+                          if (targetStart.isBefore(originShiftEnd!)) {
+                            disabledReason = 'Commence avant la fin du shift original';
+                          }
+                        }
+                      }
+                      final selected = target?.id == q.id;
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        child: ListTile(
+                          onTap: disabledReason == null ? () => setD(() => target = q) : null,
+                          selected: selected,
+                          selectedTileColor: Theme.of(context).primaryColor.withValues(alpha: 0.10),
+                          leading: Icon(Icons.groups, color: selected ? Theme.of(context).primaryColor : Colors.grey.shade700),
+                          title: Text(q.nom),
+                          subtitle: Text(
+                            disabledReason ??
+                                (targetShift == null ? 'Shift non configuré' : '${targetShift.shortLabel} (${targetShift.timeRange})'),
+                            style: TextStyle(
+                              color: disabledReason == null ? Colors.grey.shade700 : Colors.red.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
+                          trailing: selected ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor) : null,
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              FilledButton(
+                onPressed: (origin == null || employee == null || target == null)
+                    ? null
+                    : () async {
+                        final auth = context.read<AuthProvider>();
+                        await context.read<OvertimeProvider>().assignOvertime(
+                              employeId: employee!.id,
+                              employeNom: employee!.nom,
+                              originEquipeId: origin!.id,
+                              originEquipeName: origin!.nom,
+                              targetEquipeId: target!.id,
+                              targetEquipeName: target!.nom,
+                              date: date,
+                              adminId: auth.currentUser?.id ?? '',
+                            );
+                        if (context.mounted) {
+                          context.read<OvertimeProvider>().listenForDate(_hsFilterDate);
+                        }
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                child: const Text('Confirmer'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -1441,6 +1937,7 @@ class _PointagePageState extends State<PointagePage> {
             final reconciled = record?.reconciledStatus ?? ReconciledStatus.pending;
             final isPresent = record?.isFinalPresent ?? false;
             final isAlreadyFormation = record?.adminFinalStatus == AttendanceStatus.training;
+            final isOnLeave = record?.adminFinalStatus == AttendanceStatus.leave;
             final trainingStartAt = record?.trainingStartAt;
             final trainingEndAt = record?.trainingEndAt;
             final formationRangeLabel = (trainingStartAt != null && trainingEndAt != null)
@@ -1471,7 +1968,7 @@ class _PointagePageState extends State<PointagePage> {
                                 runSpacing: 4,
                                 children: [
                                   _DriverChefBadge(
-                                    label: 'S',
+                                    label: 'T',
                                     value: record?.driverStatus,
                                     isDriver: true,
                                   ),
@@ -1495,17 +1992,53 @@ class _PointagePageState extends State<PointagePage> {
                               style: TextStyle(
                                 fontSize: mobile ? 12 : 11,
                                 fontWeight: FontWeight.w600,
-                                color: isPresent ? Colors.green.shade700 : Colors.red.shade700,
+                                color: isOnLeave
+                                    ? const Color(0xFF0D47A1) // congé: bleu foncé
+                                    : isPresent ? Colors.green.shade700 : Colors.red.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Entrée: ${record?.arrivalMarkedAt != null ? 'OK' : '--'} | Sortie: ${record?.departureStatus == DepartureStatus.finished ? 'OK' : '--'}',
+                              style: TextStyle(
+                                fontSize: mobile ? 10 : 9,
+                                color: Colors.blueGrey.shade700,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                             if (isAlreadyFormation && formationRangeLabel != null) ...[
                               const SizedBox(height: 2),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Formation',
+                                    style: TextStyle(
+                                      fontSize: mobile ? 10 : 9,
+                                      color: Colors.blue.shade700,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    formationRangeLabel,
+                                    style: TextStyle(
+                                      fontSize: mobile ? 10 : 9,
+                                      color: Colors.blueGrey.shade700,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            if (isOnLeave) ...[
+                              const SizedBox(height: 2),
                               Text(
-                                formationRangeLabel,
+                                'Congé approuvé',
                                 style: TextStyle(
                                   fontSize: mobile ? 10 : 9,
-                                  color: Colors.blueGrey.shade700,
-                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF0D47A1),
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ],
@@ -1514,11 +2047,12 @@ class _PointagePageState extends State<PointagePage> {
                       ],
                     ),
                     SizedBox(height: mobile ? 8 : 6),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          InkWell(
+                    if (!isAlreadyFormation && !isOnLeave)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            InkWell(
                               onTap: () async {
                                 if (record != null) {
                                   await pointageProvider.setAdminOverride(record.id, AttendanceStatus.present);
@@ -1542,8 +2076,8 @@ class _PointagePageState extends State<PointagePage> {
                                 child: Text(tr(context, 'present'), style: TextStyle(fontSize: mobile ? 12 : 11, color: Colors.green.shade800)),
                               ),
                             ),
-                            SizedBox(width: mobile ? 8 : 6),
-                            InkWell(
+                              SizedBox(width: mobile ? 8 : 6),
+                              InkWell(
                               onTap: () async {
                                 final reasonId = await _showAbsenceReasonDialog(context);
                                 if (reasonId == null || !mounted) return;
@@ -1570,64 +2104,27 @@ class _PointagePageState extends State<PointagePage> {
                                 alignment: Alignment.center,
                                 child: Text(tr(context, 'absent'), style: TextStyle(fontSize: mobile ? 12 : 11, color: Colors.red.shade800)),
                               ),
-                            ),
-                            SizedBox(width: mobile ? 8 : 6),
-                            InkWell(
-                              onTap: () async {
-                                final day = _reportViewDate ?? DateTime.now();
-                                final picked = await _showFormationDateRangeDialog(
-                                  context,
-                                  employeNom: e.nom,
-                                  day: DateTime(day.year, day.month, day.day),
-                                  initialStartDate: record?.trainingStartAt,
-                                  initialEndDate: record?.trainingEndAt,
-                                );
-                                if (picked == null) return;
-                                final startDay = DateTime(
-                                  picked.startDate.year,
-                                  picked.startDate.month,
-                                  picked.startDate.day,
-                                );
-                                final endDay = DateTime(
-                                  picked.endDate.year,
-                                  picked.endDate.month,
-                                  picked.endDate.day,
-                                );
-                                for (var d = startDay; !d.isAfter(endDay); d = d.add(const Duration(days: 1))) {
-                                  await pointageProvider.setAdminOverrideForEmployee(
-                                    employeId: e.id,
-                                    employeNom: e.nom,
-                                    employeCin: e.cin,
-                                    equipeId: team.equipeId,
-                                    equipeName: team.equipeName,
-                                    chefName: team.chefName,
-                                    status: AttendanceStatus.training,
-                                    viewDate: d,
-                                    trainingStartAt: startDay,
-                                    trainingEndAt: DateTime(endDay.year, endDay.month, endDay.day, 23, 59, 59),
-                                  );
-                                }
-                                if (mounted) setState(() {});
-                              },
-                              child: Container(
-                                padding: EdgeInsets.symmetric(horizontal: mobile ? 10 : 8, vertical: mobile ? 8 : 6),
-                                decoration: BoxDecoration(
-                                  color: isAlreadyFormation ? Colors.grey.shade200 : Colors.blue.shade100,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  tr(context, isAlreadyFormation ? 'pointage_formation_already' : 'pointage_formation_short'),
-                                  style: TextStyle(
-                                    fontSize: mobile ? 11 : 10,
-                                    color: isAlreadyFormation ? Colors.grey.shade600 : Colors.blue.shade800,
-                                  ),
-                                ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
+                    if (isAlreadyFormation || isOnLeave)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            isAlreadyFormation
+                                ? 'Formation active: modification des boutons désactivée'
+                                : 'Congé approuvé: modification des boutons désactivée',
+                            style: TextStyle(
+                              fontSize: mobile ? 11 : 10,
+                              color: Colors.blueGrey.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -2110,16 +2607,16 @@ class _PointagePageState extends State<PointagePage> {
       // Remove from original team view when assigned temporarily elsewhere.
       shouldShowMemberInOriginal: (_) => true,
     );
-    // Overtime (old system via tempAssigned) and new OvertimeAssignment workers
-    // are managed exclusively in "Heures Sup." page — exclude them from chef pointage.
     final overtimeWorkerIds = <String>{};
-    final otAssignmentById = <String, OvertimeAssignment>{};
 
-    // Only show base team members (no overtime workers).
+    // Keep pointage focused on the team list only; overtime follows the dedicated page.
     final workers = List<Employe>.from(baseWorkers)
       ..sort((a, b) => a.nom.compareTo(b.nom));
+    workers.sort((a, b) => a.nom.compareTo(b.nom));
     // Afficher tous les travailleurs ; ceux en formation sont en « présent — en formation » sans choix présent/absent
     final workersDisplay = workers;
+    final overtimeWorkers = workersDisplay.where((w) => overtimeWorkerIds.contains(w.id)).toList();
+    final regularWorkers = workersDisplay.where((w) => !overtimeWorkerIds.contains(w.id)).toList();
     final workersInTraining = workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
     AttendanceState getState(String id) {
       final record = pointageProvider.getRecordForEmployee(id);
@@ -2248,7 +2745,7 @@ class _PointagePageState extends State<PointagePage> {
     }
 
     final padding = pagePadding(context);
-    final today = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     final shiftForChef = chefEquipe != null ? shiftsProvider.getShiftForEquipe(chefEquipe.id, today) : null;
     final config = getConfigForEquipeAndDate(chefEquipe, today, shiftForChef);
     final hoursStatus = getPointageHoursStatus(now, config);
@@ -2554,6 +3051,28 @@ class _PointagePageState extends State<PointagePage> {
                 ),
               ),
             ],
+            if (overtimeWorkers.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Material(
+                color: Colors.purple.shade50,
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.notifications_active_outlined, size: 22, color: Colors.purple.shade700),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Heures sup.: ${overtimeWorkers.length} personne(s) vont compléter un shift avec vous.',
+                          style: TextStyle(fontSize: 13, color: Colors.purple.shade900, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             // ── أزرار تأكيد جماعي ─────────────────────────────────────
             Row(
@@ -2561,7 +3080,7 @@ class _PointagePageState extends State<PointagePage> {
                 Expanded(
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.check_circle_outline, size: 18),
-                    label: const Text('تأكيد حضور الجميع', style: TextStyle(fontSize: 13)),
+                    label: const Text('Confirmer présence de tous', style: TextStyle(fontSize: 13)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.green.shade700,
                       side: BorderSide(color: Colors.green.shade400),
@@ -2606,7 +3125,7 @@ class _PointagePageState extends State<PointagePage> {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('تم تأكيد حضور جميع الأعضاء'),
+                            content: Text('Présence de tous les membres confirmée'),
                             backgroundColor: Colors.green,
                             behavior: SnackBarBehavior.fixed,
                           ),
@@ -2619,7 +3138,7 @@ class _PointagePageState extends State<PointagePage> {
                 Expanded(
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.logout, size: 18),
-                    label: const Text('تأكيد خروج الجميع', style: TextStyle(fontSize: 13)),
+                    label: const Text('Confirmer sortie de tous', style: TextStyle(fontSize: 13)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.blue.shade700,
                       side: BorderSide(color: Colors.blue.shade400),
@@ -2645,7 +3164,7 @@ class _PointagePageState extends State<PointagePage> {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('تم تأكيد خروج جميع الأعضاء الحاضرين'),
+                            content: Text('Sortie de tous les membres présents confirmée'),
                             backgroundColor: Colors.blue,
                             behavior: SnackBarBehavior.fixed,
                           ),
@@ -2658,10 +3177,28 @@ class _PointagePageState extends State<PointagePage> {
             ),
             const SizedBox(height: 10),
             Expanded(
-              child: ListView.builder(
+              child: ListView(
                 padding: const EdgeInsets.only(bottom: 8),
-                itemCount: workersDisplay.length,
-                itemBuilder: (context, i) => buildWorkerCard(workersDisplay[i]),
+                children: [
+                  ...regularWorkers.map((e) => buildWorkerCard(e)),
+                  if (overtimeWorkers.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.purple.shade100),
+                      ),
+                      child: Text(
+                        'Personnes Heures Sup. (section séparée)',
+                        style: TextStyle(color: Colors.purple.shade800, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ...overtimeWorkers.map((e) => buildWorkerCard(e)),
+                  ],
+                ],
               ),
             ),
             SizedBox(height: 12),
@@ -2837,6 +3374,28 @@ class _PointagePageState extends State<PointagePage> {
               ),
             ),
           ],
+          if (overtimeWorkers.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Material(
+              color: Colors.purple.shade50,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.notifications_active_outlined, size: 22, color: Colors.purple.shade700),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Heures sup.: ${overtimeWorkers.length} personne(s) vont compléter un shift avec vous.',
+                        style: TextStyle(fontSize: 13, color: Colors.purple.shade900, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (workersDisplay.isEmpty)
             Padding(
@@ -2848,8 +3407,26 @@ class _PointagePageState extends State<PointagePage> {
                 ),
               ),
             )
-          else
-            ...workersDisplay.map((e) => buildWorkerCard(e)),
+          else ...[
+            ...regularWorkers.map((e) => buildWorkerCard(e)),
+            if (overtimeWorkers.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.purple.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.purple.shade100),
+                ),
+                child: Text(
+                  'Personnes Heures Sup. (section séparée)',
+                  style: TextStyle(color: Colors.purple.shade800, fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...overtimeWorkers.map((e) => buildWorkerCard(e)),
+            ],
+          ],
           OutlinedButton.icon(
             onPressed: () async {
               final presentNames = <String>[];

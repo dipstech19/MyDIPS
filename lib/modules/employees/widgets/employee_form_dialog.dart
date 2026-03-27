@@ -161,7 +161,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                       DropdownButtonFormField<String>(
                         value: _siteId,
                         decoration: InputDecoration(
-                          labelText: 'Site (الموقع) *',
+                          labelText: 'Site *',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           isDense: true,

@@ -1,4 +1,5 @@
 import 'absence_reason_config.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// حالة من السائق: حاضر | غائب | في المركبة (سيارة/دراجة)
 enum DriverPointageStatus { present, absent, enVehicule, unset }
@@ -68,13 +69,35 @@ bool isAbsenceReasonDeductFromSalary(String? reason, [List<AbsenceReasonConfig>?
 /// نتيجة المندقية: مؤكد حاضر | مؤكد غائب | خلل | في الانتظار
 enum ReconciledStatus { confirmedPresent, confirmedAbsent, discrepancy, pending }
 
-/// للتوافق مع الكود القديم — training = في دورة تكوينية (حاضر لكن لا يظهر للشاف/السائق)
-enum AttendanceStatus { present, absent, notInVehicle, unmarked, training }
+/// للتوافق مع الكود القديم:
+/// - training = في دورة تكوينية (حاضر لكن لا يظهر للشاف/السائق)
+/// - leave = congé approuvé (حاضر بصبغة خاصة)
+enum AttendanceStatus { present, absent, notInVehicle, unmarked, training, leave }
 
 /// حالة الخروج: لم يُسجّل | لا يزال يعمل | انتهى من العمل
 enum DepartureStatus { unset, stillWorking, finished }
 
 class PointageRecord {
+  static DateTime _parseDate(dynamic v, DateTime fallback) {
+    if (v is DateTime) return v;
+    if (v is Timestamp) return v.toDate();
+    if (v is String && v.isNotEmpty) {
+      final parsed = DateTime.tryParse(v);
+      if (parsed != null) return parsed;
+    }
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    return fallback;
+  }
+
+  static DateTime? _parseDateNullable(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is Timestamp) return v.toDate();
+    if (v is String && v.isNotEmpty) return DateTime.tryParse(v);
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    return null;
+  }
+
   final String id;
   final String employeId;
   final String employeNom;
@@ -182,7 +205,9 @@ class PointageRecord {
   /// نتيجة المندقية حسب القواعد. training = في تكويني يُعتبر حاضر.
   ReconciledStatus get reconciledStatus {
     if (adminFinalStatus != null) {
-      return (adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training)
+      return (adminFinalStatus == AttendanceStatus.present ||
+          adminFinalStatus == AttendanceStatus.training ||
+          adminFinalStatus == AttendanceStatus.leave)
           ? ReconciledStatus.confirmedPresent
           : ReconciledStatus.confirmedAbsent;
     }
@@ -211,7 +236,11 @@ class PointageRecord {
 
   /// الحضور النهائي المعروض (أدمن > منديقية). training يُعتبر حاضر.
   bool get isFinalPresent {
-    if (adminFinalStatus != null) return adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training;
+    if (adminFinalStatus != null) {
+      return adminFinalStatus == AttendanceStatus.present ||
+          adminFinalStatus == AttendanceStatus.training ||
+          adminFinalStatus == AttendanceStatus.leave;
+    }
     switch (reconciledStatus) {
       case ReconciledStatus.confirmedPresent:
         return true;
@@ -296,14 +325,14 @@ class PointageRecord {
       (e) => e.name == map['status'],
       orElse: () => AttendanceStatus.unmarked,
     ),
-    date: DateTime.tryParse(map['date'] ?? '') ?? DateTime.now(),
-    createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+    date: _parseDate(map['date'], DateTime.now()),
+    createdAt: _parseDate(map['createdAt'], DateTime.now()),
     markedById: map['markedById'],
     markedByName: map['markedByName'],
     driverStatus: _driverFromMap(map['driverStatus']),
     chefStatus: _chefFromMap(map['chefStatus']),
-    submittedByDriverAt: map['submittedByDriverAt'] != null ? DateTime.tryParse(map['submittedByDriverAt']) : null,
-    submittedByChefAt: map['submittedByChefAt'] != null ? DateTime.tryParse(map['submittedByChefAt']) : null,
+    submittedByDriverAt: _parseDateNullable(map['submittedByDriverAt']),
+    submittedByChefAt: _parseDateNullable(map['submittedByChefAt']),
     adminFinalStatus: map['adminFinalStatus'] != null
         ? AttendanceStatus.values.firstWhere(
             (e) => e.name == map['adminFinalStatus'],
@@ -312,9 +341,9 @@ class PointageRecord {
         : null,
     markedByDriverId: map['markedByDriverId'],
     markedByChefId: map['markedByChefId'],
-    arrivalMarkedAt: map['arrivalMarkedAt'] != null ? DateTime.tryParse(map['arrivalMarkedAt']) : null,
+    arrivalMarkedAt: _parseDateNullable(map['arrivalMarkedAt']),
     departureStatus: _departureFromMap(map['departureStatus']),
-    departureMarkedAt: map['departureMarkedAt'] != null ? DateTime.tryParse(map['departureMarkedAt']) : null,
+    departureMarkedAt: _parseDateNullable(map['departureMarkedAt']),
     overtimeMinutes: map['overtimeMinutes'] is int ? map['overtimeMinutes'] as int : null,
     overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
     overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
@@ -326,9 +355,9 @@ class PointageRecord {
       orElse: () => ChefPointageStatus.unset,
     ),
     overtimeMarkedByChefId: map['overtimeMarkedByChefId'] as String?,
-    overtimeArrivalMarkedAt: map['overtimeArrivalMarkedAt'] != null ? DateTime.tryParse(map['overtimeArrivalMarkedAt']) : null,
-    trainingStartAt: map['trainingStartAt'] != null ? DateTime.tryParse(map['trainingStartAt']) : null,
-    trainingEndAt: map['trainingEndAt'] != null ? DateTime.tryParse(map['trainingEndAt']) : null,
+    overtimeArrivalMarkedAt: _parseDateNullable(map['overtimeArrivalMarkedAt']),
+    trainingStartAt: _parseDateNullable(map['trainingStartAt']),
+    trainingEndAt: _parseDateNullable(map['trainingEndAt']),
     incompleteShiftReason: map['incompleteShiftReason'] as String?,
     workedMinutesBeforeStop: map['workedMinutesBeforeStop'] is int ? map['workedMinutesBeforeStop'] as int : null,
     shiftOverride: map['shiftOverride'] as String?,

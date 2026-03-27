@@ -123,11 +123,39 @@ class _ChefOvertimeViewState extends State<_ChefOvertimeView> {
       );
     }
 
-    return ListView.builder(
+    return ListView(
       padding: EdgeInsets.all(widget.padding),
-      itemCount: assignments.length,
-      itemBuilder: (context, i) =>
-          _ChefOvertimeCard(assignment: assignments[i], mobile: widget.mobile),
+      children: [
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.deepPurple.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.deepPurple.shade100),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.notifications_active,
+                  color: Colors.deepPurple.shade500, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Notification: ${assignments.length} personne(s) vont travailler avec vous aujourd\'hui.',
+                  style: TextStyle(
+                    color: Colors.deepPurple.shade700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        ...assignments.map(
+          (a) => _ChefOvertimeCard(assignment: a, mobile: widget.mobile),
+        ),
+      ],
     );
   }
 }
@@ -141,14 +169,48 @@ class _ChefOvertimeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.read<OvertimeProvider>();
     final auth = context.read<AuthProvider>();
+    final shiftsProvider = context.watch<ShiftsProvider>();
     final ot = assignment;
-    final canEdit = !ot.locked;
     final dateStr =
         '${ot.date.day.toString().padLeft(2, '0')}/${ot.date.month.toString().padLeft(2, '0')}/${ot.date.year}';
 
     final arrived  = ot.attendanceStatus == OvertimeAttendanceStatus.present;
     final absent   = ot.attendanceStatus == OvertimeAttendanceStatus.absent;
     final departed = ot.departureConfirmedAt != null;
+    DateTime shiftEnd(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day + 1, 6);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
+
+    DateTime shiftStart(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 6);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
+
+    final shiftDay = DateTime(ot.date.year, ot.date.month, ot.date.day);
+    final targetShift =
+        shiftsProvider.getShiftForEquipe(ot.targetEquipeId, shiftDay);
+    final shiftStartedAt = shiftStart(targetShift, shiftDay);
+    final shiftEndedAt = shiftEnd(targetShift, shiftDay);
+    final now = DateTime.now();
+    final canStartShift = now.isAfter(shiftStartedAt) || now.isAtSameMomentAs(shiftStartedAt);
+    final canFinishShift = now.isAfter(shiftEndedAt) || now.isAtSameMomentAs(shiftEndedAt);
 
     return Card(
       margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
@@ -226,61 +288,87 @@ class _ChefOvertimeCard extends StatelessWidget {
 
             if (!ot.locked) ...[
               const SizedBox(height: 12),
-              // ── Présent / Absent buttons ─────────────────────
-              Row(
-                children: [
-                  Expanded(
-                    child: _OvertimeStatusChip(
-                      label: 'Présent',
-                      icon: Icons.check_circle_outline,
-                      selected: arrived,
-                      color: Colors.green,
-                      disabled: false,
-                      onTap: () => provider.confirmOvertimeArrival(ot.id),
-                    ),
+              if (!arrived && !absent) ...[
+                if (!canStartShift)
+                  Text(
+                    'Le bouton début du shift sera disponible à ${shiftStartedAt.hour.toString().padLeft(2, '0')}:${shiftStartedAt.minute.toString().padLeft(2, '0')}.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _OvertimeStatusChip(
-                      label: 'Absent',
-                      icon: Icons.cancel_outlined,
-                      selected: absent,
-                      color: Colors.red,
-                      disabled: false,
-                      onTap: () => provider.markOvertimeAbsent(ot.id),
-                    ),
-                  ),
-                ],
-              ),
-
-              // ── Confirmer départ (8h) ───────────────────────
-              if (arrived && !departed) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () async {
-                      await provider.confirmOvertimeDeparture(ot.id);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Départ confirmé — 8h enregistrées'),
-                            backgroundColor: Colors.indigo,
-                            behavior: SnackBarBehavior.fixed,
+                if (canStartShift)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () async {
+                            await provider.confirmOvertimeArrival(ot.id);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Début du shift confirmé.'),
+                                  backgroundColor: Colors.green,
+                                  behavior: SnackBarBehavior.fixed,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.login, size: 18),
+                          label: const Text('Début du shift'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
                           ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.logout, size: 18),
-                    label: const Text('Confirmer le départ (8h)'),
-                    style: FilledButton.styleFrom(
-                        backgroundColor: Colors.indigo.shade600),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => provider.markOvertimeAbsent(ot.id),
+                          icon: const Icon(Icons.cancel_outlined, size: 18),
+                          label: const Text('Absent'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
               ],
 
-              // ── Envoyer & verrouiller ───────────────────────
-              if ((arrived || absent) && departed || absent) ...[
+              // Show end-shift only after planned shift end time.
+              if (arrived && !departed) ...[
+                if (!canFinishShift)
+                  Text(
+                    'Fin du shift disponible à ${shiftEndedAt.hour.toString().padLeft(2, '0')}:${shiftEndedAt.minute.toString().padLeft(2, '0')}.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  ),
+                if (canFinishShift)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        final chefId = auth.currentUser?.id ?? '';
+                        await provider.confirmOvertimeDeparture(ot.id);
+                        await provider.submitAndLock(ot.id, chefId);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Fin du shift confirmée — 8h enregistrées et envoyées.'),
+                              backgroundColor: Colors.indigo,
+                              behavior: SnackBarBehavior.fixed,
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.logout, size: 18),
+                      label: const Text('Fin du shift (8h auto)'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.indigo.shade600,
+                      ),
+                    ),
+                  ),
+              ],
+
+              // If absent chosen, allow explicit final send/lock.
+              if (absent) ...[
                 const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
@@ -291,7 +379,7 @@ class _ChefOvertimeCard extends StatelessWidget {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Rapport envoyé et verrouillé.'),
+                            content: Text('Absence envoyée et verrouillée.'),
                             backgroundColor: Colors.green,
                             behavior: SnackBarBehavior.fixed,
                           ),
@@ -299,9 +387,10 @@ class _ChefOvertimeCard extends StatelessWidget {
                       }
                     },
                     icon: const Icon(Icons.send, size: 18),
-                    label: const Text('Envoyer & verrouiller'),
+                    label: const Text('Envoyer absence'),
                     style: FilledButton.styleFrom(
-                        backgroundColor: Colors.green.shade700),
+                      backgroundColor: Colors.green.shade700,
+                    ),
                   ),
                 ),
               ],

@@ -2,6 +2,7 @@ import 'dart:io' as dart_io;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
+import '../../core/auth/app_permissions.dart';
 import '../../core/locale/app_locale.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
@@ -24,6 +25,7 @@ import 'chef_comptes_provider.dart';
 import 'models/chauffeur_model.dart';
 import 'models/chef_compte_model.dart';
 import '../pointage/absence_reasons_provider.dart';
+import '../pointage/formation_page.dart';
 import '../pointage/models/absence_reason_config.dart';
 import '../../core/site/site_model.dart';
 
@@ -129,6 +131,7 @@ class _ParametresPageState extends State<ParametresPage> {
   final List<_SettingsSection> _sections = [
     _SettingsSection(icon: Icons.admin_panel_settings, label: 'Administrateurs'),
     _SettingsSection(icon: Icons.groups, label: 'Chefs d\'équipe'),
+    _SettingsSection(icon: Icons.school, label: 'Formations'),
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.group_work, label: 'Groupes'),
     _SettingsSection(icon: Icons.vpn_key, label: 'Comptes Groupes'),
@@ -143,6 +146,44 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.info_outline, label: 'À propos'),
   ];
 
+  bool _canAccessSection(AuthProvider auth, int index) {
+    if (!auth.isDirecteur) return true;
+    switch (index) {
+      case 0:
+        return auth.hasPermission(AppPermissions.adminsManage);
+      case 1:
+        return auth.hasPermission(AppPermissions.teamsManage);
+      case 2:
+        return auth.hasPermission(AppPermissions.trainingManage);
+      case 3:
+        return auth.hasPermission(AppPermissions.chefAccountsManage);
+      case 4:
+        return auth.hasPermission(AppPermissions.groupsManage);
+      case 5:
+        return auth.hasPermission(AppPermissions.groupeAccountsManage);
+      case 6:
+        return auth.hasPermission(AppPermissions.driversManage);
+      case 7:
+        return auth.hasPermission(AppPermissions.postesManage);
+      case 8:
+        return auth.hasPermission(AppPermissions.departementsManage);
+      case 9:
+        return auth.hasPermission(AppPermissions.absenceReasonsManage);
+      case 10:
+        return auth.hasPermission(AppPermissions.generalManage);
+      case 11:
+        return auth.hasPermission(AppPermissions.notificationsManage);
+      case 12:
+        return auth.hasPermission(AppPermissions.securityManage);
+      case 13:
+        return auth.hasPermission(AppPermissions.databaseManage);
+      case 14:
+        return auth.hasPermission(AppPermissions.aboutView);
+      default:
+        return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -151,6 +192,15 @@ class _ParametresPageState extends State<ParametresPage> {
     }
     final padding = pagePadding(context);
     final mobile = isMobile(context);
+    final visibleSectionIndices = List<int>.generate(_sections.length, (i) => i)
+        .where((i) => _canAccessSection(auth, i))
+        .toList();
+    if (visibleSectionIndices.isEmpty) {
+      return const Center(child: Text('Aucune section autorisée'));
+    }
+    if (!visibleSectionIndices.contains(_selectedSectionIndex)) {
+      _selectedSectionIndex = visibleSectionIndices.first;
+    }
     return Column(
       children: [
         // ══════════════════════════════════════════
@@ -227,7 +277,7 @@ class _ParametresPageState extends State<ParametresPage> {
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
-                    children: List.generate(_sections.length, (i) {
+                    children: visibleSectionIndices.map((i) {
                       final s = _sections[i];
                       final selected = _selectedSectionIndex == i;
                       return GestureDetector(
@@ -307,7 +357,7 @@ class _ParametresPageState extends State<ParametresPage> {
                           ),
                         ),
                       );
-                    }),
+                    }).toList(),
                   ),
                 ),
               ),
@@ -331,18 +381,19 @@ class _ParametresPageState extends State<ParametresPage> {
     switch (index) {
       case 0:  return const _AdminsSection();
       case 1:  return const _ChefsEquipeSection();
-      case 2:  return const _ChefComptesSection();
-      case 3:  return const _GroupesSection();
-      case 4:  return const _GroupeComptesSection();
-      case 5:  return const _ChauffeursSection();
-      case 6:  return const _PostesSection();
-      case 7:  return const _DepartementsSection();
-      case 8:  return const _AbsenceReasonsSection();
-      case 9:  return const _GeneralSection();
-      case 10: return const _NotificationsSection();
-      case 11: return const _SecuriteSection();
-      case 12: return const _DatabaseSection();
-      case 13: return const _AboutSection();
+      case 2:  return const FormationPage();
+      case 3:  return const _ChefComptesSection();
+      case 4:  return const _GroupesSection();
+      case 5:  return const _GroupeComptesSection();
+      case 6:  return const _ChauffeursSection();
+      case 7:  return const _PostesSection();
+      case 8:  return const _DepartementsSection();
+      case 9:  return const _AbsenceReasonsSection();
+      case 10: return const _GeneralSection();
+      case 11: return const _NotificationsSection();
+      case 12: return const _SecuriteSection();
+      case 13: return const _DatabaseSection();
+      case 14: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -1397,9 +1448,93 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   bool _showPwd = false;
   /// Zone: 'all' = الكل، 'jadida' أو 'safi' = موقع واحد
   String _siteId = SiteId.all;
+  String _selectedPreset = 'custom';
 
   final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage'];
-  final _allPerms = ['Employés', 'Pointage', 'Gestion Magasin', 'Rapports', 'Paramètres'];
+  final _allPerms = AppPermissions.allDetailed;
+
+  Map<String, List<String>> get _permissionPresets => {
+    'rh': [
+      AppPermissions.employeesView,
+      AppPermissions.employeesManage,
+      AppPermissions.employeesDelete,
+      AppPermissions.teamsManage,
+      AppPermissions.groupsManage,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.chefAccountsManage,
+      AppPermissions.groupeAccountsManage,
+      AppPermissions.driversManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.reportsView,
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.demandesView,
+      AppPermissions.logistiqueView,
+      AppPermissions.aboutView,
+    ],
+    'pointage': [
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.reportsView,
+      AppPermissions.aboutView,
+    ],
+    'zone': [
+      AppPermissions.employeesView,
+      AppPermissions.employeesManage,
+      AppPermissions.employeesDelete,
+      AppPermissions.teamsManage,
+      AppPermissions.groupsManage,
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.stockView,
+      AppPermissions.reportsView,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.chefAccountsManage,
+      AppPermissions.groupeAccountsManage,
+      AppPermissions.driversManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.generalManage,
+      AppPermissions.notificationsManage,
+      AppPermissions.securityManage,
+      AppPermissions.databaseManage,
+      AppPermissions.aboutView,
+      AppPermissions.demandesView,
+      AppPermissions.logistiqueView,
+    ],
+  };
+
+  String _detectPreset(List<String> perms) {
+    bool same(List<String> a, List<String> b) {
+      final sa = {...a};
+      final sb = {...b};
+      return sa.length == sb.length && sa.containsAll(sb);
+    }
+
+    if (same(perms, _permissionPresets['rh']!)) return 'rh';
+    if (same(perms, _permissionPresets['pointage']!)) return 'pointage';
+    if (same(perms, _permissionPresets['zone']!)) return 'zone';
+    return 'custom';
+  }
+
+  void _applyPreset(String key) {
+    final preset = _permissionPresets[key];
+    if (preset == null) return;
+    setState(() {
+      _selectedPreset = key;
+      _perms = List<String>.from(preset);
+      if (key == 'rh') _role = 'Admin RH';
+      if (key == 'pointage') _role = 'Admin Pointage';
+      if (key == 'zone') _role = 'Admin Général';
+    });
+  }
 
   @override
   void initState() {
@@ -1412,6 +1547,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     _pwdCtrl   = TextEditingController(text: '');
     _role  = e?.role ?? 'Admin RH';
     _perms = List.from(e?.permissions ?? []);
+    _selectedPreset = _detectPreset(_perms);
     _actif = e?.actif ?? true;
     if (e?.siteIds != null && e!.siteIds.isNotEmpty && e.siteIds.first != SiteId.all) {
       _siteId = e.siteIds.first;
@@ -1478,12 +1614,12 @@ class _AdminDrawerState extends State<_AdminDrawer> {
             _DrawerField(label: 'Téléphone *', controller: _telCtrl, hint: '06xx xx xx xx',
                 keyboardType: TextInputType.phone),
             const SizedBox(height: 12),
-            _DrawerSection(label: 'ZONE / الموقع'),
+            _DrawerSection(label: 'ZONE'),
             const SizedBox(height: 6),
             DropdownButtonFormField<String>(
               value: _siteId,
               decoration: const InputDecoration(
-                labelText: 'Zone (الجديدة / آسفي / الكل)',
+                labelText: 'Zone (El Jadida / Safi / Tous)',
                 isDense: true,
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                 filled: true,
@@ -1557,6 +1693,41 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               onChanged: (v) => setState(() => _role = v!),
             ),
             const SizedBox(height: 12),
+            const Text(
+              'Modèles de permissions',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF4A5568)),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('Admin RH'),
+                  selected: _selectedPreset == 'rh',
+                  onSelected: (_) => _applyPreset('rh'),
+                ),
+                ChoiceChip(
+                  label: const Text('Admin Pointage'),
+                  selected: _selectedPreset == 'pointage',
+                  onSelected: (_) => _applyPreset('pointage'),
+                ),
+                ChoiceChip(
+                  label: const Text('Admin Zone'),
+                  selected: _selectedPreset == 'zone',
+                  onSelected: (_) => _applyPreset('zone'),
+                ),
+                ChoiceChip(
+                  label: const Text('Personnalisé'),
+                  selected: _selectedPreset == 'custom',
+                  onSelected: (_) => setState(() => _selectedPreset = 'custom'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Row(children: [
               const Text('Statut du compte',
                   style: TextStyle(
@@ -1592,9 +1763,11 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               child: Column(
                 children: _allPerms.map((p) {
                   final on = _perms.contains(p);
+                  final label = AppPermissions.labelsFr[p] ?? p;
                   return InkWell(
                     onTap: () => setState(() {
                       on ? _perms.remove(p) : _perms.add(p);
+                      _selectedPreset = _detectPreset(_perms);
                     }),
                     borderRadius: BorderRadius.circular(6),
                     child: Padding(
@@ -1617,7 +1790,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
                               : null,
                         ),
                         const SizedBox(width: 10),
-                        Text(p,
+                        Text(label,
                             style: TextStyle(
                                 fontSize: 13,
                                 color: on ? _kDark : Colors.grey[600],
@@ -2783,7 +2956,7 @@ class _DrawerSection extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  SECTION: COMPTES CHEFS (حسابات تسجيل دخول الشافات)
+//  SECTION: COMPTES CHEFS
 // ─────────────────────────────────────────────
 
 class _ChefComptesSection extends StatefulWidget {
@@ -2842,7 +3015,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                    const Text('Comptes Chefs',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                     Text('Email + mot de passe — le chef ne voit que son équipe',
                         style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -2881,7 +3054,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
               : Row(
                   children: [
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                      const Text('Comptes Chefs',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                       Text('Email + mot de passe — le chef ne voit que son équipe',
                           style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -3635,7 +3808,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Chauffeurs (السائقون)',
+                    const Text('Chauffeurs',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                     Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
                         style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -3674,7 +3847,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
               : Row(
                   children: [
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Chauffeurs (السائقون)',
+                      const Text('Chauffeurs',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                       Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
                           style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -4625,7 +4798,7 @@ class _GeneralSectionState extends State<_GeneralSection> {
                     child: _DropdownSetting(
                       label: 'Langue',
                       value: _langue,
-                      items: ['Français', 'العربية', 'English'],
+                      items: ['Français', 'Arabe', 'English'],
                       onChanged: (v) => setState(() => _langue = v!),
                     ),
                   ),

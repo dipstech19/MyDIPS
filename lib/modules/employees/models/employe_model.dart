@@ -59,6 +59,7 @@ class Employe {
   final List<Document> documents;
   final String photoUrl;
   final String? _siteId;
+  final double leaveDaysTaken;
 
   Employe({
     required this.id,
@@ -85,6 +86,7 @@ class Employe {
     this.documents = const [],
     this.photoUrl = '',
     String? siteId,
+    this.leaveDaysTaken = 0.0,
   }) : _siteId = siteId;
 
   /// للمراكز/المواقع — إن لم يكن معرّفاً يُستخدم 'all'
@@ -113,6 +115,7 @@ class Employe {
       'badgeExpiration': badgeExpiration,
       'statut': statut.name,
       'photoUrl': photoUrl,
+      'leaveDaysTaken': leaveDaysTaken,
       if (_siteId != null) 'siteId': _siteId,
       'documents': documents.map((d) => {
             'id': d.id,
@@ -162,6 +165,8 @@ class Employe {
     final salaireBase = salaire is int
         ? salaire.toDouble()
         : (salaire is num ? salaire.toDouble() : 0.0);
+    final rawLeaveTaken = map['leaveDaysTaken'];
+    final leaveDaysTaken = rawLeaveTaken is num ? rawLeaveTaken.toDouble() : 0.0;
     return Employe(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
@@ -187,6 +192,7 @@ class Employe {
       documents: documentList,
       photoUrl: map['photoUrl'] as String? ?? '',
       siteId: map['siteId'] as String?,
+      leaveDaysTaken: leaveDaysTaken,
     );
   }
 
@@ -215,6 +221,7 @@ class Employe {
     List<Document>? documents,
     String? photoUrl,
     String? siteId,
+    double? leaveDaysTaken,
   }) {
     return Employe(
       id: id ?? this.id,
@@ -241,6 +248,7 @@ class Employe {
       documents: documents ?? this.documents,
       photoUrl: photoUrl ?? this.photoUrl,
       siteId: siteId ?? _siteId,
+      leaveDaysTaken: leaveDaysTaken ?? this.leaveDaysTaken,
     );
   }
 }
