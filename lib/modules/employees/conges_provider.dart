@@ -52,4 +52,17 @@ class CongesProvider extends ChangeNotifier {
     }, SetOptions(merge: true));
     notifyListeners();
   }
+
+  /// Remet à zéro le cache local pour un employé (après reset global).
+  void resetCachedDaysTaken(String employeId) {
+    _daysTaken[employeId] = 0.0;
+  }
+
+  /// Remet à zéro tout le cache local (après reset global de tous les employés).
+  void resetAllCachedDaysTaken() {
+    for (final key in _daysTaken.keys) {
+      _daysTaken[key] = 0.0;
+    }
+    notifyListeners();
+  }
 }

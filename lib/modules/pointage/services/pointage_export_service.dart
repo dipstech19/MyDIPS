@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/pointage_model.dart';
 import '../models/absence_reason_config.dart';
 import '../../overtime/models/overtime_model.dart';
+import '../data/daily_snapshot_repository.dart';
 
 class PointageExportRow {
   final String employeId;
@@ -75,10 +76,20 @@ class PointageExportService {
     required String signatureLabel,
     String? personName,
     String? equipeName,
+    /// Nom du chef d'équipe (affiché à côté du nom d'équipe : « Équipe — Chef »).
+    String? chefName,
   }) async {
     final logo = await _loadLogo();
     final pdf = pw.Document();
     final now = DateTime.now();
+    final cleanEquipeName = (equipeName ?? '').trim();
+    final cleanChefName = (chefName ?? '').trim();
+    final cleanPersonName = (personName ?? '').trim();
+    final responsibleName =
+        cleanChefName.isNotEmpty ? cleanChefName : cleanPersonName;
+    final signaturePersonName = signatureLabel.toLowerCase().contains('chef')
+        ? responsibleName
+        : cleanPersonName;
 
     pdf.addPage(
       pw.MultiPage(
@@ -91,19 +102,19 @@ class PointageExportService {
             title,
             style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
           ),
-          if (equipeName != null && equipeName.isNotEmpty)
+          if (cleanEquipeName.isNotEmpty)
             pw.Padding(
               padding: const pw.EdgeInsets.only(top: 4),
               child: pw.Text(
-                equipeName,
+                cleanEquipeName,
                 style: const pw.TextStyle(fontSize: 12),
               ),
             ),
-          if (personName != null && personName.isNotEmpty)
+          if (responsibleName.isNotEmpty)
             pw.Padding(
               padding: const pw.EdgeInsets.only(top: 2),
               child: pw.Text(
-                'Responsable: $personName',
+                'Responsable: $responsibleName',
                 style: const pw.TextStyle(fontSize: 11),
               ),
             ),
@@ -141,7 +152,7 @@ class PointageExportService {
           pw.Divider(thickness: 0.5),
           pw.SizedBox(height: 16),
           pw.Text(
-            'Signature $signatureLabel${personName != null && personName.isNotEmpty ? ' ($personName)' : ''}:',
+            'Signature $signatureLabel${signaturePersonName.isNotEmpty ? ' ($signaturePersonName)' : ''}:',
             style: const pw.TextStyle(fontSize: 11),
           ),
           pw.SizedBox(height: 30),
@@ -342,7 +353,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
+    required List<({String equipeName, String? chefName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     if (equipes.isEmpty) return Uint8List(0);
     final logo = await _loadLogo();
@@ -350,6 +361,11 @@ class PointageExportService {
     final pdf = pw.Document();
 
     for (final eq in equipes) {
+      final cleanEquipeName = eq.equipeName.trim();
+      final cleanChefName = (eq.chefName ?? '').trim();
+      final cleanPersonName = (personName ?? '').trim();
+      final responsibleName =
+          cleanChefName.isNotEmpty ? cleanChefName : cleanPersonName;
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
@@ -361,16 +377,16 @@ class PointageExportService {
               title,
               style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
             ),
-            if (eq.equipeName.isNotEmpty)
+            if (cleanEquipeName.isNotEmpty)
               pw.Padding(
                 padding: const pw.EdgeInsets.only(top: 4),
-                child: pw.Text(eq.equipeName, style: const pw.TextStyle(fontSize: 12)),
+                child: pw.Text(cleanEquipeName, style: const pw.TextStyle(fontSize: 12)),
               ),
-            if (personName != null && personName.isNotEmpty)
+            if (responsibleName.isNotEmpty)
               pw.Padding(
                 padding: const pw.EdgeInsets.only(top: 2),
                 child: pw.Text(
-                  'Responsable: $personName',
+                  'Responsable: $responsibleName',
                   style: const pw.TextStyle(fontSize: 11),
                 ),
               ),
@@ -428,7 +444,7 @@ class PointageExportService {
     required String title,
     required String signatureLabel,
     String? personName,
-    required List<({String equipeName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
+    required List<({String equipeName, String? chefName, List<String> presentNames, List<String> presentNoDepartureNames, List<String> absentNames, List<String?> absentReasons})> equipes,
   }) async {
     final bytes = await buildDailyReportPdfMulti(
       date: date,
@@ -454,6 +470,7 @@ class PointageExportService {
     required String signatureLabel,
     String? personName,
     String? equipeName,
+    String? chefName,
   }) async {
     final bytes = await buildDailyReportPdf(
       date: date,
@@ -466,8 +483,14 @@ class PointageExportService {
       signatureLabel: signatureLabel,
       personName: personName,
       equipeName: equipeName,
+      chefName: chefName,
     );
-    final safeName = (equipeName ?? 'rapport')
+    final nameParts = <String>[
+      if (equipeName != null && equipeName.trim().isNotEmpty) equipeName.trim(),
+      if (chefName != null && chefName.trim().isNotEmpty) chefName.trim(),
+    ];
+    final rawSafe = nameParts.isEmpty ? 'rapport' : nameParts.join('_');
+    final safeName = rawSafe
         .replaceAll(RegExp(r'[^\w\s-]'), '')
         .replaceAll(RegExp(r'\s+'), '_');
     final fileName =
@@ -486,11 +509,12 @@ class PointageExportService {
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
   }) async {
-    final start = DateTime(startDate.year, startDate.month, startDate.day);
-    final end = DateTime(endDate.year, endDate.month, endDate.day);
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
     final days = <DateTime>[];
-    for (var d = start; !d.isAfter(end); d = d.add(const Duration(days: 1))) {
-      days.add(d);
+    final totalDays = end.difference(start).inDays + 1;
+    for (int i = 0; i < totalDays; i++) {
+      days.add(start.add(Duration(days: i)));
     }
 
     final book = excel.Excel.createExcel();
@@ -736,6 +760,11 @@ class PointageExportService {
   // حساب صفوف Excel
   // ═══════════════════════════════════════════════════════════════════════
 
+  /// Canonical day key: midnight of the given date, ignoring time component.
+  static DateTime _dayKey(DateTime dt) {
+    return DateTime(dt.year, dt.month, dt.day);
+  }
+
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
@@ -749,11 +778,12 @@ class PointageExportService {
     /// قائمة سجلات الساعات الإضافية (overtime_assignments) لإضافتها لكل موظف.
     List<OvertimeAssignment>? overtimeAssignments,
   }) {
-    final start = DateTime(startDate.year, startDate.month, startDate.day);
-    final end = DateTime(endDate.year, endDate.month, endDate.day);
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
     final days = <DateTime>[];
-    for (var d = start; !d.isAfter(end); d = d.add(const Duration(days: 1))) {
-      days.add(d);
+    final totalDays = end.difference(start).inDays + 1;
+    for (int i = 0; i < totalDays; i++) {
+      days.add(start.add(Duration(days: i)));
     }
 
     final recordsByEmploye = <String, List<PointageRecord>>{};
@@ -772,13 +802,13 @@ class PointageExportService {
       }
     }
 
+
     final rows = <PointageExportRow>[];
     for (final emp in employees) {
       final empRecords = recordsByEmploye[emp.id] ?? [];
       final byDay = <DateTime, List<PointageRecord>>{};
       for (final r in empRecords) {
-        final key = DateTime(r.date.year, r.date.month, r.date.day);
-        byDay.putIfAbsent(key, () => []).add(r);
+        byDay.putIfAbsent(_dayKey(r.date), () => []).add(r);
       }
 
       int daysWorked = 0;
@@ -793,7 +823,7 @@ class PointageExportService {
       final empOvertimes = overtimeByEmploye[emp.id] ?? [];
       final overtimeByDay = <DateTime, double>{};
       for (final ot in empOvertimes) {
-        final key = DateTime(ot.date.year, ot.date.month, ot.date.day);
+        final key = _dayKey(ot.date);
         overtimeByDay[key] = (overtimeByDay[key] ?? 0) + ot.overtimeMinutes / 60.0;
       }
 
@@ -841,35 +871,33 @@ class PointageExportService {
             final hasConfirmedEntryExit = r.arrivalMarkedAt != null &&
                 r.departureMarkedAt != null &&
                 r.departureStatus == DepartureStatus.finished;
-            // Primary rule: final present status.
+            // Règle principale : statut final de présence.
             var canCountAsPresent = r.isFinalPresent &&
                 (!requireConfirmedEntryExit || hasConfirmedEntryExit);
-            // Fallback for historical data: many old records were marked by only one side
-            // (chef OR driver) without full reconciliation. For period exports we still
-            // count them as present unless strict confirmation is explicitly required.
+            // Fallback élargi : couvre tous les signaux de présence réels
+            // (chef seul, driver seul, status direct, leave non confirmé par admin, etc.)
             if (!canCountAsPresent && !requireConfirmedEntryExit) {
-              final hasLegacyPresenceSignal =
+              canCountAsPresent =
+                  // Statut direct sur le document
                   r.status == AttendanceStatus.present ||
-                      r.status == AttendanceStatus.training ||
-                      r.status == AttendanceStatus.leave ||
+                  r.status == AttendanceStatus.training ||
+                  r.status == AttendanceStatus.leave ||
+                  // Chef a marqué présent (même sans driver)
                   r.chefStatus == ChefPointageStatus.present ||
-                      r.driverStatus == DriverPointageStatus.present ||
-                      r.adminFinalStatus == AttendanceStatus.present ||
-                      r.adminFinalStatus == AttendanceStatus.training ||
-                      r.adminFinalStatus == AttendanceStatus.leave;
-              canCountAsPresent = hasLegacyPresenceSignal;
+                  // Driver a marqué présent ou en véhicule (même sans chef)
+                  r.driverStatus == DriverPointageStatus.present ||
+                  r.driverStatus == DriverPointageStatus.enVehicule ||
+                  // Override admin
+                  r.adminFinalStatus == AttendanceStatus.present ||
+                  r.adminFinalStatus == AttendanceStatus.training ||
+                  r.adminFinalStatus == AttendanceStatus.leave;
             }
             if (canCountAsPresent) {
               hasAnyFinalPresent = true;
-              // Renfort (tempAssigned + finished): natural 8h belong to the ORIGINAL team.
-              // So we DON'T add natural hours here for Renfort records.
-              // For ALL other records (normal workers), 8h always count.
               if (!r.tempAssigned) {
                 hasNaturalHours = true;
               }
             }
-            // Overtime: only count if departure is confirmed finished AND overtime > 0.
-            // Skip if an OvertimeAssignment already covers this day (prevents double-count).
             if (!hasOtAssignment &&
                 r.departureStatus == DepartureStatus.finished &&
                 (r.overtimeMinutes ?? 0) > 0) {
@@ -878,29 +906,27 @@ class PointageExportService {
           }
 
           if (hasAnyFinalPresent) {
-            // If the employee is on approved leave for this day, mark it specially
-            // (dark blue) while still counting as "worked/present".
-            final hasLeave = dayRecords.any((r) => r.adminFinalStatus == AttendanceStatus.leave);
+            // Congé (leave) : cellule bleue foncée 'G', compte comme jour travaillé.
+            final hasLeave = dayRecords.any((r) =>
+                r.adminFinalStatus == AttendanceStatus.leave ||
+                r.status == AttendanceStatus.leave);
             daysWorked++;
             if (hasNaturalHours) totalHours += hoursPerDay;
             overtimeHours += otForDay;
-            // Afficher uniquement "8" pour un jour (présent / congé) sans mention HS
-            hoursByDay[d] = '8';
+            hoursByDay[d] = hasLeave ? 'G' : '8';
             dayStatusByDay[d] = hasLeave ? 'leave' : 'present';
           } else {
             final r = dayRecords.isNotEmpty ? dayRecords.first : null;
-            final isPaidAbsence = r != null &&
-                r.absenceReason != null &&
-                !isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs);
-            // Paid absence: couleur orange + "8" (heures comptabilisées)
-            // Regular absence: "absent"
+            // Absence avec raison explicite : vérifier si elle est payée.
+            final absReason = r?.absenceReason ??
+                (r?.chefStatus == ChefPointageStatus.absent ? r?.absenceReason : null);
+            final isPaidAbsence = absReason != null &&
+                !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
             hoursByDay[d] = isPaidAbsence ? '8' : 'absent';
             dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
-            if (r != null && r.absenceReason != null) {
-              absenceReasonIdByDay[d] = r.absenceReason;
-              if (isPaidAbsence) {
-                totalHours += hoursPerDay;
-              }
+            if (absReason != null) {
+              absenceReasonIdByDay[d] = absReason;
+              if (isPaidAbsence) totalHours += hoursPerDay;
             }
           }
         }
@@ -917,6 +943,158 @@ class PointageExportService {
       final payableDays = totalHours / hoursPerDay;
       final periodBaseDays = (days.length - restDaysCount).clamp(1, days.length);
       final salairePeriode = emp.salaireNet * (payableDays / periodBaseDays);
+      rows.add(PointageExportRow(
+        employeId: emp.id,
+        employeCin: emp.cin,
+        employeNom: emp.nom,
+        equipeName: emp.equipeName,
+        daysWorked: daysWorked,
+        plannedShifts: plannedShifts,
+        daysAbsent: daysAbsent,
+        totalHours: totalHours,
+        overtimeHours: overtimeHours,
+        salaireNet: emp.salaireNet,
+        salairePeriode: double.parse(salairePeriode.toStringAsFixed(2)),
+        hoursByDay: hoursByDay,
+        dayStatusByDay: dayStatusByDay,
+        absenceReasonIdByDay: absenceReasonIdByDay,
+      ));
+    }
+
+    return rows;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // حساب صفوف Excel من snapshots المخزنة (المصدر الموثوق)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// يبني صفوف Excel مباشرةً من [DailyEmployeeSnapshot] المخزنة عند تأكيد كل فريق.
+  /// هذا المسار أسرع وأكثر دقة من إعادة جلب [PointageRecord] وتفسيرها.
+  static List<PointageExportRow> computeExcelRowsFromSnapshots({
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<DailyEmployeeSnapshot> snapshots,
+    List<AbsenceReasonConfig>? reasonConfigs,
+    bool Function(DateTime date, String equipeId)? isRestDay,
+    List<OvertimeAssignment>? overtimeAssignments,
+  }) {
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
+    final days = <DateTime>[];
+    final totalDays = end.difference(start).inDays + 1;
+    for (int i = 0; i < totalDays; i++) {
+      days.add(start.add(Duration(days: i)));
+    }
+
+    // تجميع snapshots لكل موظف حسب اليوم
+    // المفتاح: employeId → (dayKey → snapshot)
+    final snapshotsByEmp = <String, Map<DateTime, DailyEmployeeSnapshot>>{};
+    for (final s in snapshots) {
+      final dayK = _dayKey(s.date);
+      snapshotsByEmp.putIfAbsent(s.employeId, () => <DateTime, DailyEmployeeSnapshot>{})[dayK] = s;
+    }
+
+    // تجميع overtime_assignments لكل موظف
+    final overtimeByEmploye = <String, Map<DateTime, double>>{};
+    if (overtimeAssignments != null) {
+      for (final ot in overtimeAssignments) {
+        if (ot.attendanceStatus == OvertimeAttendanceStatus.present &&
+            (ot.finished || ot.locked)) {
+          final dayK = _dayKey(ot.date);
+          final empOt = overtimeByEmploye.putIfAbsent(ot.employeId, () => <DateTime, double>{});
+          empOt[dayK] = (empOt[dayK] ?? 0) + ot.overtimeMinutes / 60.0;
+        }
+      }
+    }
+
+    final rows = <PointageExportRow>[];
+    for (final emp in employees) {
+      final empSnaps = snapshotsByEmp[emp.id] ?? {};
+      final empOtByDay = overtimeByEmploye[emp.id] ?? {};
+
+      int daysWorked = 0;
+      int restDaysCount = 0;
+      double totalHours = 0;
+      double overtimeHours = 0;
+      final hoursByDay = <DateTime, String>{};
+      final dayStatusByDay = <DateTime, String>{};
+      final absenceReasonIdByDay = <DateTime, String?>{};
+
+      for (final d in days) {
+        // يوم راحة
+        if (emp.equipeId != null && isRestDay != null && isRestDay(d, emp.equipeId!)) {
+          hoursByDay[d] = 'repos';
+          dayStatusByDay[d] = 'rest';
+          restDaysCount++;
+          // ساعات إضافية في يوم الراحة
+          final dayOt = empOtByDay[d] ?? 0;
+          if (dayOt > 0) overtimeHours += dayOt;
+          continue;
+        }
+
+        final snap = empSnaps[d];
+        final dayOt = empOtByDay[d] ?? 0;
+
+        if (snap == null) {
+          // لا يوجد snapshot → غائب (لم يتم تأكيد الفريق هذا اليوم)
+          hoursByDay[d] = 'absent';
+          dayStatusByDay[d] = 'absent';
+        } else {
+          switch (snap.status) {
+            case 'present':
+              daysWorked++;
+              totalHours += hoursPerDay;
+              overtimeHours += dayOt;
+              hoursByDay[d] = '8';
+              dayStatusByDay[d] = 'present';
+            case 'formation':
+              daysWorked++;
+              totalHours += hoursPerDay;
+              overtimeHours += dayOt;
+              hoursByDay[d] = 'F';
+              dayStatusByDay[d] = 'formation';
+            case 'leave':
+              daysWorked++;
+              totalHours += hoursPerDay;
+              overtimeHours += dayOt;
+              hoursByDay[d] = 'G';
+              dayStatusByDay[d] = 'leave';
+            case 'paid_absence':
+              daysWorked++;
+              totalHours += hoursPerDay;
+              hoursByDay[d] = '8';
+              dayStatusByDay[d] = 'paid_absence';
+              if (snap.absenceReason != null) absenceReasonIdByDay[d] = snap.absenceReason;
+            case 'rest':
+              hoursByDay[d] = 'repos';
+              dayStatusByDay[d] = 'rest';
+              restDaysCount++;
+            default: // 'absent' أو أي قيمة أخرى
+              final absReason = snap.absenceReason;
+              final isPaid = absReason != null &&
+                  !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
+              if (isPaid) {
+                daysWorked++;
+                totalHours += hoursPerDay;
+                hoursByDay[d] = '8';
+                dayStatusByDay[d] = 'paid_absence';
+                absenceReasonIdByDay[d] = absReason;
+              } else {
+                hoursByDay[d] = 'absent';
+                dayStatusByDay[d] = 'absent';
+                if (absReason != null) absenceReasonIdByDay[d] = absReason;
+              }
+          }
+        }
+      }
+
+      final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
+      final plannedShifts = (days.length - restDaysCount).clamp(0, days.length);
+      final payableDays = totalHours / hoursPerDay;
+      final periodBaseDays = (days.length - restDaysCount).clamp(1, days.length);
+      final salairePeriode = emp.salaireNet * (payableDays / periodBaseDays);
+
       rows.add(PointageExportRow(
         employeId: emp.id,
         employeCin: emp.cin,

@@ -439,6 +439,7 @@ class _EmployeesPageState extends State<EmployeesPage>
   ) {
     final mobile = isMobile(context);
     final isChefOnly = !isDirecteur;
+    final actionsColumnWidth = mobile ? 140.0 : 160.0;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -467,7 +468,7 @@ class _EmployeesPageState extends State<EmployeesPage>
               if (isChefOnly)
                 const SizedBox(width: 60, child: Text('', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
               if (!isChefOnly)
-                SizedBox(width: mobile ? 140 : 160, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                SizedBox(width: actionsColumnWidth, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
             ]),
           ),
           const Divider(height: 1),
@@ -549,51 +550,69 @@ class _EmployeesPageState extends State<EmployeesPage>
                           const SizedBox(width: 60),
                         if (!isChefOnly)
                         SizedBox(
-                          width: mobile ? 140 : 160,
+                          width: actionsColumnWidth,
                           child: canManageEmployees
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.visibility, size: 18),
-                                      tooltip: 'Voir détails',
-                                      onPressed: () => showDialog(context: context, builder: (_) => EmployeeDetailDialog(employe: e, allEmployes: employes, isDirecteur: isDirecteur)),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                    ),
-                                    IconButton(
-                                      icon: Icon(Icons.edit, size: 18, color: Colors.green[700]),
-                                      tooltip: 'Modifier',
-                                      onPressed: () => showDialog(
-                                        context: context,
-                                        builder: (_) => EmployeeEditDialog(
-                                          employe: e,
-                                          allEmployes: employes,
-                                          onSave: (updated) async {
-                                            await prov.updateEmploye(updated);
-                                          },
+                              ? ClipRect(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    reverse: true,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.visibility, size: 18),
+                                          tooltip: 'Voir détails',
+                                          onPressed: () => showDialog(context: context, builder: (_) => EmployeeDetailDialog(employe: e, allEmployes: employes, isDirecteur: isDirecteur)),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                          style: IconButton.styleFrom(
+                                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          ),
                                         ),
-                                      ),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                        IconButton(
+                                          icon: Icon(Icons.edit, size: 18, color: Colors.green[700]),
+                                          tooltip: 'Modifier',
+                                          onPressed: () => showDialog(
+                                            context: context,
+                                            builder: (_) => EmployeeEditDialog(
+                                              employe: e,
+                                              allEmployes: employes,
+                                              onSave: (updated) async {
+                                                await prov.updateEmploye(updated);
+                                              },
+                                            ),
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                          style: IconButton.styleFrom(
+                                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                          tooltip: 'Changer statut',
+                                          onPressed: () => _showChangeStatutDialog(context, e, prov),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                          style: IconButton.styleFrom(
+                                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          ),
+                                        ),
+                                        if (canDeleteEmployees)
+                                          IconButton(
+                                            icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
+                                            tooltip: 'Supprimer l\'employé',
+                                            onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                            style: IconButton.styleFrom(
+                                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            ),
+                                          ),
+                                      ],
                                     ),
-                                    IconButton(
-                                      icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
-                                      tooltip: 'Changer statut',
-                                      onPressed: () => _showChangeStatutDialog(context, e, prov),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                    ),
-                                    if (canDeleteEmployees)
-                                      IconButton(
-                                        icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
-                                        tooltip: 'Supprimer l\'employé',
-                                        onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                      ),
-                                  ],
+                                  ),
                                 )
                               : (isDirecteur
                                   ? const SizedBox.shrink()
@@ -602,6 +621,9 @@ class _EmployeesPageState extends State<EmployeesPage>
                                       onPressed: () => _showChangeStatutDialog(context, e, prov),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                      style: IconButton.styleFrom(
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
                                     )),
                         ),
                       ]),

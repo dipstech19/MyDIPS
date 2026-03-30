@@ -6,6 +6,12 @@ import 'data/pointage_repository.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
 
+/// نافذة تسجيل الشاف: الدخول (بداية الشيفت + 2h) أو الخروج (نهاية الشيفت + 2h) — لإرسال التقرير يُكمّل الغياب في نافذة الخروج.
+bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
+  return config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace) ||
+      config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace);
+}
+
 class PointageProvider extends ChangeNotifier {
   final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
   PointageRepository? _repo;
@@ -194,7 +200,7 @@ class PointageProvider extends ChangeNotifier {
   /// للحصول على الحالة المعروضة حسب الدور (للتوافق مع الواجهة الحالية)
   AttendanceStatus getStatusForEmployee(String employeId) {
     final record = getRecordForEmployee(employeId);
-    if (record == null) return AttendanceStatus.unmarked;
+    if (record == null) return AttendanceStatus.absent;
     if (record.adminFinalStatus != null) {
       return record.adminFinalStatus!;
     }
@@ -260,9 +266,15 @@ class PointageProvider extends ChangeNotifier {
   }
 
   /// جميع سجلات الحضور في نطاق تواريخ (لتصدير Excel).
-  Future<List<PointageRecord>> getPointageInDateRange(DateTime start, DateTime end) async {
+  /// [knownEmployeIds] — تمرير معرفات الموظفين المراد تصديرهم لضمان جلب
+  /// سجلاتهم حتى لو لم تظهر في الاستعلام الأولي.
+  Future<List<PointageRecord>> getPointageInDateRange(
+    DateTime start,
+    DateTime end, {
+    Set<String>? knownEmployeIds,
+  }) async {
     if (!_firebaseAvailable || _repo == null) return [];
-    return _repo!.getPointageInDateRange(start, end);
+    return _repo!.getPointageInDateRange(start, end, knownEmployeIds: knownEmployeIds);
   }
 
   Future<void> markAttendance({
@@ -353,7 +365,7 @@ class PointageProvider extends ChangeNotifier {
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_isChefMarkingWindow(config, now, grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -392,7 +404,7 @@ class PointageProvider extends ChangeNotifier {
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_isChefMarkingWindow(config, now, grace)) return false;
     await _repo!.setChefStatus(
       renfortRecord,
       chefStatus,
@@ -414,7 +426,7 @@ class PointageProvider extends ChangeNotifier {
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!config.canMarkOvertimeRelatedNow(now, graceBefore: grace, graceAfter: grace)) return false;
     await _repo!.setOvertimeChefStatus(
       record,
       overtimeChefStatus,
@@ -431,7 +443,7 @@ class PointageProvider extends ChangeNotifier {
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!config.canSubmitReportNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitDriverReport(pointageDate);
     return true;
@@ -444,7 +456,7 @@ class PointageProvider extends ChangeNotifier {
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!config.canSubmitReportNow(now, graceBefore: grace, graceAfter: grace)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitChefReport(equipeId, pointageDate);
     return true;

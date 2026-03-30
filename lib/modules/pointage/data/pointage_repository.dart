@@ -79,7 +79,7 @@ class PointageRepository {
   /// جلب سجلات البوانتاج لنطاق تاريخ (من start إلى end شامل).
   Future<List<PointageRecord>> getPointageForDateRange(DateTime start, DateTime end) async {
     final from = DateTime(start.year, start.month, start.day);
-    final to = DateTime(end.year, end.month, end.day + 1);
+    final to = DateTime(end.year, end.month, end.day).add(const Duration(days: 1));
     return _getPointageRangeMixedDate(from, to);
   }
 
@@ -503,48 +503,127 @@ class PointageRepository {
   }
 
   /// جميع سجلات الحضور في نطاق تواريخ (لتصدير Excel).
+  /// [knownEmployeIds] — إذا مُرِّرت، يتم البحث عن سجلات هؤلاء الموظفين
+  /// مباشرة بالـ doc-id حتى لو لم تظهر في نتائج الاستعلام الأولي (مثلاً
+  /// موظفون لم يُسجَّل لهم أي بوانتاج لكنهم موجودون في قائمة الموظفين).
   Future<List<PointageRecord>> getPointageInDateRange(
     DateTime startInclusive,
-    DateTime endInclusive,
-  ) async {
+    DateTime endInclusive, {
+    Set<String>? knownEmployeIds,
+  }) async {
     final start = DateTime(startInclusive.year, startInclusive.month, startInclusive.day);
-    final endDay = DateTime(endInclusive.year, endInclusive.month, endInclusive.day);
-    final end = endDay.add(const Duration(days: 1));
-    return _getPointageRangeMixedDate(start, end);
+    final end = DateTime(endInclusive.year, endInclusive.month, endInclusive.day)
+        .add(const Duration(days: 1));
+    return _getPointageRangeMixedDate(start, end, knownEmployeIds: knownEmployeIds);
   }
 
-  /// Handles legacy data where `date` might be String OR Timestamp.
-  /// We query both representations and merge by doc id.
+  /// Récupère les pointages dans un intervalle [start, endExclusive[.
+  ///
+  /// Stratégie en 2 étapes :
+  ///   1. Query Firestore avec 3 formats de date (ISO local, ISO UTC, Timestamp)
+  ///      → couvre tous les formats de stockage historiques.
+  ///   2. Génère les doc-ids attendus ({employeId}_{dateKey}) pour chaque jour
+  ///      et fait un getAll() pour récupérer les éventuels documents manqués
+  ///      (ex: Renfort docs, ou docs dont le champ 'date' diffère légèrement).
+  ///
+  /// Les résultats sont fusionnés par doc-id pour éliminer les doublons.
   Future<List<PointageRecord>> _getPointageRangeMixedDate(
     DateTime start,
-    DateTime endExclusive,
-  ) async {
+    DateTime endExclusive, {
+    Set<String>? knownEmployeIds,
+  }) async {
+    final startLocal = DateTime(start.year, start.month, start.day);
+    final endLocal   = DateTime(endExclusive.year, endExclusive.month, endExclusive.day);
+    final startUtc   = DateTime.utc(start.year, start.month, start.day);
+    final endUtc     = DateTime.utc(endExclusive.year, endExclusive.month, endExclusive.day);
+
     final byId = <String, PointageRecord>{};
 
-    try {
-      final stringSnap = await _firestore
-          .collection(_pointageCollection)
-          .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
-          .where('date', isLessThan: endExclusive.toIso8601String())
-          .get();
-      for (final d in stringSnap.docs) {
-        byId[d.id] = PointageRecord.fromMap({...d.data(), 'id': d.id});
+    // ── Étape 1 : récupération directe par doc-id (stratégie principale) ──
+    // doc-id = {employeId}_{YYYY-MM-DD} — déterministe et indépendant du
+    // format de stockage du champ 'date' dans Firestore.
+    if (knownEmployeIds != null && knownEmployeIds.isNotEmpty) {
+      final days = <DateTime>[];
+      for (var d = startLocal; d.isBefore(endLocal); d = d.add(const Duration(days: 1))) {
+        days.add(d);
       }
-    } catch (_) {
-      // Ignore and continue with timestamp-based query.
+      final allRefs = <DocumentReference>[];
+      for (final empId in knownEmployeIds) {
+        for (final day in days) {
+          allRefs.add(_firestore.collection(_pointageCollection).doc(_docId(empId, day)));
+        }
+      }
+      const getChunk = 20;
+      for (int i = 0; i < allRefs.length; i += getChunk) {
+        final chunk = allRefs.skip(i).take(getChunk).toList();
+        try {
+          final snaps = await Future.wait(chunk.map((ref) => ref.get()));
+          for (final ds in snaps) {
+            final data = ds.data();
+            if (ds.exists && data != null) {
+              final map = data as Map<String, dynamic>;
+              byId[ds.id] = PointageRecord.fromMap({...map, 'id': ds.id});
+            }
+          }
+        } catch (_) {}
+      }
     }
 
-    try {
-      final tsSnap = await _firestore
-          .collection(_pointageCollection)
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThan: Timestamp.fromDate(endExclusive))
-          .get();
-      for (final d in tsSnap.docs) {
-        byId[d.id] = PointageRecord.fromMap({...d.data(), 'id': d.id});
+    // ── Étape 2 : query globale par 'date' pour capturer les Renfort docs ─
+    // Les Renfort ont un doc-id différent ({empId}_{date}_renfort_{equipeId}),
+    // donc non couverts par l'étape 1. On les récupère via query sur 'date'.
+    Future<void> runQuery(dynamic from, dynamic to) async {
+      try {
+        final snap = await _firestore
+            .collection(_pointageCollection)
+            .where('date', isGreaterThanOrEqualTo: from)
+            .where('date', isLessThan: to)
+            .get();
+        for (final d in snap.docs) {
+          byId.putIfAbsent(d.id, () => PointageRecord.fromMap({...d.data(), 'id': d.id}));
+        }
+      } catch (_) {}
+    }
+
+    await runQuery(startLocal.toIso8601String(), endLocal.toIso8601String());
+    await runQuery(startUtc.toIso8601String(), endUtc.toIso8601String());
+    await runQuery(Timestamp.fromDate(startUtc), Timestamp.fromDate(endUtc));
+
+    // ── Étape 3 : compléter les employés trouvés dans les queries ─────────
+    // Si des employés apparaissent dans les résultats de l'étape 2 mais
+    // n'étaient pas dans knownEmployeIds, on cherche leurs docs manquants.
+    final extraIds = byId.values
+        .map((r) => r.employeId)
+        .toSet()
+        .difference(knownEmployeIds ?? {});
+    if (extraIds.isNotEmpty) {
+      final days = <DateTime>[];
+      for (var d = startLocal; d.isBefore(endLocal); d = d.add(const Duration(days: 1))) {
+        days.add(d);
       }
-    } catch (_) {
-      // Ignore and return what we already collected.
+      final missingRefs = <DocumentReference>[];
+      for (final empId in extraIds) {
+        for (final day in days) {
+          final docId = _docId(empId, day);
+          if (!byId.containsKey(docId)) {
+            missingRefs.add(_firestore.collection(_pointageCollection).doc(docId));
+          }
+        }
+      }
+      const getChunk = 20;
+      for (int i = 0; i < missingRefs.length; i += getChunk) {
+        final chunk = missingRefs.skip(i).take(getChunk).toList();
+        try {
+          final snaps = await Future.wait(chunk.map((ref) => ref.get()));
+          for (final ds in snaps) {
+            final data = ds.data();
+            if (ds.exists && data != null) {
+              final map = data as Map<String, dynamic>;
+              byId.putIfAbsent(ds.id, () => PointageRecord.fromMap({...map, 'id': ds.id}));
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     return byId.values.toList();

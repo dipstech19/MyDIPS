@@ -30,10 +30,38 @@ class MainLayout extends StatefulWidget {
   State<MainLayout> createState() => _MainLayoutState();
 }
 
-class _MainLayoutState extends State<MainLayout> {
+class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String? _listeningOvertimeEquipeId;
+  String? _lastUserId;
+  TabController? _mobileTabController;
+
+  // Pages pré-construites et mises en cache par pageKey+userId.
+  // On les recrée uniquement quand l'utilisateur change de compte.
+  final Map<String, Widget> _pageCache = {};
+
+  @override
+  void dispose() {
+    _mobileTabController?.dispose();
+    super.dispose();
+  }
+
+  void _syncMobileTabController(int length, int index) {
+    final i = index.clamp(0, length - 1);
+    if (_mobileTabController == null || _mobileTabController!.length != length) {
+      _mobileTabController?.dispose();
+      _mobileTabController = TabController(length: length, vsync: this, initialIndex: i);
+      _mobileTabController!.addListener(() {
+        if (!mounted) return;
+        if (_mobileTabController!.indexIsChanging) return;
+        final idx = _mobileTabController!.index;
+        if (_selectedIndex != idx) {
+          setState(() => _selectedIndex = idx);
+        }
+      });
+    }
+  }
 
   /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés، Pointage، Shifts، Paramètres. مسؤول مجموعة: Pointage فقط.
   List<_NavItem> _navItems(
@@ -106,6 +134,7 @@ class _MainLayoutState extends State<MainLayout> {
       AuthProvider auth,
       List<_NavItem> items, {
         VoidCallback? onItemTap,
+        TabController? mobileTabController,
       }) {
     final locale = context.watch<LocaleProvider>();
     return Container(
@@ -246,6 +275,10 @@ class _MainLayoutState extends State<MainLayout> {
                     ),
                     onTap: () {
                       setState(() => _selectedIndex = index);
+                      if (mobileTabController != null &&
+                          mobileTabController.index != index) {
+                        mobileTabController.animateTo(index);
+                      }
                       onItemTap?.call();
                     },
                   ),
@@ -404,6 +437,17 @@ class _MainLayoutState extends State<MainLayout> {
     final isChauffeur = auth.isChauffeur;
     final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
     final isGroupe = auth.isGroupeResponsable;
+
+    // Si l'utilisateur change (logout/login), vider le cache et réinitialiser.
+    final currentUserId = auth.userId;
+    if (currentUserId != _lastUserId) {
+      _lastUserId = currentUserId;
+      _pageCache.clear();
+      _selectedIndex = 0;
+      _mobileTabController?.dispose();
+      _mobileTabController = null;
+    }
+
     if (isChefEquipe) {
       final equipeId = auth.equipeId;
       if (equipeId != null &&
@@ -430,7 +474,18 @@ class _MainLayoutState extends State<MainLayout> {
     // Clamp index in case item list changes between role switches
     final safeIndex = _selectedIndex.clamp(0, items.length - 1);
 
+    // Construire chaque page une seule fois et la mettre en cache.
+    // IndexedStack préserve le State (Stream, scroll, formulaires, etc.)
+    // quand l'utilisateur navigue entre les onglets.
+    final pages = items.map((item) {
+      final cacheKey = '${currentUserId}_${item.key}';
+      _pageCache[cacheKey] ??= _buildPage(
+          context, item.key, isChauffeur, isChefEquipe, isGroupe);
+      return _pageCache[cacheKey]!;
+    }).toList();
+
     if (mobile) {
+      _syncMobileTabController(items.length, safeIndex);
       return Scaffold(
         key: _scaffoldKey,
         appBar: AppBar(
@@ -445,6 +500,75 @@ class _MainLayoutState extends State<MainLayout> {
             icon: const Icon(Icons.menu),
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
           ),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(48),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TabBar(
+                controller: _mobileTabController!,
+                isScrollable: true,
+                labelColor: Colors.white,
+                unselectedLabelColor: Colors.white70,
+                indicatorColor: Colors.white,
+                indicatorWeight: 3,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 12),
+                tabs: items.map((item) {
+                  return Tab(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Icon(item.icon, size: 20),
+                            if (item.badgeCount > 0)
+                              Positioned(
+                                right: -8,
+                                top: -4,
+                                child: Container(
+                                  constraints: const BoxConstraints(
+                                    minWidth: 16,
+                                    minHeight: 16,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.redAccent,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    item.badgeCount > 99
+                                        ? '99+'
+                                        : item.badgeCount.toString(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          item.label,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
         ),
         drawer: Drawer(
           child: Builder(
@@ -452,18 +576,13 @@ class _MainLayoutState extends State<MainLayout> {
               context,
               auth,
               items,
+              mobileTabController: _mobileTabController,
               onItemTap: () => Navigator.of(ctx).pop(),
             ),
           ),
         ),
-        body: SafeArea(child: _buildPage(context, items[safeIndex].key, isChauffeur, isChefEquipe, isGroupe)),
-        bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _selectedIndex.clamp(0, items.length - 1),
-          onTap: (i) => setState(() => _selectedIndex = i),
-          selectedItemColor: const Color(0xFF1565C0),
-          unselectedItemColor: Colors.grey,
-          type: BottomNavigationBarType.fixed,
-          items: items.map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label)).toList(),
+        body: SafeArea(
+          child: IndexedStack(index: safeIndex, children: pages),
         ),
       );
     }
@@ -476,8 +595,8 @@ class _MainLayoutState extends State<MainLayout> {
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 1200),
-                child: _buildPage(context, items[safeIndex].key, isChauffeur, isChefEquipe, isGroupe),
+                constraints: const BoxConstraints(maxWidth: 1200),
+                child: IndexedStack(index: safeIndex, children: pages),
               ),
             ),
           ),

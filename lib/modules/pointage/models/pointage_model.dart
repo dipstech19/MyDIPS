@@ -79,22 +79,22 @@ enum DepartureStatus { unset, stillWorking, finished }
 
 class PointageRecord {
   static DateTime _parseDate(dynamic v, DateTime fallback) {
-    if (v is DateTime) return v;
-    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v.toLocal();
+    if (v is Timestamp) return v.toDate().toLocal();
     if (v is String && v.isNotEmpty) {
       final parsed = DateTime.tryParse(v);
-      if (parsed != null) return parsed;
+      if (parsed != null) return parsed.toLocal();
     }
-    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v).toLocal();
     return fallback;
   }
 
   static DateTime? _parseDateNullable(dynamic v) {
     if (v == null) return null;
-    if (v is DateTime) return v;
-    if (v is Timestamp) return v.toDate();
-    if (v is String && v.isNotEmpty) return DateTime.tryParse(v);
-    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    if (v is DateTime) return v.toLocal();
+    if (v is Timestamp) return v.toDate().toLocal();
+    if (v is String && v.isNotEmpty) return DateTime.tryParse(v)?.toLocal();
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v).toLocal();
     return null;
   }
 
@@ -214,7 +214,7 @@ class PointageRecord {
     final d = driverStatus;
     final c = chefStatus;
     if (d == DriverPointageStatus.unset && c == ChefPointageStatus.unset) {
-      return ReconciledStatus.pending;
+      return ReconciledStatus.confirmedAbsent;
     }
     if (d == DriverPointageStatus.enVehicule) {
       if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;

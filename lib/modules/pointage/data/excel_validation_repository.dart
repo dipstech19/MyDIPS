@@ -58,6 +58,8 @@ class ExcelValidationRepository {
   CollectionReference<Map<String, dynamic>> get _ref =>
       _db.collection(_collection);
 
+  /// تسجيل تصدير Excel — يحذف التقارير السابقة لنفس النطاق والنطاق قبل الإضافة
+  /// حتى لا يظهر أكثر من تقرير واحد لنفس الفترة.
   Future<void> logExport({
     required String createdById,
     required String createdByName,
@@ -68,14 +70,33 @@ class ExcelValidationRepository {
     required bool validated,
     required String filePath,
   }) async {
+    final startTs = Timestamp.fromDate(DateTime(startDate.year, startDate.month, startDate.day));
+    final endTs   = Timestamp.fromDate(DateTime(endDate.year, endDate.month, endDate.day));
+
+    // حذف كل التقارير السابقة بنفس startDate + endDate + scope + equipeId
+    try {
+      Query<Map<String, dynamic>> q = _ref
+          .where('startDate', isEqualTo: startTs)
+          .where('endDate', isEqualTo: endTs)
+          .where('scope', isEqualTo: scope);
+      if (equipeId != null) {
+        q = q.where('equipeId', isEqualTo: equipeId);
+      }
+      final existing = await q.get();
+      final batch = _db.batch();
+      for (final doc in existing.docs) {
+        batch.delete(doc.reference);
+      }
+      if (existing.docs.isNotEmpty) await batch.commit();
+    } catch (_) {}
+
+    // إضافة التقرير الجديد
     await _ref.add({
       'createdAt': FieldValue.serverTimestamp(),
       'createdById': createdById,
       'createdByName': createdByName,
-      'startDate': Timestamp.fromDate(
-          DateTime(startDate.year, startDate.month, startDate.day)),
-      'endDate':
-          Timestamp.fromDate(DateTime(endDate.year, endDate.month, endDate.day)),
+      'startDate': startTs,
+      'endDate': endTs,
       'scope': scope,
       'equipeId': equipeId,
       'validated': validated,
@@ -83,17 +104,30 @@ class ExcelValidationRepository {
     });
   }
 
+  /// جلب التقارير الأخيرة — يُبقي فقط آخر تقرير لكل مجموعة (startDate+endDate+scope+equipeId)
   Future<List<ExcelValidationRecord>> getRecentValidated({
     int limit = 50,
   }) async {
     final snap = await _ref
         .orderBy('createdAt', descending: true)
-        .limit(limit * 3)
+        .limit(limit * 5)
         .get();
-    return snap.docs
+
+    final all = snap.docs
         .map((d) => ExcelValidationRecord.fromMap(d.id, d.data()))
         .where((r) => r.validated)
-        .take(limit)
         .toList();
+
+    // إزالة المكررات — الاحتفاظ بآخر تقرير لكل مجموعة فريدة
+    final seen = <String>{};
+    final unique = <ExcelValidationRecord>[];
+    for (final r in all) {
+      final key = '${r.startDate.year}-${r.startDate.month}-${r.startDate.day}'
+          '_${r.endDate.year}-${r.endDate.month}-${r.endDate.day}'
+          '_${r.scope}_${r.equipeId ?? "all"}';
+      if (seen.add(key)) unique.add(r);
+      if (unique.length >= limit) break;
+    }
+    return unique;
   }
 }

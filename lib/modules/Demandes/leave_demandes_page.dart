@@ -50,7 +50,9 @@ extension LeaveStatusX on LeaveStatus {
 class _LeaveType {
   final String id;
   final String label;
-  const _LeaveType({required this.id, required this.label});
+  /// Motif par défaut associé à ce type (pré-rempli automatiquement)
+  final String defaultReason;
+  const _LeaveType({required this.id, required this.label, this.defaultReason = ''});
 }
 
 class LeaveRequest {
@@ -274,21 +276,42 @@ class DemandesPage extends StatefulWidget {
   State<DemandesPage> createState() => _DemandesPageState();
 }
 
-class _DemandesPageState extends State<DemandesPage> {
+class _DemandesPageState extends State<DemandesPage>
+    with AutomaticKeepAliveClientMixin {
   final _repo = _LeaveRepository();
   DateTime _selectedCalendarDate = DateTime.now();
   int _selectedYear = DateTime.now().year;
   int? _selectedMonth;
 
+  // Le stream est stocké en tant que variable d'état pour éviter
+  // de recréer un nouvel abonnement à chaque rebuild du widget.
+  late final Stream<List<LeaveRequest>> _requestsStream;
+
+  // Cache local des dernières données reçues — permet d'afficher
+  // instantanément les données sans attendre le prochain événement Firestore.
+  List<LeaveRequest> _cachedRequests = const [];
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestsStream = _repo.watchRequests();
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context); // requis par AutomaticKeepAliveClientMixin
     final auth = context.watch<AuthProvider>();
     final empProv = context.watch<EmployeesProvider>();
     final isAdmin = widget.role == UserRole.administrateur;
 
     return StreamBuilder<List<LeaveRequest>>(
-      stream: _repo.watchRequests(),
+      stream: _requestsStream,
+      initialData: _cachedRequests,
       builder: (context, snap) {
+        if (snap.hasData) _cachedRequests = snap.data!;
         final requests = snap.data ?? const <LeaveRequest>[];
         final filtered = isAdmin
             ? _adminViewRequests(auth, requests)
@@ -607,177 +630,289 @@ class _DemandesPageState extends State<DemandesPage> {
 
   Future<Uint8List> _buildApprovedLeavePdf(LeaveRequest req, String adminName) async {
     final pdf = pw.Document();
-    final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-    final fmtDateTime = (DateTime d) =>
-        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final fmt = (DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final days = req.endDate.difference(req.startDate).inDays + 1;
     final logoBytes = await _loadLogoBytes();
     final decidedAt = req.decidedAt ?? DateTime.now();
-    final requestRef = req.id.isEmpty ? 'REQ-${req.createdAt.millisecondsSinceEpoch}' : req.id;
-    final employeeCin = req.employeeCin.trim().isEmpty ? '-' : req.employeeCin.trim();
+
+    final employeeName  = req.employeeName.trim().isEmpty  ? '-' : req.employeeName.trim();
+    final employeeCin   = req.employeeCin.trim().isEmpty   ? '-' : req.employeeCin.trim();
     final employeePoste = req.employeePoste.trim().isEmpty ? '-' : req.employeePoste.trim();
-    final chefName = req.chefName.trim().isEmpty ? '-' : req.chefName.trim();
-    final senderName = req.submittedByName.trim().isEmpty ? '-' : req.submittedByName.trim();
-    final targetAdmin = req.assignedAdminName.trim().isEmpty ? '-' : req.assignedAdminName.trim();
-    final adminComment = (req.adminComment ?? '').trim().isEmpty ? '-' : req.adminComment!.trim();
-    final professionalDetails = req.professionalDetails.trim().isEmpty ? '-' : req.professionalDetails.trim();
+    final chefName      = req.chefName.trim().isEmpty      ? '-' : req.chefName.trim();
+    final equipeName    = req.equipeName.trim().isEmpty    ? '-' : req.equipeName.trim();
+    final adminComment  = (req.adminComment ?? '').trim().isEmpty ? '' : req.adminComment!.trim();
+    final reason        = req.reason.trim().isEmpty        ? '-' : req.reason.trim();
+    final leaveType     = req.leaveTypeLabel.trim().isEmpty ? 'Congé' : req.leaveTypeLabel.trim();
+
+    // Corps de la lettre
+    final letterBody =
+        'Je sollicite, par la présente, votre autorisation de bien vouloir m\'accorder '
+        '$days jour${days > 1 ? 's' : ''} de congé ($leaveType) '
+        'pour la période du ${fmt(req.startDate)} au ${fmt(req.endDate)} inclus.\n\n'
+        'Motif : $reason\n\n'
+        'En vous remerciant à l\'avance pour votre compréhension, je vous prie de croire, '
+        'Monsieur le Directeur, en l\'expression de mes salutations distinguées.';
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
-        build: (ctx) => pw.Padding(
-          padding: const pw.EdgeInsets.all(24),
-          child: pw.Column(
+        margin: const pw.EdgeInsets.symmetric(horizontal: 44, vertical: 36),
+        build: (ctx) {
+          // ── helpers ────────────────────────────────────────────────
+          pw.Widget _signBox(String title, String name, String date) =>
+              pw.Expanded(
+                child: pw.Container(
+                  padding: const pw.EdgeInsets.fromLTRB(10, 10, 10, 8),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: PdfColors.grey600, width: 0.8),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.center,
+                    children: [
+                      pw.Text(
+                        title,
+                        style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                        textAlign: pw.TextAlign.center,
+                      ),
+                      pw.SizedBox(height: 36), // espace pour la signature
+                      pw.Divider(color: PdfColors.grey500, thickness: 0.5),
+                      pw.SizedBox(height: 4),
+                      pw.Text(name, style: const pw.TextStyle(fontSize: 9),
+                          textAlign: pw.TextAlign.center),
+                      pw.Text(date,
+                          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+                          textAlign: pw.TextAlign.center),
+                    ],
+                  ),
+                ),
+              );
+
+          // ── page ───────────────────────────────────────────────────
+          return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
+
+              // ── en-tête ──────────────────────────────────────────
               pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  if (logoBytes != null)
+                  if (logoBytes != null) ...[
                     pw.Container(
-                      width: 72,
-                      height: 72,
-                      padding: const pw.EdgeInsets.all(4),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: PdfColors.grey400),
-                        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-                      ),
+                      width: 60, height: 60,
                       child: pw.Image(pw.MemoryImage(logoBytes), fit: pw.BoxFit.contain),
                     ),
-                  if (logoBytes != null) pw.SizedBox(width: 12),
+                    pw.SizedBox(width: 10),
+                  ],
                   pw.Expanded(
                     child: pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('DIPS MANAGEMENT', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-                        pw.Text('Formulaire professionnel de demande de congé', style: pw.TextStyle(fontSize: 13, color: PdfColors.blue700)),
-                        pw.SizedBox(height: 2),
-                        pw.Text('Référence: $requestRef', style: const pw.TextStyle(fontSize: 10)),
-                        pw.Text('Date d\'émission: ${fmtDateTime(DateTime.now())}', style: const pw.TextStyle(fontSize: 10)),
+                        pw.Text('DIGITALIZATION, INNOVATION & PROCESS SIMULATION',
+                            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.blue900)),
+                        pw.SizedBox(height: 3),
+                        pw.Text(
+                          'Adresse : Résidence REDA, 1ier Étage, N°6, Av. ANNAKHIL, El Jadida',
+                          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                        ),
+                        pw.Text(
+                          'Tél.: 0523352515 – 0666282392   |   www.dips.ma',
+                          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                        ),
                       ],
                     ),
                   ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Text('El Jadida le ${fmt(req.createdAt)}',
+                          style: const pw.TextStyle(fontSize: 9)),
+                    ],
+                  ),
                 ],
               ),
-              pw.SizedBox(height: 16),
-              pw.Divider(color: PdfColors.grey400),
+
+              pw.SizedBox(height: 6),
+              pw.Divider(color: PdfColors.blue800, thickness: 1),
               pw.SizedBox(height: 12),
+
+              // ── fiche employé ──────────────────────────────────
               pw.Container(
                 width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const pw.EdgeInsets.all(10),
                 decoration: pw.BoxDecoration(
-                  color: PdfColors.blue50,
-                  border: pw.Border.all(color: PdfColors.blue200),
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  color: PdfColors.grey100,
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                  border: pw.Border.all(color: PdfColors.grey400, width: 0.6),
                 ),
-                child: pw.Text(
-                  'Section A - Déclaration du demandeur (Chef / Employé concerné)',
-                  style: pw.TextStyle(color: PdfColors.blue800, fontWeight: pw.FontWeight.bold, fontSize: 12),
+                child: pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          _infoLine('Nom complet', employeeName),
+                          pw.SizedBox(height: 3),
+                          _infoLine('CIN', employeeCin),
+                          pw.SizedBox(height: 3),
+                          _infoLine('Poste', employeePoste),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 16),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          _infoLine('Équipe', equipeName),
+                          pw.SizedBox(height: 3),
+                          _infoLine('Chef d\'équipe', chefName),
+                          pw.SizedBox(height: 3),
+                          _infoLine('Type de congé', leaveType),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              pw.SizedBox(height: 8),
-              pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.7),
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(1.6),
-                  1: pw.FlexColumnWidth(2.9),
-                },
-                children: [
-                  _pdfRow('Nom de l\'employé concerné', req.employeeName),
-                  _pdfRow('CIN employé', employeeCin),
-                  _pdfRow('Département / Équipe', req.equipeName),
-                  _pdfRow('Poste', employeePoste),
-                  _pdfRow('Chef d\'équipe responsable', chefName),
-                  _pdfRow('Demande saisie par', senderName),
-                  _pdfRow('Date de début', fmt(req.startDate)),
-                  _pdfRow('Date de fin', fmt(req.endDate)),
-                  _pdfRow('Nombre total de jours demandés', '$days'),
-                  _pdfRow('Type de congé', req.leaveTypeLabel),
-                  _pdfRow('Motif(s) du congé', req.reason),
-                  _pdfRow('Détails professionnels', professionalDetails),
-                  _pdfRow('Engagement du demandeur', '[X] Demande exacte et soumise pour validation administrative'),
-                  _pdfRow('Date de soumission', fmtDateTime(req.createdAt)),
-                  _pdfRow('Signature Chef / Demandeur', senderName),
-                ],
-              ),
+
+              pw.SizedBox(height: 14),
+
+              // ── objet ──────────────────────────────────────────
+              pw.Text('Objet : Demande de congé',
+                  style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 10),
+
+              // ── formule d'appel ────────────────────────────────
+              pw.Text('Monsieur le Directeur,',
+                  style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 8),
+
+              // ── corps ──────────────────────────────────────────
+              pw.Text(letterBody,
+                  style: const pw.TextStyle(fontSize: 10),
+                  textAlign: pw.TextAlign.justify),
+
+              pw.SizedBox(height: 14),
+
+              // ── décision (si approuvée) ────────────────────────
               pw.Container(
                 width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const pw.EdgeInsets.all(8),
                 decoration: pw.BoxDecoration(
                   color: PdfColors.green50,
-                  border: pw.Border.all(color: PdfColors.green200),
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  border: pw.Border.all(color: PdfColors.green300, width: 0.8),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
                 ),
-                child: pw.Text(
-                  'Section B - Décision administrative (Responsable / Admin)',
-                  style: pw.TextStyle(color: PdfColors.green800, fontWeight: pw.FontWeight.bold, fontSize: 12),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Row(
+                      children: [
+                        pw.Text('Décision : ',
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                        pw.Text('[X] Congé APPROUVÉ    [ ] Refusé',
+                            style: pw.TextStyle(fontSize: 9, color: PdfColors.green800,
+                                fontWeight: pw.FontWeight.bold)),
+                      ],
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Row(
+                      children: [
+                        pw.Text('Période accordée : ',
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                        pw.Text(
+                          '${fmt(req.startDate)} → ${fmt(req.endDate)}  ($days jour${days > 1 ? 's' : ''})',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ],
+                    ),
+                    if (adminComment.isNotEmpty) ...[
+                      pw.SizedBox(height: 4),
+                      pw.Row(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('Remarque : ',
+                              style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                          pw.Expanded(
+                            child: pw.Text(adminComment,
+                                style: const pw.TextStyle(fontSize: 9)),
+                          ),
+                        ],
+                      ),
+                    ],
+                    pw.SizedBox(height: 4),
+                    pw.Row(
+                      children: [
+                        pw.Text('Date de validation : ',
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                        pw.Text(fmt(decidedAt), style: const pw.TextStyle(fontSize: 9)),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              pw.SizedBox(height: 8),
-              pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.7),
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(1.6),
-                  1: pw.FlexColumnWidth(2.9),
-                },
-                children: [
-                  _pdfRow('Décision', '[X] Congé approuvé    [ ] Congé refusé'),
-                  _pdfRow('Responsable validateur', adminName),
-                  _pdfRow('Admin destinataire initial', targetAdmin),
-                  _pdfRow('Date et heure de validation', fmtDateTime(decidedAt)),
-                  _pdfRow('Remarques du responsable', adminComment),
-                ],
-              ),
+
               pw.Spacer(),
+
+              // ── 3 blocs de signature ───────────────────────────
               pw.Row(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Expanded(
-                    child: pw.Container(
-                      padding: const pw.EdgeInsets.all(10),
-                      decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey500)),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Text('Visa Chef / Demandeur', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                          pw.SizedBox(height: 22),
-                          pw.Text(senderName),
-                          pw.Text('Date: ${fmt(req.createdAt)}', style: const pw.TextStyle(fontSize: 10)),
-                        ],
-                      ),
-                    ),
+                  _signBox(
+                    'Signature du demandeur',
+                    employeeName,
+                    'Le ${fmt(req.createdAt)}',
                   ),
                   pw.SizedBox(width: 10),
-                  pw.Expanded(
-                    child: pw.Container(
-                      padding: const pw.EdgeInsets.all(10),
-                      decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey500)),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Text('Signature Responsable (Admin)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                          pw.SizedBox(height: 22),
-                          pw.Text(adminName),
-                          pw.Text('Date: ${fmt(decidedAt)}', style: const pw.TextStyle(fontSize: 10)),
-                        ],
-                      ),
-                    ),
+                  _signBox(
+                    'Visa Chef d\'équipe',
+                    chefName,
+                    'Le ${fmt(req.createdAt)}',
+                  ),
+                  pw.SizedBox(width: 10),
+                  _signBox(
+                    'Approbation Admin / Directeur',
+                    adminName,
+                    'Le ${fmt(decidedAt)}',
                   ),
                 ],
               ),
-              pw.SizedBox(height: 8),
+
+              pw.SizedBox(height: 10),
+              pw.Divider(color: PdfColors.grey400, thickness: 0.5),
+              pw.SizedBox(height: 4),
               pw.Text(
-                'Document généré automatiquement par le système DIPS Management.',
-                style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+                'Document généré par le système DIPS Management  •  www.dips.ma',
+                style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
+                textAlign: pw.TextAlign.center,
               ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
     return pdf.save();
   }
+
+  /// Ligne label: valeur pour la fiche employé en haut du PDF
+  static pw.Widget _infoLine(String label, String value) => pw.RichText(
+        text: pw.TextSpan(
+          children: [
+            pw.TextSpan(
+              text: '$label : ',
+              style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.TextSpan(
+              text: value,
+              style: const pw.TextStyle(fontSize: 9),
+            ),
+          ],
+        ),
+      );
 
   Future<Uint8List?> _loadLogoBytes() async {
     try {
@@ -945,6 +1080,11 @@ class _AdminLeaveView extends StatelessWidget {
                       icon: const Icon(Icons.add_task_outlined),
                       onPressed: () => _showAdminCreateApproveDialog(context),
                     ),
+                    IconButton(
+                      tooltip: 'Réinitialiser soldes congé (Test)',
+                      icon: const Icon(Icons.restart_alt, color: Colors.orange),
+                      onPressed: () => _showResetLeaveDaysDialog(context),
+                    ),
                   ],
                 ),
                 Card(
@@ -1053,6 +1193,7 @@ class _AdminLeaveView extends StatelessWidget {
 
   Future<void> _showLeaveTypeManagerDialog(BuildContext context) async {
     final labelCtrl = TextEditingController();
+    final defaultReasonCtrl = TextEditingController();
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1061,84 +1202,265 @@ class _AdminLeaveView extends StatelessWidget {
             title: const Text('Types de congé'),
             content: SizedBox(
               width: 520,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: labelCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Libellé du type',
-                      border: OutlineInputBorder(),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: labelCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Libellé du type *',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      icon: const Icon(Icons.add),
-                      label: const Text('Ajouter'),
-                      onPressed: () async {
-                        final text = labelCtrl.text.trim();
-                        if (text.isEmpty) return;
-                        await FirebaseFirestore.instance.collection('leave_types').add({
-                          'label': text,
-                          'actif': true,
-                          'createdAt': Timestamp.now(),
-                        });
-                        labelCtrl.clear();
-                        setStateD(() {});
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: defaultReasonCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Motif par défaut (pré-rempli automatiquement)',
+                        hintText: 'Ex: Congé annuel, Congé maladie...',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.add),
+                        label: const Text('Ajouter'),
+                        onPressed: () async {
+                          final text = labelCtrl.text.trim();
+                          if (text.isEmpty) return;
+                          await FirebaseFirestore.instance.collection('leave_types').add({
+                            'label': text,
+                            'defaultReason': defaultReasonCtrl.text.trim(),
+                            'actif': true,
+                            'createdAt': Timestamp.now(),
+                          });
+                          labelCtrl.clear();
+                          defaultReasonCtrl.clear();
+                          setStateD(() {});
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Types actifs', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: FirebaseFirestore.instance
+                          .collection('leave_types')
+                          .where('actif', isEqualTo: true)
+                          .snapshots(),
+                      builder: (ctx, snap) {
+                        final docs = snap.data?.docs ?? const [];
+                        if (docs.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 10),
+                            child: Text('Aucun type'),
+                          );
+                        }
+                        return ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: docs.length,
+                          itemBuilder: (ctx, i) {
+                            final d = docs[i];
+                            final m = d.data();
+                            final label = (m['label'] as String?)?.trim() ?? '';
+                            final defReason = (m['defaultReason'] as String?)?.trim() ?? '';
+                            return ListTile(
+                              dense: true,
+                              title: Text(label.isEmpty ? d.id : label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              subtitle: defReason.isNotEmpty
+                                  ? Text('Motif: $defReason', style: TextStyle(fontSize: 12, color: Colors.grey.shade600))
+                                  : const Text('Aucun motif par défaut', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Modifier le motif par défaut',
+                                    icon: const Icon(Icons.edit_outlined, size: 20),
+                                    onPressed: () async {
+                                      final editCtrl = TextEditingController(text: defReason);
+                                      final newReason = await showDialog<String>(
+                                        context: ctx,
+                                        builder: (c) => AlertDialog(
+                                          title: Text('Motif de: ${label.isEmpty ? d.id : label}'),
+                                          content: TextField(
+                                            controller: editCtrl,
+                                            decoration: const InputDecoration(labelText: 'Motif par défaut', border: OutlineInputBorder()),
+                                            maxLines: 3,
+                                            autofocus: true,
+                                          ),
+                                          actions: [
+                                            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Annuler')),
+                                            FilledButton(onPressed: () => Navigator.pop(c, editCtrl.text.trim()), child: const Text('Enregistrer')),
+                                          ],
+                                        ),
+                                      );
+                                      if (newReason != null) {
+                                        await FirebaseFirestore.instance.collection('leave_types').doc(d.id).update({
+                                          'defaultReason': newReason,
+                                        });
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Désactiver',
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () async {
+                                      await FirebaseFirestore.instance.collection('leave_types').doc(d.id).update({
+                                        'actif': false,
+                                      });
+                                      setStateD(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
                       },
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Types actifs', style: TextStyle(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('leave_types')
-                        .where('actif', isEqualTo: true)
-                        .snapshots(),
-                    builder: (ctx, snap) {
-                      final docs = snap.data?.docs ?? const [];
-                      if (docs.isEmpty) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 10),
-                          child: Text('Aucun type'),
-                        );
-                      }
-                      return ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: docs.length,
-                        itemBuilder: (ctx, i) {
-                          final d = docs[i];
-                          final m = d.data();
-                          final label = (m['label'] as String?)?.trim() ?? '';
-                          return ListTile(
-                            dense: true,
-                            title: Text(label.isEmpty ? d.id : label),
-                            trailing: IconButton(
-                              tooltip: 'Désactiver',
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () async {
-                                await FirebaseFirestore.instance.collection('leave_types').doc(d.id).update({
-                                  'actif': false,
-                                });
-                                setStateD(() {});
-                              },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
         },
       ),
     );
+  }
+
+  /// Réinitialisation complète (test uniquement) :
+  ///   1. Supprime toutes les demandes de congé (leave_requests)
+  ///   2. Remet adminFinalStatus = null sur tous les pointages marqués "leave"
+  ///   3. Remet leaveDaysTaken = 0 pour tous les employés
+  Future<void> _showResetLeaveDaysDialog(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
+            const SizedBox(width: 8),
+            const Text('Réinitialiser toutes les données congé'),
+          ],
+        ),
+        content: const Text(
+          'Cette action va :\n'
+          '• Supprimer TOUTES les demandes de congé\n'
+          '• Effacer les marquages congé dans le pointage\n'
+          '• Remettre à zéro les jours pris pour tous les employés\n\n'
+          'À utiliser uniquement en phase de test.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Tout réinitialiser'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(width: 20, height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              SizedBox(width: 12),
+              Text('Réinitialisation en cours...'),
+            ],
+          ),
+          duration: Duration(seconds: 60),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+
+    try {
+      final db = FirebaseFirestore.instance;
+      const batchSize = 400;
+
+      // ── 1. Supprimer toutes les demandes de congé ──────────────────
+      final leaveSnap = await db.collection('leave_requests').get();
+      for (int i = 0; i < leaveSnap.docs.length; i += batchSize) {
+        final chunk = leaveSnap.docs.skip(i).take(batchSize).toList();
+        final wb = db.batch();
+        for (final doc in chunk) {
+          wb.delete(doc.reference);
+        }
+        await wb.commit();
+      }
+
+      // ── 2. Effacer adminFinalStatus = "leave" dans pointage ────────
+      final pointageSnap = await db
+          .collection('pointage')
+          .where('adminFinalStatus', isEqualTo: 'leave')
+          .get();
+      for (int i = 0; i < pointageSnap.docs.length; i += batchSize) {
+        final chunk = pointageSnap.docs.skip(i).take(batchSize).toList();
+        final wb = db.batch();
+        for (final doc in chunk) {
+          wb.update(doc.reference, {'adminFinalStatus': FieldValue.delete()});
+        }
+        await wb.commit();
+      }
+
+      // ── 3. Remettre leaveDaysTaken = 0 pour tous les employés ─────
+      final empSnap = await db.collection('employes').get();
+      for (int i = 0; i < empSnap.docs.length; i += batchSize) {
+        final chunk = empSnap.docs.skip(i).take(batchSize).toList();
+        final wb = db.batch();
+        for (final doc in chunk) {
+          wb.update(doc.reference, {
+            'leaveDaysTaken': 0.0,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        await wb.commit();
+      }
+
+      // ── 4. Vider les caches locaux ─────────────────────────────────
+      if (context.mounted) {
+        Provider.of<CongesProvider>(context, listen: false).resetAllCachedDaysTaken();
+        Provider.of<EmployeesProvider>(context, listen: false).forceRefresh();
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Réinitialisation complète : '
+              '${leaveSnap.docs.length} demande(s) supprimée(s), '
+              '${pointageSnap.docs.length} pointage(s) effacé(s), '
+              '${empSnap.docs.length} employé(s) remis à zéro.',
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _showAdminCreateApproveDialog(BuildContext context) async {
@@ -1170,13 +1492,21 @@ class _AdminLeaveView extends StatelessWidget {
 
     final snap = await FirebaseFirestore.instance.collection('leave_types').where('actif', isEqualTo: true).get();
     leaveTypes = snap.docs
-        .map((d) => _LeaveType(
-              id: d.id,
-              label: ((d.data()['label'] as String?) ?? '').trim().isEmpty ? 'Congé' : (d.data()['label'] as String).trim(),
-            ))
+        .map((d) {
+          final data = d.data();
+          return _LeaveType(
+            id: d.id,
+            label: ((data['label'] as String?) ?? '').trim().isEmpty ? 'Congé' : (data['label'] as String).trim(),
+            defaultReason: ((data['defaultReason'] as String?) ?? '').trim(),
+          );
+        })
         .toList();
     if (leaveTypes.isEmpty) leaveTypes = const [_LeaveType(id: 'default', label: 'Congé')];
     leaveTypeId = leaveTypes.first.id;
+    // Pré-remplir le motif avec le motif par défaut du premier type
+    if (leaveTypes.first.defaultReason.isNotEmpty) {
+      reasonCtrl.text = leaveTypes.first.defaultReason;
+    }
 
     if (!context.mounted) return;
     await showDialog<void>(
@@ -1280,12 +1610,28 @@ class _AdminLeaveView extends StatelessWidget {
                       value: leaveTypeId,
                       decoration: const InputDecoration(labelText: 'Type de congé', border: OutlineInputBorder()),
                       items: leaveTypes.map((t) => DropdownMenuItem<String?>(value: t.id, child: Text(t.label))).toList(),
-                      onChanged: (v) => setS(() => leaveTypeId = v),
+                      onChanged: (v) {
+                        setS(() {
+                          leaveTypeId = v;
+                          // Pré-remplir le motif avec le motif par défaut du type sélectionné
+                          if (v != null) {
+                            final selected = leaveTypes.where((t) => t.id == v).toList();
+                            if (selected.isNotEmpty && selected.first.defaultReason.isNotEmpty) {
+                              reasonCtrl.text = selected.first.defaultReason;
+                            }
+                          }
+                        });
+                      },
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: reasonCtrl,
-                      decoration: const InputDecoration(labelText: 'Motif', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Motif',
+                        hintText: 'Pré-rempli selon le type sélectionné',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 2,
                     ),
                   ],
                 ),
@@ -1484,13 +1830,19 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
       return _LeaveType(
         id: d.id,
         label: (m['label'] as String?)?.trim().isNotEmpty == true ? (m['label'] as String).trim() : 'Congé',
+        defaultReason: ((m['defaultReason'] as String?) ?? '').trim(),
       );
     }).toList();
     if (!mounted) return;
+    final types = list.isNotEmpty ? list : const [_LeaveType(id: 'default', label: 'Congé')];
     setState(() {
-      _leaveTypes = list.isNotEmpty ? list : const [_LeaveType(id: 'default', label: 'Congé')];
-      _leaveTypeId = (_leaveTypes.isNotEmpty) ? _leaveTypes.first.id : null;
+      _leaveTypes = types;
+      _leaveTypeId = types.isNotEmpty ? types.first.id : null;
       _loadingLeaveTypes = false;
+      // Pré-remplir le motif avec le motif par défaut du premier type
+      if (types.isNotEmpty && types.first.defaultReason.isNotEmpty && _reasonCtrl.text.trim().isEmpty) {
+        _reasonCtrl.text = types.first.defaultReason;
+      }
     });
   }
 
@@ -1640,13 +1992,29 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                                   child: Text(t.label),
                                 ))
                             .toList(),
-                        onChanged: (v) => setState(() => _leaveTypeId = v),
+                        onChanged: (v) {
+                          setState(() {
+                            _leaveTypeId = v;
+                            // Pré-remplir le motif avec le motif par défaut du type sélectionné
+                            if (v != null) {
+                              final selected = _leaveTypes.where((t) => t.id == v).toList();
+                              if (selected.isNotEmpty && selected.first.defaultReason.isNotEmpty) {
+                                _reasonCtrl.text = selected.first.defaultReason;
+                              }
+                            }
+                          });
+                        },
                       ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _reasonCtrl,
-                  decoration: const InputDecoration(labelText: 'Motif', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'Motif',
+                    hintText: 'Pré-rempli selon le type sélectionné',
+                    border: OutlineInputBorder(),
+                  ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Requis' : null,
+                  maxLines: 2,
                 ),
                 const SizedBox(height: 8),
                 TextFormField(

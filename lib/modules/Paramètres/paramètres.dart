@@ -28,6 +28,7 @@ import '../pointage/absence_reasons_provider.dart';
 import '../pointage/formation_page.dart';
 import '../pointage/models/absence_reason_config.dart';
 import '../../core/site/site_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Modèles locaux pour l'UI Chefs (affichage dérivé de Equipe + Employe)
 class _ChefEquipeView {
@@ -139,6 +140,7 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
     _SettingsSection(icon: Icons.account_tree_outlined, label: 'Départements'),
     _SettingsSection(icon: Icons.cancel_presentation_outlined, label: 'Raisons d\'absence'),
+    _SettingsSection(icon: Icons.beach_access, label: 'Types de congé'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
     _SettingsSection(icon: Icons.security, label: 'Sécurité'),
@@ -170,14 +172,16 @@ class _ParametresPageState extends State<ParametresPage> {
       case 9:
         return auth.hasPermission(AppPermissions.absenceReasonsManage);
       case 10:
-        return auth.hasPermission(AppPermissions.generalManage);
+        return true; // Types de congé — accessible à tous les admins
       case 11:
-        return auth.hasPermission(AppPermissions.notificationsManage);
+        return auth.hasPermission(AppPermissions.generalManage);
       case 12:
-        return auth.hasPermission(AppPermissions.securityManage);
+        return auth.hasPermission(AppPermissions.notificationsManage);
       case 13:
-        return auth.hasPermission(AppPermissions.databaseManage);
+        return auth.hasPermission(AppPermissions.securityManage);
       case 14:
+        return auth.hasPermission(AppPermissions.databaseManage);
+      case 15:
         return auth.hasPermission(AppPermissions.aboutView);
       default:
         return false;
@@ -389,11 +393,12 @@ class _ParametresPageState extends State<ParametresPage> {
       case 7:  return const _PostesSection();
       case 8:  return const _DepartementsSection();
       case 9:  return const _AbsenceReasonsSection();
-      case 10: return const _GeneralSection();
-      case 11: return const _NotificationsSection();
-      case 12: return const _SecuriteSection();
-      case 13: return const _DatabaseSection();
-      case 14: return const _AboutSection();
+      case 10: return const _LeaveTypesSection();
+      case 11: return const _GeneralSection();
+      case 12: return const _NotificationsSection();
+      case 13: return const _SecuriteSection();
+      case 14: return const _DatabaseSection();
+      case 15: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -1450,7 +1455,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   String _siteId = SiteId.all;
   String _selectedPreset = 'custom';
 
-  final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage'];
+  final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage', 'Chef d\'atelier', 'Chef de zone'];
   final _allPerms = AppPermissions.allDetailed;
 
   Map<String, List<String>> get _permissionPresets => {
@@ -1484,7 +1489,9 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       AppPermissions.reportsView,
       AppPermissions.aboutView,
     ],
-    'zone': [
+    // Chef de zone: full admin scope except direct pointage access.
+    'zone': _allPerms.where((p) => p != AppPermissions.pointageView).toList(),
+    'atelier': [
       AppPermissions.employeesView,
       AppPermissions.employeesManage,
       AppPermissions.employeesDelete,
@@ -1520,6 +1527,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
 
     if (same(perms, _permissionPresets['rh']!)) return 'rh';
     if (same(perms, _permissionPresets['pointage']!)) return 'pointage';
+    if (same(perms, _permissionPresets['atelier']!)) return 'atelier';
     if (same(perms, _permissionPresets['zone']!)) return 'zone';
     return 'custom';
   }
@@ -1532,7 +1540,8 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       _perms = List<String>.from(preset);
       if (key == 'rh') _role = 'Admin RH';
       if (key == 'pointage') _role = 'Admin Pointage';
-      if (key == 'zone') _role = 'Admin Général';
+      if (key == 'atelier') _role = 'Chef d\'atelier';
+      if (key == 'zone') _role = 'Chef de zone';
     });
   }
 
@@ -1716,7 +1725,12 @@ class _AdminDrawerState extends State<_AdminDrawer> {
                   onSelected: (_) => _applyPreset('pointage'),
                 ),
                 ChoiceChip(
-                  label: const Text('Admin Zone'),
+                  label: const Text('Chef d\'atelier'),
+                  selected: _selectedPreset == 'atelier',
+                  onSelected: (_) => _applyPreset('atelier'),
+                ),
+                ChoiceChip(
+                  label: const Text('Chef de zone'),
                   selected: _selectedPreset == 'zone',
                   onSelected: (_) => _applyPreset('zone'),
                 ),
@@ -5845,4 +5859,292 @@ void _showSaveSuccess(BuildContext context) {
       ),
     ),
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Section: Types de congé
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _LeaveTypesSection extends StatefulWidget {
+  const _LeaveTypesSection();
+  @override
+  State<_LeaveTypesSection> createState() => _LeaveTypesSectionState();
+}
+
+class _LeaveTypesSectionState extends State<_LeaveTypesSection> {
+  final _labelCtrl = TextEditingController();
+  final _reasonCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _labelCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addType() async {
+    final label = _labelCtrl.text.trim();
+    if (label.isEmpty) return;
+    setState(() => _saving = true);
+    await FirebaseFirestore.instance.collection('leave_types').add({
+      'label': label,
+      'defaultReason': _reasonCtrl.text.trim(),
+      'actif': true,
+      'createdAt': Timestamp.now(),
+    });
+    _labelCtrl.clear();
+    _reasonCtrl.clear();
+    if (mounted) setState(() => _saving = false);
+  }
+
+  Future<void> _editType(String docId, String currentLabel, String currentReason) async {
+    final editLabelCtrl = TextEditingController(text: currentLabel);
+    final editReasonCtrl = TextEditingController(text: currentReason);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Modifier le type de congé'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: editLabelCtrl,
+              decoration: const InputDecoration(labelText: 'Libellé *', border: OutlineInputBorder()),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: editReasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Motif par défaut',
+                hintText: 'Pré-rempli automatiquement dans le formulaire',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          FilledButton(
+            onPressed: () async {
+              final lbl = editLabelCtrl.text.trim();
+              if (lbl.isEmpty) return;
+              await FirebaseFirestore.instance.collection('leave_types').doc(docId).update({
+                'label': lbl,
+                'defaultReason': editReasonCtrl.text.trim(),
+              });
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Enregistrer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleType(String docId, bool currentActif) async {
+    await FirebaseFirestore.instance.collection('leave_types').doc(docId).update({
+      'actif': !currentActif,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(
+            title: 'Types de congé',
+            subtitle: 'Définir les types de congé disponibles et leur motif par défaut (pré-rempli automatiquement dans les formulaires).',
+          ),
+          const SizedBox(height: 20),
+          // ── Formulaire d'ajout ──
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Ajouter un nouveau type', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _labelCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Libellé du type *',
+                      hintText: 'Ex: Congé annuel, Congé maladie, Congé paternité...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _reasonCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Motif par défaut',
+                      hintText: 'Ce motif sera pré-rempli automatiquement lors de la saisie d\'une demande',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      icon: _saving
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.add),
+                      label: const Text('Ajouter'),
+                      onPressed: _saving ? null : _addType,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // ── Liste des types ──
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('leave_types')
+                .orderBy('createdAt', descending: false)
+                .snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
+              }
+              final docs = snap.data?.docs ?? const [];
+              if (docs.isEmpty) {
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Aucun type de congé défini. Ajoutez-en pour qu\'ils apparaissent dans les formulaires de demande.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    ),
+                  ),
+                );
+              }
+              final actifs = docs.where((d) => d.data()['actif'] == true).toList();
+              final inactifs = docs.where((d) => d.data()['actif'] != true).toList();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (actifs.isNotEmpty) ...[
+                    Text('Types actifs (${actifs.length})', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF328EEE))),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: actifs.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _LeaveTypeCard(
+                        doc: actifs[i],
+                        onEdit: () => _editType(actifs[i].id, (actifs[i].data()['label'] as String?) ?? '', (actifs[i].data()['defaultReason'] as String?) ?? ''),
+                        onToggle: () => _toggleType(actifs[i].id, true),
+                      ),
+                    ),
+                  ],
+                  if (inactifs.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    Text('Types désactivés (${inactifs.length})', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.grey[600])),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: inactifs.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _LeaveTypeCard(
+                        doc: inactifs[i],
+                        onEdit: () => _editType(inactifs[i].id, (inactifs[i].data()['label'] as String?) ?? '', (inactifs[i].data()['defaultReason'] as String?) ?? ''),
+                        onToggle: () => _toggleType(inactifs[i].id, false),
+                        isDisabled: true,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeaveTypeCard extends StatelessWidget {
+  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
+  final VoidCallback onEdit;
+  final VoidCallback onToggle;
+  final bool isDisabled;
+
+  const _LeaveTypeCard({
+    required this.doc,
+    required this.onEdit,
+    required this.onToggle,
+    this.isDisabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final m = doc.data();
+    final label = (m['label'] as String?)?.trim() ?? doc.id;
+    final reason = (m['defaultReason'] as String?)?.trim() ?? '';
+
+    return Card(
+      color: isDisabled ? Colors.grey.shade50 : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isDisabled ? Colors.grey.shade200 : const Color(0xFFE3F2FD),
+          child: Icon(
+            Icons.beach_access,
+            color: isDisabled ? Colors.grey : const Color(0xFF0D47A1),
+            size: 20,
+          ),
+        ),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: isDisabled ? Colors.grey : null,
+            decoration: isDisabled ? TextDecoration.lineThrough : null,
+          ),
+        ),
+        subtitle: reason.isNotEmpty
+            ? Text(
+                'Motif par défaut: $reason',
+                style: TextStyle(fontSize: 12, color: isDisabled ? Colors.grey : Colors.grey.shade600),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              )
+            : Text(
+                'Aucun motif par défaut',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400, fontStyle: FontStyle.italic),
+              ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isDisabled)
+              IconButton(
+                tooltip: 'Modifier',
+                icon: const Icon(Icons.edit_outlined, size: 20, color: Color(0xFF328EEE)),
+                onPressed: onEdit,
+              ),
+            IconButton(
+              tooltip: isDisabled ? 'Réactiver' : 'Désactiver',
+              icon: Icon(
+                isDisabled ? Icons.toggle_off_outlined : Icons.toggle_on_outlined,
+                size: 22,
+                color: isDisabled ? Colors.grey : Colors.orange,
+              ),
+              onPressed: onToggle,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -19,6 +19,8 @@ import 'pointage_provider.dart';
 import 'absence_reasons_provider.dart';
 import 'pointage_hours_config.dart';
 import 'data/excel_validation_repository.dart';
+import 'data/daily_confirmation_repository.dart';
+import 'data/daily_snapshot_repository.dart';
 import '../shifts/shifts_provider.dart';
 import '../overtime/overtime_provider.dart';
 import '../overtime/models/overtime_model.dart';
@@ -248,6 +250,15 @@ enum _AdminDesignTab { pointages, statistiques, hs, formation }
 class _PointagePageState extends State<PointagePage> {
   final ExcelValidationRepository _excelValidationRepo =
       ExcelValidationRepository();
+  final DailyConfirmationRepository _confirmationRepo =
+      DailyConfirmationRepository();
+  final DailySnapshotRepository _snapshotRepo = DailySnapshotRepository();
+
+  // تأكيدات اليوم (real-time stream)
+  List<DailyEquipeConfirmation> _dailyConfirmations = [];
+  Stream<List<DailyEquipeConfirmation>>? _confirmationsStream;
+  DateTime? _confirmationsStreamDate;
+
   String? _selectedEquipeIdAdmin;
   String? _lastOvertimeListenEquipeId;
   DateTime _hsFilterDate = DateTime.now();
@@ -262,6 +273,14 @@ class _PointagePageState extends State<PointagePage> {
   bool _adminMonthLoading = false;
   DateTime? _adminMonthLoaded;
   List<PointageRecord> _adminMonthRecords = [];
+
+  /// تحديث stream التأكيدات عند تغيير التاريخ
+  void _ensureConfirmationsStream(DateTime date) {
+    final day = DateTime(date.year, date.month, date.day);
+    if (_confirmationsStreamDate?.isAtSameMomentAs(day) == true) return;
+    _confirmationsStreamDate = day;
+    _confirmationsStream = _confirmationRepo.watchConfirmationsForDate(day);
+  }
 
   void _ensureHsDateListener(OvertimeProvider provider) {
     final key =
@@ -862,6 +881,7 @@ class _PointagePageState extends State<PointagePage> {
         signatureLabel: 'Admin',
         personName: auth.currentUser?.nom ?? 'Admin',
         equipeName: team.equipeName,
+        chefName: team.chefName.isNotEmpty ? team.chefName : null,
       );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -947,43 +967,12 @@ class _PointagePageState extends State<PointagePage> {
                     OutlinedButton.icon(
                       onPressed: () => _showValidatedExcelDialog(context),
                       style: OutlinedButton.styleFrom(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity:
-                            densePhone ? VisualDensity.compact : VisualDensity.standard,
-                      ),
-                      icon: Icon(Icons.verified_outlined, size: iconSize),
-                      label: Text('Excel validés', style: TextStyle(fontSize: labelSize)),
-                    ),
-                  if (isViewingToday)
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        final unconfirmed = recordsForDate.where((r) {
-                          if (!r.isFinalPresent) return false;
-                          final confirmed = r.arrivalMarkedAt != null &&
-                              r.departureMarkedAt != null &&
-                              r.departureStatus == DepartureStatus.finished;
-                          return !confirmed;
-                        }).length;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              unconfirmed == 0
-                                  ? 'Validation OK: toutes les entrées/sorties du jour sont confirmées.'
-                                  : 'Validation (aujourd\'hui): $unconfirmed présence(s) sans confirmation entrée/sortie.',
-                            ),
-                            behavior: SnackBarBehavior.fixed,
-                          ),
-                        );
-                      },
-                      style: OutlinedButton.styleFrom(
                         padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
                       ),
-                      icon: Icon(Icons.fact_check_outlined, size: iconSize),
-                      label: Text('Vérifier E/S (jour)', style: TextStyle(fontSize: labelSize)),
+                      icon: Icon(Icons.verified_outlined, size: iconSize),
+                      label: Text('Excel validés', style: TextStyle(fontSize: labelSize)),
                     ),
                   OutlinedButton.icon(
                     onPressed: team == null ? null : () => exportSelectedTeamPdf(),
@@ -1305,71 +1294,276 @@ class _PointagePageState extends State<PointagePage> {
                     ],
                   );
                 }
+                // تحديث stream التأكيدات لليوم الحالي
+                _ensureConfirmationsStream(viewDate);
+
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Container(
-                      width: 260,
+                      width: 270,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: borderColor),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text('Chefs d\'équipe', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade800)),
-                          ),
-                          const Divider(height: 1),
-                          if (allTeams.isEmpty)
-                            Padding(padding: const EdgeInsets.all(16), child: Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600])))
-                          else
-                            Expanded(
-                              child: ListView.builder(
-                                itemCount: allTeams.length,
-                                itemBuilder: (context, i) {
-                                  final t = allTeams[i];
-                                  final shiftLabel = t.equipeId == 'hors_equipe'
-                                      ? null
-                                      : shiftsProvider.getShiftForEquipe(t.equipeId, viewDate)?.shortLabel;
-                                  final isSelected = _selectedEquipeIdAdmin == t.equipeId;
-                                  return ListTile(
-                                    dense: true,
-                                    selected: isSelected,
-                                    selectedTileColor: Theme.of(context).primaryColor.withValues(alpha: 0.10),
-                                    onTap: () => setState(() => _selectedEquipeIdAdmin = t.equipeId),
-                                    leading: const Icon(Icons.person, size: 18),
-                                    title: Text(
-                                      '${t.equipeName} — ${t.chefName}${shiftLabel != null ? ' ($shiftLabel)' : ''}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: isSelected ? Theme.of(context).primaryColor : Colors.grey.shade700,
-                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
+                      child: StreamBuilder<List<DailyEquipeConfirmation>>(
+                        stream: _confirmationsStream,
+                        builder: (context, snap) {
+                          final confirmations = snap.data ?? _dailyConfirmations;
+                          if (snap.hasData) _dailyConfirmations = snap.data!;
+                          final confirmedIds = confirmations.map((c) => c.equipeId).toSet();
+                          final workTeams = allTeams.where((t) => !nonWorkingIdsEffective.contains(t.equipeId)).toList();
+                          final confirmedCount = workTeams.where((t) => confirmedIds.contains(t.equipeId)).length;
+                          final totalCount = workTeams.length;
+                          final allConfirmed = totalCount > 0 && confirmedCount == totalCount;
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // ── رأس القائمة مع شريط التقدم ──
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'Chefs d\'équipe',
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade800),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: allConfirmed ? Colors.green.shade50 : Colors.orange.shade50,
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: allConfirmed ? Colors.green.shade300 : Colors.orange.shade300,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '$confirmedCount/$totalCount confirmés',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                              color: allConfirmed ? Colors.green.shade700 : Colors.orange.shade700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    trailing: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.16) : Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        '${t.workers.length}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: isSelected ? Theme.of(context).primaryColor : null,
-                                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                    const SizedBox(height: 6),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: totalCount > 0 ? confirmedCount / totalCount : 0,
+                                        minHeight: 5,
+                                        backgroundColor: Colors.grey.shade200,
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                          allConfirmed ? Colors.green : Colors.orange,
                                         ),
                                       ),
                                     ),
-                                  );
-                                },
+                                    // ── زر إرسال Excel عند اكتمال كل الفرق ──
+                                    if (allConfirmed) ...[
+                                      const SizedBox(height: 8),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton.icon(
+                                          onPressed: () => _showExcelExportDialog(
+                                            context, allTeams, equipes, employes, pointageProvider,
+                                          ),
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: Colors.green,
+                                            padding: const EdgeInsets.symmetric(vertical: 8),
+                                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          ),
+                                          icon: const Icon(Icons.table_chart, size: 16),
+                                          label: const Text('Exporter Excel complet', style: TextStyle(fontSize: 12)),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
-                            ),
-                        ],
+                              const Divider(height: 1),
+                              if (allTeams.isEmpty)
+                                Padding(padding: const EdgeInsets.all(16), child: Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600])))
+                              else
+                                Expanded(
+                                  child: ListView.builder(
+                                    itemCount: allTeams.length,
+                                    itemBuilder: (context, i) {
+                                      final t = allTeams[i];
+                                      final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
+                                      final shiftLabel = t.equipeId == 'hors_equipe'
+                                          ? null
+                                          : shiftsProvider.getShiftForEquipe(t.equipeId, viewDate)?.shortLabel;
+                                      final isSelected = _selectedEquipeIdAdmin == t.equipeId;
+                                      final isConfirmed = confirmedIds.contains(t.equipeId);
+
+                                      // حساب الحاضرين/الغائبين لهذا الفريق
+                                      final teamWorkers = t.workers;
+                                      int presentC = 0, absentC = 0;
+                                      for (final w in teamWorkers) {
+                                        final rec = getRecord(w.id);
+                                        if (rec?.isFinalPresent == true) {
+                                          presentC++;
+                                        } else {
+                                          absentC++;
+                                        }
+                                      }
+
+                                      return Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          ListTile(
+                                            dense: true,
+                                            selected: isSelected,
+                                            selectedTileColor: Theme.of(context).primaryColor.withValues(alpha: 0.10),
+                                            onTap: () => setState(() => _selectedEquipeIdAdmin = t.equipeId),
+                                            leading: Icon(
+                                              isConfirmed ? Icons.check_circle : Icons.person,
+                                              size: 18,
+                                              color: isConfirmed ? Colors.green : (isSelected ? Theme.of(context).primaryColor : Colors.grey),
+                                            ),
+                                            title: Text(
+                                              '${t.equipeName} — ${t.chefName}${shiftLabel != null ? ' ($shiftLabel)' : ''}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: isNonWorking
+                                                    ? Colors.grey.shade400
+                                                    : isSelected ? Theme.of(context).primaryColor : Colors.grey.shade700,
+                                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                                decoration: isNonWorking ? TextDecoration.lineThrough : null,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            trailing: isNonWorking
+                                                ? Text('repos', style: TextStyle(fontSize: 10, color: Colors.grey.shade400))
+                                                : Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      // عدد الحاضرين
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.green.shade50,
+                                                          borderRadius: BorderRadius.circular(10),
+                                                        ),
+                                                        child: Text('$presentC', style: TextStyle(fontSize: 11, color: Colors.green.shade700, fontWeight: FontWeight.w600)),
+                                                      ),
+                                                      const SizedBox(width: 3),
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.red.shade50,
+                                                          borderRadius: BorderRadius.circular(10),
+                                                        ),
+                                                        child: Text('$absentC', style: TextStyle(fontSize: 11, color: Colors.red.shade700, fontWeight: FontWeight.w600)),
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
+                                          // ── زر تأكيد / إلغاء تأكيد الفريق ──
+                                          if (!isNonWorking)
+                                            Padding(
+                                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                                              child: SizedBox(
+                                                width: double.infinity,
+                                                child: isConfirmed
+                                                    ? OutlinedButton.icon(
+                                                        onPressed: () async {
+                                                          await _confirmationRepo.unconfirmEquipe(t.equipeId, viewDate);
+                                                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, viewDate);
+                                                        },
+                                                        style: OutlinedButton.styleFrom(
+                                                          foregroundColor: Colors.green.shade700,
+                                                          side: BorderSide(color: Colors.green.shade300),
+                                                          padding: const EdgeInsets.symmetric(vertical: 4),
+                                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                          visualDensity: VisualDensity.compact,
+                                                        ),
+                                                        icon: const Icon(Icons.check_circle, size: 14),
+                                                        label: const Text('Confirmé ✓', style: TextStyle(fontSize: 11)),
+                                                      )
+                                                    : FilledButton.icon(
+                                                        onPressed: () async {
+                                                          final auth = context.read<AuthProvider>();
+                                                          final confirmedById = auth.currentUser?.id ?? '';
+
+                                                          // بناء قائمة snapshots لكل موظف في الفريق
+                                                          final empSnapshots = teamWorkers.map((w) {
+                                                            final rec = getRecord(w.id);
+                                                            String status;
+                                                            String? absenceReason;
+                                                            if (rec == null) {
+                                                              status = 'absent';
+                                                            } else if (rec.adminFinalStatus == AttendanceStatus.training) {
+                                                              status = 'formation';
+                                                            } else if (rec.adminFinalStatus == AttendanceStatus.leave ||
+                                                                rec.status == AttendanceStatus.leave) {
+                                                              status = 'leave';
+                                                            } else if (rec.isFinalPresent ||
+                                                                rec.chefStatus == ChefPointageStatus.present ||
+                                                                rec.driverStatus == DriverPointageStatus.present ||
+                                                                rec.driverStatus == DriverPointageStatus.enVehicule ||
+                                                                rec.status == AttendanceStatus.present) {
+                                                              status = 'present';
+                                                            } else {
+                                                              status = 'absent';
+                                                              absenceReason = rec.absenceReason;
+                                                            }
+                                                            return (
+                                                              employeId: w.id,
+                                                              employeNom: w.nom,
+                                                              employeCin: w.cin ?? '',
+                                                              status: status,
+                                                              absenceReason: absenceReason,
+                                                              isRestDay: false,
+                                                            );
+                                                          }).toList();
+
+                                                          await _snapshotRepo.saveEquipeSnapshot(
+                                                            equipeId: t.equipeId,
+                                                            equipeName: t.equipeName,
+                                                            date: viewDate,
+                                                            confirmedById: confirmedById,
+                                                            employees: empSnapshots,
+                                                          );
+                                                          await _confirmationRepo.confirmEquipe(
+                                                            equipeId: t.equipeId,
+                                                            equipeName: t.equipeName,
+                                                            confirmedById: confirmedById,
+                                                            confirmedByName: auth.currentUser?.nom ?? 'Admin',
+                                                            date: viewDate,
+                                                            presentCount: presentC,
+                                                            absentCount: absentC,
+                                                          );
+                                                        },
+                                                        style: FilledButton.styleFrom(
+                                                          backgroundColor: Colors.blue.shade600,
+                                                          padding: const EdgeInsets.symmetric(vertical: 4),
+                                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                          visualDensity: VisualDensity.compact,
+                                                        ),
+                                                        icon: const Icon(Icons.check, size: 14),
+                                                        label: const Text('Confirmer', style: TextStyle(fontSize: 11)),
+                                                      ),
+                                              ),
+                                            ),
+                                          const Divider(height: 1),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -1411,7 +1605,7 @@ class _PointagePageState extends State<PointagePage> {
   ) async {
     final now = DateTime.now();
     DateTime start = DateTime(now.year, now.month, 1);
-    DateTime end = now;
+    DateTime end = DateTime(now.year, now.month, now.day);
     if (!context.mounted) return;
     final teamOptions = <({String id, String label})>[
       for (final eq in equipes)
@@ -1437,7 +1631,9 @@ class _PointagePageState extends State<PointagePage> {
       start = end;
       end = t;
     }
-    final records = await pointageProvider.getPointageInDateRange(start, end);
+
+    // بناء قائمة الموظفين أولاً حتى نتمكن من تمرير معرفاتهم عند جلب السجلات،
+    // مما يضمن جلب سجلاتهم حتى لو لم يُسجَّل لهم أي بوانتاج في الفترة.
     final employees = <({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})>[];
     // IMPORTANT: les renforts doivent être attribués à l'équipe d'origine dans l'Excel.
     // Donc on construit la liste des employés depuis l'appartenance "réelle" (equipes.membreIds / chefId),
@@ -1499,35 +1695,6 @@ class _PointagePageState extends State<PointagePage> {
         break;
     }
 
-    final today = DateTime.now();
-    final todayDay = DateTime(today.year, today.month, today.day);
-    final startDay = DateTime(start.year, start.month, start.day);
-    final endDay = DateTime(end.year, end.month, end.day);
-    final isTodayOnly = startDay == todayDay && endDay == todayDay;
-    final unconfirmedCount = isTodayOnly
-        ? _countUnconfirmedPresenceInRange(
-            start: start,
-            end: end,
-            records: records,
-            employeeIds: filteredEmployees.map((e) => e.id).toSet(),
-          )
-        : 0;
-    var requireConfirmedEntryExit = false;
-    if (isTodayOnly && unconfirmedCount > 0) {
-      final decision = await _showAdminExcelValidationDialog(context, unconfirmedCount: unconfirmedCount);
-      if (decision == null || !mounted) return;
-      if (!decision) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Export annulé: veuillez confirmer entrées/sorties avant génération Excel.'),
-            behavior: SnackBarBehavior.fixed,
-          ),
-        );
-        return;
-      }
-      requireConfirmedEntryExit = decision;
-    }
-
     final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
     final shiftsProvider = context.read<ShiftsProvider>();
     final isRestDay = shiftsProvider.hasConfig
@@ -1536,19 +1703,101 @@ class _PointagePageState extends State<PointagePage> {
         : null;
     // جلب overtime_assignments للنطاق الزمني
     final overtimeProvider = context.read<OvertimeProvider>();
-    final overtimeAssignments =
-        await overtimeProvider.getForDateRange(start, end);
-    final rows = PointageExportService.computeExcelRows(
-      startDate: start,
-      endDate: end,
-      employees: filteredEmployees,
-      records: records,
-      reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-      isRestDay: isRestDay,
-      // Apply strict entry/exit validation only for "today" exports.
-      requireConfirmedEntryExit: isTodayOnly && requireConfirmedEntryExit,
-      overtimeAssignments: overtimeAssignments,
-    );
+    final overtimeAssignments = await overtimeProvider.getForDateRange(start, end);
+
+    // ── المسار الأساسي: snapshots المؤكدة ──────────────────────────────────
+    // نحاول أولاً جلب snapshots المخزنة (أكثر دقة وموثوقية من إعادة جلب السجلات).
+    final snapshots = await _snapshotRepo.getSnapshotsForRange(start, end);
+
+    // نحسب عدد الأيام في النطاق وعدد التأكيدات لكل موظف
+    final totalRangeDays = end.difference(start).inDays + 1;
+    final filteredEmpIds = filteredEmployees.map((e) => e.id).toSet();
+
+    // عدد الأيام التي لها snapshots لكل موظف ضمن الفلتر
+    final snapshotDaysByEmp = <String, Set<String>>{};
+    for (final s in snapshots) {
+      if (!filteredEmpIds.contains(s.employeId)) continue;
+      final dk = '${s.date.year}-${s.date.month.toString().padLeft(2, '0')}-${s.date.day.toString().padLeft(2, '0')}';
+      snapshotDaysByEmp.putIfAbsent(s.employeId, () => <String>{}).add(dk);
+    }
+
+    // إذا كانت كل الأيام مؤكدة لأغلب الموظفين (≥80% من الموظفين لهم snapshots لكل الأيام)
+    // نستخدم مسار snapshots مباشرةً، وإلا نستخدم المسار القديم (جلب records)
+    final fullyConfirmedCount = filteredEmployees
+        .where((e) => (snapshotDaysByEmp[e.id]?.length ?? 0) >= totalRangeDays)
+        .length;
+    final useSnapshotPath = snapshots.isNotEmpty &&
+        (filteredEmployees.isEmpty ||
+            fullyConfirmedCount >= (filteredEmployees.length * 0.8).ceil());
+
+    List<PointageExportRow> rows;
+
+    if (useSnapshotPath) {
+      // ── مسار snapshots (دقيق وسريع) ──────────────────────────────────
+      rows = PointageExportService.computeExcelRowsFromSnapshots(
+        startDate: start,
+        endDate: end,
+        employees: filteredEmployees,
+        snapshots: snapshots.where((s) => filteredEmpIds.contains(s.employeId)).toList(),
+        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+        isRestDay: isRestDay,
+        overtimeAssignments: overtimeAssignments,
+      );
+    } else {
+      // ── مسار records (fallback للأيام غير المؤكدة) ──────────────────
+      final records = await pointageProvider.getPointageInDateRange(
+        start,
+        end,
+        knownEmployeIds: filteredEmpIds,
+      );
+
+      final today = DateTime.now();
+      final todayDay = DateTime(today.year, today.month, today.day);
+      final startDay = DateTime(start.year, start.month, start.day);
+      final endDay = DateTime(end.year, end.month, end.day);
+      final isTodayOnly = startDay == todayDay && endDay == todayDay;
+      final unconfirmedCount = isTodayOnly
+          ? _countUnconfirmedPresenceInRange(
+              start: start,
+              end: end,
+              records: records,
+              employeeIds: filteredEmpIds,
+            )
+          : 0;
+      var requireConfirmedEntryExit = false;
+      if (isTodayOnly && unconfirmedCount > 0) {
+        final decision = await _showAdminExcelValidationDialog(context, unconfirmedCount: unconfirmedCount);
+        if (decision == null || !mounted) return;
+        if (!decision) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Export annulé: veuillez confirmer entrées/sorties avant génération Excel.'),
+              behavior: SnackBarBehavior.fixed,
+            ),
+          );
+          return;
+        }
+        requireConfirmedEntryExit = decision;
+      }
+
+      rows = PointageExportService.computeExcelRows(
+        startDate: start,
+        endDate: end,
+        employees: filteredEmployees,
+        records: records,
+        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+        isRestDay: isRestDay,
+        requireConfirmedEntryExit: isTodayOnly && requireConfirmedEntryExit,
+        overtimeAssignments: overtimeAssignments,
+      );
+    }
+
+    // للمتغيرات المستخدمة لاحقاً في logExport
+    final exportNow = DateTime.now();
+    final exportTodayDay = DateTime(exportNow.year, exportNow.month, exportNow.day);
+    final exportStartDay = DateTime(start.year, start.month, start.day);
+    final exportEndDay = DateTime(end.year, end.month, end.day);
+    final isTodayOnlyForLog = exportStartDay == exportTodayDay && exportEndDay == exportTodayDay;
     final filePath = await PointageExportService.saveAndOpenExcel(
       startDate: start,
       endDate: end,
@@ -1556,7 +1805,8 @@ class _PointagePageState extends State<PointagePage> {
       reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
     );
     final auth = context.read<AuthProvider>();
-    final validatedExport = isTodayOnly && unconfirmedCount == 0;
+    // يُعتبر التصدير "مُتحقَّقاً" إما عبر مسار snapshots أو إذا كان اليوم الحالي فقط
+    final validatedExport = useSnapshotPath || isTodayOnlyForLog;
     await _excelValidationRepo.logExport(
       createdById: auth.currentUser?.id ?? '',
       createdByName: auth.currentUser?.nom ?? '',
@@ -1934,7 +2184,7 @@ class _PointagePageState extends State<PointagePage> {
           SizedBox(height: mobile ? 10 : 8),
           ...workers.map((e) {
             final record = getRecord(e.id);
-            final reconciled = record?.reconciledStatus ?? ReconciledStatus.pending;
+            final reconciled = record?.reconciledStatus ?? ReconciledStatus.confirmedAbsent;
             final isPresent = record?.isFinalPresent ?? false;
             final isAlreadyFormation = record?.adminFinalStatus == AttendanceStatus.training;
             final isOnLeave = record?.adminFinalStatus == AttendanceStatus.leave;
@@ -2613,7 +2863,7 @@ class _PointagePageState extends State<PointagePage> {
     final workers = List<Employe>.from(baseWorkers)
       ..sort((a, b) => a.nom.compareTo(b.nom));
     workers.sort((a, b) => a.nom.compareTo(b.nom));
-    // Afficher tous les travailleurs ; ceux en formation sont en « présent — en formation » sans choix présent/absent
+    // Afficher tous les travailleurs ; ceux en formation/congé sont en badge sans choix présent/absent
     final workersDisplay = workers;
     final overtimeWorkers = workersDisplay.where((w) => overtimeWorkerIds.contains(w.id)).toList();
     final regularWorkers = workersDisplay.where((w) => !overtimeWorkerIds.contains(w.id)).toList();
@@ -2621,6 +2871,7 @@ class _PointagePageState extends State<PointagePage> {
     AttendanceState getState(String id) {
       final record = pointageProvider.getRecordForEmployee(id);
       if (record?.adminFinalStatus == AttendanceStatus.training) return AttendanceState.present;
+      if (record?.adminFinalStatus == AttendanceStatus.leave) return AttendanceState.present;
       if (overtimeWorkerIds.contains(id)) {
         final s = record?.overtimeChefStatus ?? ChefPointageStatus.unset;
         return _chefStatusToState(s);
@@ -2662,10 +2913,14 @@ class _PointagePageState extends State<PointagePage> {
       try {
         // Ensure all workers have a locked-in status before locking the report.
         // Unmarked workers are treated as absent.
+        // Skip workers on approved leave or in training (already handled by admin).
         // For overtime workers, check overtimeChefStatus; for regular workers, check chefStatus.
         for (final w in workersDisplay) {
           final isOvertimeWorker = overtimeWorkerIds.contains(w.id);
           final r = pointageProvider.getRecordForEmployee(w.id);
+          // Skip leave/training — their status is set by admin, not chef
+          if (r?.adminFinalStatus == AttendanceStatus.leave ||
+              r?.adminFinalStatus == AttendanceStatus.training) continue;
           final isUnmarked = isOvertimeWorker
               ? (r?.overtimeChefStatus ?? ChefPointageStatus.unset) == ChefPointageStatus.unset
               : (r == null || r.chefStatus == ChefPointageStatus.unset);
@@ -2760,6 +3015,49 @@ class _PointagePageState extends State<PointagePage> {
       final isOvertimeWorker = overtimeWorkerIds.contains(e.id);
       final record = pointageProvider.getRecordForEmployee(e.id);
       final isInTraining = record?.adminFinalStatus == AttendanceStatus.training;
+      final isOnLeave = record?.adminFinalStatus == AttendanceStatus.leave;
+
+      // Congé approuvé: carte non-interactive identique au badge formation
+      if (isOnLeave) {
+        return Card(
+          margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : 12, vertical: mobile ? 14 : 10),
+            child: Row(
+              children: [
+                SmartAvatar(
+                  imageUrl: e.photoUrl,
+                  fallbackText: e.nom,
+                  radius: mobile ? 22 : 18,
+                ),
+                SizedBox(width: mobile ? 14 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.beach_access, size: 16, color: const Color(0xFF0D47A1)),
+                      SizedBox(width: 6),
+                      Text('Congé approuvé', style: TextStyle(fontSize: mobile ? 11 : 12, fontWeight: FontWeight.w600, color: const Color(0xFF0D47A1))),
+                    ],
+                  ),
+                  backgroundColor: const Color(0xFFE3F2FD),
+                  side: const BorderSide(color: Color(0xFF90CAF9)),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
       if (isInTraining) {
         return Card(
           margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
@@ -3218,6 +3516,7 @@ class _PointagePageState extends State<PointagePage> {
                 }
                 final absentNames = absentWorkers.map((e) => e.nom).toList();
                 final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
+                final chefExportName = chefEquipe != null ? _chefNameForEquipe(chefEquipe, employes) : '';
                 final filePath = await PointageExportService.shareDailyReportPdf(
                   date: DateTime.now(),
                   title: trOf(context, 'report_presence_title'),
@@ -3228,6 +3527,7 @@ class _PointagePageState extends State<PointagePage> {
                   signatureLabel: trOf(context, 'pointage_signature_chef'),
                   personName: auth.currentUser?.nom ?? '',
                   equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
+                  chefName: chefExportName.isNotEmpty ? chefExportName : null,
                 );
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -3249,7 +3549,7 @@ class _PointagePageState extends State<PointagePage> {
               width: double.infinity,
               child: PrimaryButton(
                 label: tr(context, 'send_report_btn'),
-                onTap: isWithinArrival ? sendReport : null,
+                onTap: isWithinDeparture ? sendReport : null,
               ),
             ),
             const SizedBox(height: 16),
@@ -3443,6 +3743,7 @@ class _PointagePageState extends State<PointagePage> {
               }
               final absentNames = absentWorkers.map((e) => e.nom).toList();
               final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
+              final chefExportName = chefEquipe != null ? _chefNameForEquipe(chefEquipe, employes) : '';
               final filePath = await PointageExportService.shareDailyReportPdf(
                 date: DateTime.now(),
                 title: trOf(context, 'report_presence_title'),
@@ -3453,6 +3754,7 @@ class _PointagePageState extends State<PointagePage> {
                 signatureLabel: trOf(context, 'pointage_signature_chef'),
                 personName: auth.currentUser?.nom ?? '',
                 equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
+                chefName: chefExportName.isNotEmpty ? chefExportName : null,
               );
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -3474,7 +3776,7 @@ class _PointagePageState extends State<PointagePage> {
             width: double.infinity,
             child: PrimaryButton(
               label: tr(context, 'send_report_btn'),
-              onTap: isWithinArrival ? sendReport : null,
+              onTap: isWithinDeparture ? sendReport : null,
             ),
           ),
           SizedBox(height: mobile ? 16 : 24),
@@ -3747,9 +4049,11 @@ class _PointageHoursBanner extends StatelessWidget {
     final now = DateTime.now();
     if (status == PointageHoursStatus.open) {
       if (config.isWithinArrivalWindow(now)) {
-        msg = tr(this.context, 'pointage_arrival_window').replaceFirst('%s', config.arrivalWindowFormatted());
+        msg = tr(this.context, 'pointage_arrival_window').replaceFirst('%s', config.arrivalWindowFormatted(now));
+      } else if (config.isWithinDepartureWindow(now)) {
+        msg = tr(this.context, 'pointage_departure_window').replaceFirst('%s', config.departureWindowFormatted(now));
       } else {
-        msg = tr(this.context, 'pointage_departure_window').replaceFirst('%s', config.departureWindowFormatted());
+        msg = tr(this.context, 'pointage_arrival_window').replaceFirst('%s', config.arrivalWindowFormatted(now));
       }
       bg = Colors.green.shade50;
     } else if (status == PointageHoursStatus.notYetOpen) {

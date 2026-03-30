@@ -28,6 +28,17 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
   String? _selectedEquipeId;
   bool _nonWorkingLoadRequested = false;
 
+  bool _isHiddenForDriver(Employe e, PointageProvider pointageProvider) {
+    final r = pointageProvider.getRecordForEmployee(e.id);
+    final isLeaveOrTrainingInRecord =
+        r?.adminFinalStatus == AttendanceStatus.training ||
+            r?.adminFinalStatus == AttendanceStatus.leave ||
+            r?.status == AttendanceStatus.training ||
+            r?.status == AttendanceStatus.leave;
+    final isEmployeeOnLeave = e.statut == EmployeStatut.enConge;
+    return isLeaveOrTrainingInRecord || isEmployeeOnLeave;
+  }
+
   String? _departureStatusLabel(BuildContext context, PointageRecord record) {
     if (record.departureStatus == DepartureStatus.finished) {
       final t = record.departureMarkedAt;
@@ -124,11 +135,10 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final selectedTeam = teams.where((t) => t.equipeId == _selectedEquipeId).toList();
     final team = selectedTeam.isEmpty ? null : selectedTeam.first;
     final workers = team?.workers ?? <Employe>[];
-    // Ne pas afficher les travailleurs en formation (ils sont considérés présents dans les rapports)
-    final workersDisplay = workers.where((e) {
-      final r = pointageProvider.getRecordForEmployee(e.id);
-      return r?.adminFinalStatus != AttendanceStatus.training;
-    }).toList();
+    // Ne pas afficher les travailleurs en formation ou en congé approuvé
+    // (ils sont considérés présents automatiquement dans les rapports)
+    final workersDisplay =
+        workers.where((e) => !_isHiddenForDriver(e, pointageProvider)).toList();
     final borderColor = Colors.grey.shade300;
     final padding = pagePadding(context);
     final selectedEquipeList = emp.equipes.where((e) => e.id == _selectedEquipeId).toList();
@@ -143,6 +153,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
     final yesterday = today.subtract(const Duration(days: 1));
 
+    // canSendReport: tous les travailleurs affichés (hors congé/formation) ont un statut
     final canSendReport = workersDisplay.isNotEmpty && workersDisplay.every((e) {
       final r = pointageProvider.getRecordForEmployee(e.id);
       if (r == null) return false;
@@ -267,13 +278,16 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 onPressed: () async {
                   final equipes = <({
                     String equipeName,
+                    String? chefName,
                     List<String> presentNames,
                     List<String> presentNoDepartureNames,
                     List<String> absentNames,
                     List<String?> absentReasons
                   })>[];
                   for (final t in teams) {
-                    final workersForExport = t.workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus != AttendanceStatus.training).toList();
+                    final workersForExport = t.workers
+                        .where((e) => !_isHiddenForDriver(e, pointageProvider))
+                        .toList();
 
                     final presentNames = <String>[];
                     final presentNoDepartureNames = <String>[];
@@ -282,8 +296,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 
                     for (final e in workersForExport) {
                       final record = pointageProvider.getRecordForEmployee(e.id);
-                      final isLeave = record?.adminFinalStatus == AttendanceStatus.leave;
-                      final s = isLeave ? AttendanceState.present : _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
+                      final s = _driverStatusToState(pointageProvider.getDriverStatusForEmployee(e.id));
 
                       if (s == AttendanceState.present) {
                         // Sortie confirmée = P2 (sinon = seulement P1)
@@ -299,6 +312,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                     }
                     equipes.add((
                       equipeName: t.equipeName,
+                      chefName: t.chefName.isNotEmpty ? t.chefName : null,
                       presentNames: presentNames,
                       presentNoDepartureNames: presentNoDepartureNames,
                       absentNames: absentNames,
@@ -333,7 +347,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 width: double.infinity,
                 child: PrimaryButton(
                   label: tr(context, 'send_report_btn'),
-                  onTap: (isWithinArrival && canSendReport) ? () => _sendReport(config) : () {
+                  onTap: (isWithinDeparture && canSendReport) ? () => _sendReport(config) : () {
                     if (!canSendReport && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -441,33 +455,16 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             final driverStatus = record.driverStatus;
             final state = _driverStatusToState(driverStatus);
             final locked = pointageProvider.isDriverLockedForEmployee(e.id);
+            // PointageHoursConfig autorise souvent arrivée + départ en même temps (les deux à true).
+            // Priorité: si le travailleur est marqué présent, le chauffeur doit d'abord confirmer le départ
+            // (comme le chef) avant de revoir les chips Présent/Absent.
+            final isDriverPresent = state == AttendanceState.present;
+            final needsDriverDeparture = isWithinDeparture &&
+                !locked &&
+                isDriverPresent &&
+                record.departureStatus != DepartureStatus.finished;
             Widget chipsWidget;
-            if (isWithinArrival) {
-              chipsWidget = DriverStatusChips(
-                current: state,
-                onSelect: (locked || !isWithinArrival) ? (_) {} : (s) async {
-                  final ok = await pointageProvider.markDriverAttendance(
-                    employeId: e.id,
-                    employeNom: e.nom,
-                    employeCin: e.cin ?? '',
-                    equipeId: team.equipeId,
-                    equipeName: team.equipeName,
-                    chefName: team.chefName,
-                    driverStatus: _stateToDriverStatus(s),
-                    driverId: auth.currentUser?.id,
-                    configOverride: pointageConfig,
-                  );
-                  if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                    );
-                  }
-                },
-                presentLabel: tr(context, 'present'),
-                absentLabel: tr(context, 'absent'),
-                notInVehicleLabel: tr(context, 'not_in_vehicle'),
-              );
-            } else if (isWithinDeparture) {
+            if (needsDriverDeparture) {
               chipsWidget = _DepartureChips(
                 record: record,
                 config: pointageConfig,
@@ -502,6 +499,31 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 finishedLabel: tr(context, 'departure_finished'),
                 overtimeLabel: tr(context, 'overtime_minutes'),
                 overtimeHint: tr(context, 'overtime_minutes_hint'),
+              );
+            } else if (isWithinArrival) {
+              chipsWidget = DriverStatusChips(
+                current: state,
+                onSelect: (locked || !isWithinArrival) ? (_) {} : (s) async {
+                  final ok = await pointageProvider.markDriverAttendance(
+                    employeId: e.id,
+                    employeNom: e.nom,
+                    employeCin: e.cin ?? '',
+                    equipeId: team.equipeId,
+                    equipeName: team.equipeName,
+                    chefName: team.chefName,
+                    driverStatus: _stateToDriverStatus(s),
+                    driverId: auth.currentUser?.id,
+                    configOverride: pointageConfig,
+                  );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                    );
+                  }
+                },
+                presentLabel: tr(context, 'present'),
+                absentLabel: tr(context, 'absent'),
+                notInVehicleLabel: tr(context, 'not_in_vehicle'),
               );
             } else {
               chipsWidget = const SizedBox.shrink();

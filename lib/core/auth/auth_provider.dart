@@ -8,6 +8,7 @@ class AuthProvider extends ChangeNotifier {
   AppUser? _currentUser;
 
   AppUser? get currentUser => _currentUser;
+  String? get userId => _currentUser?.id;
   bool get isLoggedIn => _currentUser != null;
   bool get isDirecteur => _currentUser?.role == UserRole.directeur;
   bool get isChefEquipe => _currentUser?.role == UserRole.chefEquipe;
