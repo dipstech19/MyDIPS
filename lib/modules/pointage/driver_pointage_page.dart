@@ -494,16 +494,19 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             final driverStatus = record.driverStatus;
             final state = _driverStatusToState(driverStatus);
             final locked = pointageProvider.isDriverLockedForEmployee(e.id);
-            // PointageHoursConfig autorise souvent arrivée + départ en même temps (les deux à true).
-            // Priorité: si le travailleur est marqué présent, le chauffeur doit d'abord confirmer le départ
-            // (comme le chef) avant de revoir les chips Présent/Absent.
             final isDriverPresent = state == AttendanceState.present;
-            final needsDriverDeparture = isWithinDeparture &&
-                !locked &&
-                isDriverPresent &&
-                record.departureStatus != DepartureStatus.finished;
+            // Dans la fenêtre de départ: afficher les chips départ si le travailleur est présent
+            // (qu'il ait déjà une valeur ou non — pour permettre l'annulation aussi).
+            final showDepartureChips = isWithinDeparture && !locked && isDriverPresent;
+            // Dans la fenêtre d'arrivée uniquement (pas encore de départ): afficher Présent/Absent.
+            final showArrivalChips = !showDepartureChips && isWithinArrival && !locked;
+            // Fenêtre de départ + travailleur non-marqué (driverStatus = unset): bouton "Non pointé"
+            final showUnsetDepartureChip = isWithinDeparture && !locked &&
+                driverStatus == DriverPointageStatus.unset;
+
             Widget chipsWidget;
-            if (needsDriverDeparture) {
+
+            if (showDepartureChips) {
               chipsWidget = _DepartureChips(
                 record: record,
                 config: pointageConfig,
@@ -534,15 +537,35 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                     );
                   }
                 },
+                onCancel: () async {
+                  await pointageProvider.resetDepartureStatus(record);
+                },
                 stillLabel: 'N\'a pas terminé',
                 finishedLabel: tr(context, 'departure_finished'),
-                overtimeLabel: tr(context, 'overtime_minutes'),
-                overtimeHint: tr(context, 'overtime_minutes_hint'),
               );
-            } else if (isWithinArrival) {
+            } else if (showUnsetDepartureChip) {
+              // Travailleur non pointé à l'arrivée — dans la fenêtre de départ,
+              // le chauffeur peut l'enregistrer absent ou confirmer qu'il n'a pas pointé.
+              chipsWidget = _UnsetDepartureChip(
+                onMarkAbsent: () async {
+                  await pointageProvider.markDriverAttendance(
+                    employeId: e.id,
+                    employeNom: e.nom,
+                    employeCin: e.cin ?? '',
+                    equipeId: team.equipeId,
+                    equipeName: team.equipeName,
+                    chefName: team.chefName,
+                    driverStatus: DriverPointageStatus.absent,
+                    driverId: auth.currentUser?.id,
+                    configOverride: pointageConfig,
+                    bypassTimeWindows: true,
+                  );
+                },
+              );
+            } else if (showArrivalChips) {
               chipsWidget = DriverStatusChips(
                 current: state,
-                onSelect: (locked || !isWithinArrival) ? (_) {} : (s) async {
+                onSelect: (s) async {
                   final ok = await pointageProvider.markDriverAttendance(
                     employeId: e.id,
                     employeNom: e.nom,
@@ -689,20 +712,19 @@ class _DepartureChips extends StatelessWidget {
   final PointageHoursConfig config;
   final void Function(int? workedMinutesBeforeStop, String? incompleteShiftReason) onStillWorking;
   final void Function(int? overtimeMinutes) onFinished;
+  /// Appelé quand l'utilisateur re-appuie sur un bouton déjà sélectionné pour l'annuler.
+  final VoidCallback onCancel;
   final String stillLabel;
   final String finishedLabel;
-  final String overtimeLabel;
-  final String overtimeHint;
 
   const _DepartureChips({
     required this.record,
     required this.config,
     required this.onStillWorking,
     required this.onFinished,
+    required this.onCancel,
     required this.stillLabel,
     required this.finishedLabel,
-    required this.overtimeLabel,
-    required this.overtimeHint,
   });
 
   @override
@@ -713,98 +735,127 @@ class _DepartureChips extends StatelessWidget {
       spacing: 6,
       runSpacing: 4,
       children: [
+        // ── Bouton "N'a pas terminé" ────────────────────────────────────
         FilterChip(
           label: Text(stillLabel, style: const TextStyle(fontSize: 12)),
           selected: isStill,
+          selectedColor: Colors.orange.shade100,
+          checkmarkColor: Colors.orange.shade800,
           onSelected: (_) async {
+            // Re-appui → annulation
+            if (isStill) {
+              onCancel();
+              return;
+            }
             final workedHoursCtrl = TextEditingController();
             final reasonCtrl = TextEditingController();
             final data = await showDialog<({int? workedMinutes, String? reason})>(
               context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(stillLabel),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: workedHoursCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Heures travaillées',
-                          hintText: 'Ex: 5.5',
-                          border: OutlineInputBorder(),
-                        ),
+              builder: (ctx) => AlertDialog(
+                title: Text(stillLabel),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: workedHoursCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Heures travaillées',
+                        hintText: 'Ex: 5.5',
+                        border: OutlineInputBorder(),
                       ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: reasonCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Raison (optionnel)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
                     ),
-                    TextButton(
-                      onPressed: () {
-                        final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
-                        final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
-                        final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
-                        Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: reasonCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Raison (optionnel)',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                   ],
-                );
-              },
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
+                      final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
+                      final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
+                      Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
+                    },
+                    child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                  ),
+                ],
+              ),
             );
-            onStillWorking(data?.workedMinutes, data?.reason);
+            if (data != null) onStillWorking(data.workedMinutes, data.reason);
           },
         ),
+        // ── Bouton "Fin du travail" — confirmation directe sans dialogue ─
         FilterChip(
           label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
           selected: isFinished,
-          onSelected: (_) async {
-            final controller = TextEditingController();
-            final minutes = await showDialog<int?>(
-              context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(overtimeLabel),
-                  content: TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: overtimeHint,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, null),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        final v = int.tryParse(controller.text.trim());
-                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                    ),
-                  ],
-                );
-              },
-            );
-            onFinished(minutes);
+          selectedColor: Colors.green.shade100,
+          checkmarkColor: Colors.green.shade800,
+          onSelected: (_) {
+            // Re-appui → annulation
+            if (isFinished) {
+              onCancel();
+              return;
+            }
+            // Confirmation directe, pas de dialogue de saisie
+            onFinished(null);
           },
         ),
       ],
+    );
+  }
+}
+
+/// Chip affiché pour un travailleur non pointé pendant la fenêtre de départ.
+/// Permet au chauffeur de l'enregistrer comme absent (n'a pas pointé).
+class _UnsetDepartureChip extends StatelessWidget {
+  final VoidCallback onMarkAbsent;
+
+  const _UnsetDepartureChip({required this.onMarkAbsent});
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      avatar: Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange.shade800),
+      label: Text(
+        'Non pointé — Marquer absent',
+        style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+      ),
+      backgroundColor: Colors.orange.shade50,
+      side: BorderSide(color: Colors.orange.shade300),
+      onPressed: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Non pointé'),
+            content: const Text(
+              'Ce travailleur n\'a pas été pointé à l\'arrivée.\nVoulez-vous le marquer comme absent ?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Marquer absent'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) onMarkAbsent();
+      },
     );
   }
 }

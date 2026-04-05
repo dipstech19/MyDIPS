@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import '../employees/models/employe_model.dart';
@@ -743,6 +743,14 @@ class PointageProvider extends ChangeNotifier {
       workedMinutesBeforeStop: workedMinutesBeforeStop,
     );
     return true;
+  }
+
+  /// إلغاء تأكيد الخروج لموظف (إعادة departureStatus إلى unset).
+  Future<void> resetDepartureStatus(PointageRecord record) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    final docId = record.id.isNotEmpty ? record.id : '';
+    if (docId.isEmpty) return;
+    await _repo!.resetDepartureStatus(docId);
   }
 
   Future<void> setAdminOverride(

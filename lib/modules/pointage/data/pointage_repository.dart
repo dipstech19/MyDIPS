@@ -453,6 +453,18 @@ class PointageRepository {
     }
   }
 
+  /// إلغاء تأكيد الخروج: إعادة departureStatus إلى unset وحذف وقت الخروج والساعات الإضافية.
+  Future<void> resetDepartureStatus(String docId) async {
+    final ref = _firestore.collection(_pointageCollection).doc(docId);
+    await ref.update({
+      'departureStatus': DepartureStatus.unset.name,
+      'departureMarkedAt': null,
+      'overtimeMinutes': 0,
+      'incompleteShiftReason': null,
+      'workedMinutesBeforeStop': null,
+    });
+  }
+
   /// تعديل الأدمن النهائي (يمكن تغيير التقرير بعد إرسال الشاف والسائق).
   /// [absenceReason] يُسجّل عند تعيين status = absent.
   Future<void> setAdminOverride(
