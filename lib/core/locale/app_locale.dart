@@ -67,6 +67,10 @@ class AppTranslations {
     'pointage_confirm_send_title': 'Confirmer l\'envoi',
     'pointage_confirm_send_message':
         'Après confirmation, le pointage sera verrouillé sur cet appareil immédiatement (même si la connexion est lente). Vous ne pourrez plus modifier ni renvoyer.',
+    'pointage_chef_card_shift_complete': 'Shift terminé',
+    'pointage_chef_card_shift_early': 'Avant fin de shift',
+    'pointage_chef_absents_note': 'Absents : %s',
+    'pointage_chef_not_finished_title': 'N\'a pas terminé',
     'pointage_report_locked_pending_sync':
         'Envoi enregistré. Synchronisation avec le serveur en cours…',
     'no_teams': 'Aucune équipe',
@@ -253,6 +257,10 @@ class AppTranslations {
     'pointage_confirm_send_title': 'تأكيد الإرسال',
     'pointage_confirm_send_message':
         'بعد التأكيد، يُقفل التسجيل على هذا الجهاز فوراً حتى مع ضعف الإنترنت. لن يمكنك التعديل أو الإرسال مرة أخرى.',
+    'pointage_chef_card_shift_complete': 'انتهى الشفت',
+    'pointage_chef_card_shift_early': 'قبل نهاية الشفت',
+    'pointage_chef_absents_note': 'غائبون : %s',
+    'pointage_chef_not_finished_title': 'لم ينهِ العمل',
     'pointage_report_locked_pending_sync':
         'تم تسجيل الإرسال. جاري المزامنة مع الخادم…',
     'no_teams': 'لا توجد فرق',

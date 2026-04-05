@@ -747,8 +747,8 @@ class _PointagePageState extends State<PointagePage> {
       if (name.contains('robo') || name.contains('repos') || name.contains('repo')) return true;
       // Only treat as "repos" based on shift if the equipe is actually registered in the shifts config.
       if (shiftsProvider.hasConfig && (shiftsProvider.config?.equipeIds.contains(eq.id) ?? false)) {
-        final shift = shiftsProvider.getShiftForEquipe(eq.id, logicalDay);
-        return shift == ShiftType.rest;
+      final shift = shiftsProvider.getShiftForEquipe(eq.id, logicalDay);
+      return shift == ShiftType.rest;
       }
       return false;
     }
@@ -1825,8 +1825,8 @@ class _PointagePageState extends State<PointagePage> {
                                                     ? OutlinedButton.icon(
                                                         onPressed: () async {
                                                           try {
-                                                            await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
-                                                            await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
+                                                          await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
+                                                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
                                                           } catch (e) {
                                                             if (context.mounted) {
                                                               ScaffoldMessenger.of(context).showSnackBar(
@@ -1996,22 +1996,22 @@ class _PointagePageState extends State<PointagePage> {
                                                           }).toList();
 
                                                           try {
-                                                            await _snapshotRepo.saveEquipeSnapshot(
-                                                              equipeId: t.equipeId,
-                                                              equipeName: t.equipeName,
-                                                              date: logicalDay,
-                                                              confirmedById: confirmedById,
-                                                              employees: empSnapshots,
-                                                            );
-                                                            await _confirmationRepo.confirmEquipe(
-                                                              equipeId: t.equipeId,
-                                                              equipeName: t.equipeName,
-                                                              confirmedById: confirmedById,
-                                                              confirmedByName: auth.currentUser?.nom ?? 'Admin',
-                                                              date: logicalDay,
-                                                              presentCount: presentC,
-                                                              absentCount: absentC,
-                                                            );
+                                                          await _snapshotRepo.saveEquipeSnapshot(
+                                                            equipeId: t.equipeId,
+                                                            equipeName: t.equipeName,
+                                                            date: logicalDay,
+                                                            confirmedById: confirmedById,
+                                                            employees: empSnapshots,
+                                                          );
+                                                          await _confirmationRepo.confirmEquipe(
+                                                            equipeId: t.equipeId,
+                                                            equipeName: t.equipeName,
+                                                            confirmedById: confirmedById,
+                                                            confirmedByName: auth.currentUser?.nom ?? 'Admin',
+                                                            date: logicalDay,
+                                                            presentCount: presentC,
+                                                            absentCount: absentC,
+                                                          );
                                                           } catch (e) {
                                                             if (context.mounted) {
                                                               ScaffoldMessenger.of(context).showSnackBar(
@@ -2080,8 +2080,8 @@ class _PointagePageState extends State<PointagePage> {
                     ),
                     ],
                   )),
-                ],
-              );
+                  ],
+                );
               },
             ),
           ),
@@ -2333,14 +2333,14 @@ class _PointagePageState extends State<PointagePage> {
     // دائماً نستخدم مسار snapshots — يضمن أن Excel يعكس فقط البيانات المؤكدة
     List<PointageExportRow> rows;
     rows = PointageExportService.computeExcelRowsFromSnapshots(
-      startDate: start,
-      endDate: end,
-      employees: filteredEmployees,
+        startDate: start,
+        endDate: end,
+        employees: filteredEmployees,
       snapshots: snapshots.where((s) => filteredEmpIds.contains(s.employeId)).toList(),
-      reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-      isRestDay: isRestDay,
-      overtimeAssignments: overtimeAssignments,
-    );
+        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+        isRestDay: isRestDay,
+        overtimeAssignments: overtimeAssignments,
+      );
 
     final exportNow = DateTime.now();
     final exportTodayDay = DateTime(exportNow.year, exportNow.month, exportNow.day);
@@ -3479,16 +3479,19 @@ class _PointagePageState extends State<PointagePage> {
       final nowForDep = DateTime.now();
       final inDepartureWindow = bypassPointageHours || pointageConfig.canMarkDepartureNow(nowForDep);
 
-      // Calcul des statuts de sortie pour les présents
-      int departureConfirmedCount = 0;
+      // Statuts de sortie pour les présents (fin shift / avant fin / en attente)
+      int departureFinishedCount = 0;
+      int departureStillWorkingCount = 0;
       int departurePendingCount = 0;
       for (final w in workersDisplay) {
         final r = pointageProvider.getRecordForEmployee(w.id);
         final isPresent = (r?.isFinalPresent ?? false) || getState(w.id) == AttendanceState.present;
         if (!isPresent) continue;
         final dep = r?.departureStatus ?? DepartureStatus.unset;
-        if (dep == DepartureStatus.finished || dep == DepartureStatus.stillWorking) {
-          departureConfirmedCount++;
+        if (dep == DepartureStatus.finished) {
+          departureFinishedCount++;
+        } else if (dep == DepartureStatus.stillWorking) {
+          departureStillWorkingCount++;
         } else {
           departurePendingCount++;
         }
@@ -3576,107 +3579,136 @@ class _PointagePageState extends State<PointagePage> {
                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
               ),
               const SizedBox(height: 16),
-              // ── Présents / Absents ──────────────────────────────────
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.green.shade200),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.check_circle, color: Colors.green.shade600, size: 28),
-                          const SizedBox(height: 6),
-                          Text(
-                            '$presentCount',
-                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.green.shade700),
+              // Fenêtre arrivée : Présents / Absents. Fenêtre départ : fin shift / avant fin (+ note absents).
+              if (inDepartureWindow)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.green.shade200),
+                            ),
+                            child: Column(
+                              children: [
+                                Icon(Icons.task_alt_rounded, color: Colors.green.shade600, size: 28),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '$departureFinishedCount',
+                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.green.shade700),
+                                ),
+                                Text(
+                                  tr(ctx, 'departure_finished'),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green.shade800),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  tr(ctx, 'pointage_chef_card_shift_complete'),
+                                  style: TextStyle(fontSize: 11, color: Colors.green.shade700),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
                           ),
-                          Text('Présents', style: TextStyle(fontSize: 12, color: Colors.green.shade700)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.red.shade200),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.cancel, color: Colors.red.shade600, size: 28),
-                          const SizedBox(height: 6),
-                          Text(
-                            '$absentCount',
-                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.red.shade700),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.orange.shade300),
+                            ),
+                            child: Column(
+                              children: [
+                                Icon(Icons.schedule_rounded, color: Colors.orange.shade700, size: 28),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '$departureStillWorkingCount',
+                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.orange.shade800),
+                                ),
+                                Text(
+                                  tr(ctx, 'pointage_chef_not_finished_title'),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.orange.shade900),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  tr(ctx, 'pointage_chef_card_shift_early'),
+                                  style: TextStyle(fontSize: 11, color: Colors.orange.shade800),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
                           ),
-                          Text('Absents', style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-              // ── Statuts de sortie (si dans fenêtre départ ou déjà confirmés) ──
-              if (inDepartureWindow || departureConfirmedCount > 0) ...[
-                const SizedBox(height: 10),
+                    if (absentCount > 0) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        tr(ctx, 'pointage_chef_absents_note').replaceFirst('%s', '$absentCount'),
+                        style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ],
+                )
+              else
                 Row(
                   children: [
                     Expanded(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
                         decoration: BoxDecoration(
-                          color: Colors.teal.shade50,
+                          color: Colors.green.shade50,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.teal.shade200),
+                          border: Border.all(color: Colors.green.shade200),
                         ),
                         child: Column(
                           children: [
-                            Icon(Icons.logout_rounded, color: Colors.teal.shade600, size: 22),
-                            const SizedBox(height: 4),
+                            Icon(Icons.check_circle, color: Colors.green.shade600, size: 28),
+                            const SizedBox(height: 6),
                             Text(
-                              '$departureConfirmedCount',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.teal.shade700),
+                              '$presentCount',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.green.shade700),
                             ),
-                            Text('Sorties confirmées', style: TextStyle(fontSize: 11, color: Colors.teal.shade700), textAlign: TextAlign.center),
+                            Text(tr(ctx, 'report_presents'), style: TextStyle(fontSize: 12, color: Colors.green.shade700)),
                           ],
                         ),
                       ),
                     ),
-                    if (departurePendingCount > 0) ...[
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.orange.shade300),
-                          ),
-                          child: Column(
-                            children: [
-                              Icon(Icons.pending_outlined, color: Colors.orange.shade700, size: 22),
-                              const SizedBox(height: 4),
-                              Text(
-                                '$departurePendingCount',
-                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.orange.shade800),
-                              ),
-                              Text('Sorties en attente', style: TextStyle(fontSize: 11, color: Colors.orange.shade800), textAlign: TextAlign.center),
-                            ],
-                          ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.cancel, color: Colors.red.shade600, size: 28),
+                            const SizedBox(height: 6),
+                            Text(
+                              '$absentCount',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.red.shade700),
+                            ),
+                            Text(tr(ctx, 'report_absents'), style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
-              ],
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.all(10),
@@ -3730,14 +3762,14 @@ class _PointagePageState extends State<PointagePage> {
 
       unawaited(() async {
         try {
-          await pointageProvider.batchMarkUnmarkedAbsentBeforeChefSubmit(
-            workersDisplay: workersDisplay,
-            overtimeWorkerIds: overtimeWorkerIds,
-            equipeId: equipeId,
-            equipeName: equipeName,
-            chefName: auth.currentUser?.nom ?? '',
-            chefId: auth.currentUser?.id,
-            configOverride: pointageConfig,
+            await pointageProvider.batchMarkUnmarkedAbsentBeforeChefSubmit(
+              workersDisplay: workersDisplay,
+              overtimeWorkerIds: overtimeWorkerIds,
+              equipeId: equipeId,
+              equipeName: equipeName,
+              chefName: auth.currentUser?.nom ?? '',
+              chefId: auth.currentUser?.id,
+              configOverride: pointageConfig,
             bypassTimeWindows: bypassPointageHours,
           );
           final ok = await pointageProvider.submitChefReport(
@@ -3749,41 +3781,41 @@ class _PointagePageState extends State<PointagePage> {
           if (!ok) {
             pointageProvider.rollbackOptimisticChefReportLock();
             messenger.showSnackBar(
-              SnackBar(
-                content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-                backgroundColor: Colors.orange,
-                behavior: SnackBarBehavior.fixed,
-              ),
+                SnackBar(
+                  content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+                  backgroundColor: Colors.orange,
+                  behavior: SnackBarBehavior.fixed,
+                ),
+              );
+              return;
+            }
+            await pointageProvider.submitDailyReport(
+              equipeId: equipeId,
+              equipeName: equipeName,
+              chefId: auth.currentUser?.id ?? '',
+              chefName: auth.currentUser?.nom ?? '',
+              totalEmployees: workersDisplay.length,
+              presentCount: presentCount,
+              absentCount: absentCount,
+              notInVehicleCount: 0,
             );
-            return;
-          }
-          await pointageProvider.submitDailyReport(
-            equipeId: equipeId,
-            equipeName: equipeName,
-            chefId: auth.currentUser?.id ?? '',
-            chefName: auth.currentUser?.nom ?? '',
-            totalEmployees: workersDisplay.length,
-            presentCount: presentCount,
-            absentCount: absentCount,
-            notInVehicleCount: 0,
-          );
           if (!context.mounted) return;
-          final sortieOk = workersDisplay.where((w) {
-            final r = pointageProvider.getRecordForEmployee(w.id);
-            return (r?.isFinalPresent ?? false) && r?.departureStatus == DepartureStatus.finished;
-          }).length;
-          final sortieNotConfirmed = workersDisplay.where((w) {
-            final r = pointageProvider.getRecordForEmployee(w.id);
-            return (r?.isFinalPresent ?? false) && r?.departureStatus != DepartureStatus.finished;
-          }).length;
+              final sortieOk = workersDisplay.where((w) {
+                final r = pointageProvider.getRecordForEmployee(w.id);
+                return (r?.isFinalPresent ?? false) && r?.departureStatus == DepartureStatus.finished;
+              }).length;
+              final sortieNotConfirmed = workersDisplay.where((w) {
+                final r = pointageProvider.getRecordForEmployee(w.id);
+                return (r?.isFinalPresent ?? false) && r?.departureStatus != DepartureStatus.finished;
+              }).length;
           messenger.showSnackBar(
-            SnackBar(
-              content: Text('$reportSentMsgChef — Sortie OK: $sortieOk | Non confirmée: $sortieNotConfirmed'),
-              backgroundColor: Colors.green,
-              behavior: SnackBarBehavior.fixed,
-            ),
-          );
-        } catch (e) {
+                SnackBar(
+                  content: Text('$reportSentMsgChef — Sortie OK: $sortieOk | Non confirmée: $sortieNotConfirmed'),
+                  backgroundColor: Colors.green,
+                  behavior: SnackBarBehavior.fixed,
+                ),
+        );
+      } catch (e) {
           pointageProvider.rollbackOptimisticChefReportLock();
           if (!context.mounted) return;
           messenger.showSnackBar(
@@ -3806,6 +3838,21 @@ class _PointagePageState extends State<PointagePage> {
     final isWithinArrival = bypassPointageHours || config.canMarkArrivalNow(now);
     final isWithinDeparture = bypassPointageHours || config.canMarkDepartureNow(now);
     final mobile = isMobile(context);
+
+    final chefBannerPresent = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length;
+    final chefBannerAbsent = workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length;
+    final chefBannerDepFinished = workersDisplay.where((w) {
+      if (getState(w.id) != AttendanceState.present) {
+        return false;
+      }
+      return pointageProvider.getRecordForEmployee(w.id)?.departureStatus == DepartureStatus.finished;
+    }).length;
+    final chefBannerDepStill = workersDisplay.where((w) {
+      if (getState(w.id) != AttendanceState.present) {
+        return false;
+      }
+      return pointageProvider.getRecordForEmployee(w.id)?.departureStatus == DepartureStatus.stillWorking;
+    }).length;
 
     final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
 
@@ -4344,11 +4391,17 @@ class _PointagePageState extends State<PointagePage> {
               height: 48,
               width: double.infinity,
               child: chefReportLockedForAll
-                  ? _ReportSentBanner(presentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length, absentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length)
+                  ? _ReportSentBanner(
+                      departurePhase: isWithinDeparture,
+                      presentCount: chefBannerPresent,
+                      absentCount: chefBannerAbsent,
+                      finishedDepartureCount: chefBannerDepFinished,
+                      stillWorkingDepartureCount: chefBannerDepStill,
+                    )
                   : PrimaryButton(
-                      label: tr(context, 'send_report_btn'),
+                label: tr(context, 'send_report_btn'),
                       onTap: sendReport,
-                    ),
+              ),
             ),
             const SizedBox(height: 16),
           ],
@@ -4507,11 +4560,17 @@ class _PointagePageState extends State<PointagePage> {
             height: mobile ? 48 : 52,
             width: double.infinity,
             child: chefReportLockedForAll
-                ? _ReportSentBanner(presentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length, absentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length)
+                ? _ReportSentBanner(
+                    departurePhase: isWithinDeparture,
+                    presentCount: chefBannerPresent,
+                    absentCount: chefBannerAbsent,
+                    finishedDepartureCount: chefBannerDepFinished,
+                    stillWorkingDepartureCount: chefBannerDepStill,
+                  )
                 : PrimaryButton(
-                    label: tr(context, 'send_report_btn'),
+              label: tr(context, 'send_report_btn'),
                     onTap: sendReport,
-                  ),
+            ),
           ),
           SizedBox(height: mobile ? 16 : 24),
         ],
@@ -4527,9 +4586,20 @@ class _PointagePageState extends State<PointagePage> {
 
 /// Bannière affichée à la place du bouton "Envoyer rapport" une fois le rapport verrouillé/envoyé.
 class _ReportSentBanner extends StatelessWidget {
+  /// Si true (créneau départ) : affiche les compteurs de sortie. Sinon : Présents / Absents (arrivée).
+  final bool departurePhase;
   final int presentCount;
   final int absentCount;
-  const _ReportSentBanner({required this.presentCount, required this.absentCount});
+  final int finishedDepartureCount;
+  final int stillWorkingDepartureCount;
+
+  const _ReportSentBanner({
+    required this.departurePhase,
+    required this.presentCount,
+    required this.absentCount,
+    required this.finishedDepartureCount,
+    required this.stillWorkingDepartureCount,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4538,34 +4608,73 @@ class _ReportSentBanner extends StatelessWidget {
         color: Colors.green.shade600,
         borderRadius: BorderRadius.circular(10),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Icon(Icons.check_circle, color: Colors.white, size: 20),
           const SizedBox(width: 8),
-          Text(
-            'Rapport envoyé ✓',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-          ),
-          const SizedBox(width: 14),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
+          Flexible(
+            child: Text(
+              'Rapport envoyé ✓',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+              overflow: TextOverflow.ellipsis,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle_outline, size: 14, color: Colors.greenAccent.shade100),
-                const SizedBox(width: 4),
-                Text('$presentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-                const SizedBox(width: 8),
-                Icon(Icons.cancel_outlined, size: 14, color: Colors.red.shade200),
-                const SizedBox(width: 4),
-                Text('$absentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-              ],
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: departurePhase
+                  ? Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.task_alt_rounded, size: 14, color: Colors.greenAccent.shade100),
+                            const SizedBox(width: 4),
+                            Text('$finishedDepartureCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                            const SizedBox(width: 2),
+                            Text(
+                              tr(context, 'pointage_chef_card_shift_complete'),
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.95), fontSize: 11),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.schedule_rounded, size: 14, color: Colors.orange.shade100),
+                            const SizedBox(width: 4),
+                            Text('$stillWorkingDepartureCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                            const SizedBox(width: 2),
+                            Text(
+                              tr(context, 'pointage_chef_card_shift_early'),
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.95), fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle_outline, size: 14, color: Colors.greenAccent.shade100),
+                        const SizedBox(width: 4),
+                        Text('$presentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                        const SizedBox(width: 8),
+                        Icon(Icons.cancel_outlined, size: 14, color: Colors.red.shade200),
+                        const SizedBox(width: 4),
+                        Text('$absentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                      ],
+                    ),
             ),
           ),
         ],
@@ -4626,46 +4735,46 @@ class _DepartureChips extends StatelessWidget {
             final data = await showDialog<({int? workedMinutes, String? reason})>(
               context: context,
               builder: (ctx) => AlertDialog(
-                title: Text(stillLabel),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: workedHoursCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: 'Heures travaillées',
-                        hintText: 'Ex: 5.5',
-                        border: OutlineInputBorder(),
+                  title: Text(stillLabel),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: workedHoursCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Heures travaillées',
+                          hintText: 'Ex: 5.5',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: reasonCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Raison (optionnel)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
                     ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: reasonCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Raison (optionnel)',
-                        border: OutlineInputBorder(),
-                      ),
+                  FilledButton(
+                      onPressed: () {
+                        final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
+                        final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
+                        final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
+                        Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
+                      },
+                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
                     ),
                   ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                  ),
-                  FilledButton(
-                    onPressed: () {
-                      final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
-                      final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
-                      final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
-                      Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
-                    },
-                    child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                  ),
-                ],
               ),
-            );
+                );
             if (data != null) onStillWorking(data.workedMinutes, data.reason);
           },
         ),
@@ -4689,28 +4798,28 @@ class _DepartureChips extends StatelessWidget {
             final minutes = await showDialog<int?>(
               context: context,
               builder: (ctx) => AlertDialog(
-                title: Text(overtimeLabel),
-                content: TextField(
-                  controller: controller,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    hintText: overtimeHint,
-                    border: const OutlineInputBorder(),
+                  title: Text(overtimeLabel),
+                  content: TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      hintText: overtimeHint,
+                      border: const OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, null),
-                    child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, null),
+                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                    ),
                   FilledButton(
-                    onPressed: () {
-                      final v = int.tryParse(controller.text.trim());
-                      Navigator.pop(ctx, v != null && v > 0 ? v : null);
-                    },
-                    child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                  ),
-                ],
+                      onPressed: () {
+                        final v = int.tryParse(controller.text.trim());
+                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
+                      },
+                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                    ),
+                  ],
               ),
             );
             onFinished(minutes);
