@@ -3780,7 +3780,11 @@ class _PointagePageState extends State<PointagePage> {
           );
       final canMarkArrival = !locked && isWithinArrival;
       final canMarkDeparture = isWithinDeparture;
-      final chefChips = _wrapIfDisabled(
+      // Dans la fenêtre de départ, si le travailleur est présent → on cache les chips arrivée.
+      final isWorkerPresent = getState(e.id) == AttendanceState.present;
+      final showDepartureChips = canMarkDeparture && isWorkerPresent;
+      final showArrivalChips = !showDepartureChips;
+      final chefChips = showArrivalChips ? _wrapIfDisabled(
         disabled: !canMarkArrival,
         child: ChefStatusChips(
           current: getState(e.id),
@@ -3824,8 +3828,8 @@ class _PointagePageState extends State<PointagePage> {
           presentLabel: tr(context, 'present'),
           absentLabel: tr(context, 'absent'),
         ),
-      );
-      final departureChips = canMarkDeparture && getState(e.id) == AttendanceState.present
+      ) : null;
+      final departureChips = showDepartureChips
           ? _DepartureChips(
               record: recordOrPlaceholder,
               config: config,
@@ -3857,6 +3861,9 @@ class _PointagePageState extends State<PointagePage> {
                     SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
                   );
                 }
+              },
+              onCancel: () async {
+                await pointageProvider.resetDepartureStatus(recordOrPlaceholder);
               },
               stillLabel: 'N\'a pas terminé',
               finishedLabel: tr(context, 'departure_finished'),
@@ -3924,7 +3931,7 @@ class _PointagePageState extends State<PointagePage> {
                       runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        chefChips,
+                        if (chefChips != null) chefChips,
                         if (departureChips != null) departureChips,
                       ],
                     ),
@@ -3941,7 +3948,7 @@ class _PointagePageState extends State<PointagePage> {
                     Expanded(child: nameBlock),
                     if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
                     const SizedBox(width: 8),
-                    chefChips,
+                    if (chefChips != null) chefChips,
                     if (departureChips != null) departureChips,
                   ],
                 ),
@@ -4439,11 +4446,13 @@ class _DepartureChips extends StatelessWidget {
   final PointageHoursConfig config;
   final void Function(int? workedMinutesBeforeStop, String? incompleteShiftReason) onStillWorking;
   final void Function(int? overtimeMinutes) onFinished;
+  /// Appelé quand l'utilisateur re-appuie sur un bouton déjà sélectionné pour l'annuler.
+  final VoidCallback? onCancel;
   final String stillLabel;
   final String finishedLabel;
   final String overtimeLabel;
   final String overtimeHint;
-  /// Si true, "Fin du travail" enregistre directement la fin de shift sans demander les heures sup. (0 = 8h normales)
+  /// Si true, "Fin du travail" enregistre directement sans dialogue (0 = 8h normales).
   final bool finishWithoutOvertimeDialog;
 
   const _DepartureChips({
@@ -4451,6 +4460,7 @@ class _DepartureChips extends StatelessWidget {
     required this.config,
     required this.onStillWorking,
     required this.onFinished,
+    this.onCancel,
     required this.stillLabel,
     required this.finishedLabel,
     required this.overtimeLabel,
@@ -4466,97 +4476,109 @@ class _DepartureChips extends StatelessWidget {
       spacing: 6,
       runSpacing: 4,
       children: [
+        // ── N'a pas terminé ──────────────────────────────────────────────
         FilterChip(
           label: Text(stillLabel, style: const TextStyle(fontSize: 12)),
           selected: isStill,
+          selectedColor: Colors.orange.shade100,
+          checkmarkColor: Colors.orange.shade800,
           onSelected: (_) async {
+            // Re-appui → annulation
+            if (isStill) {
+              onCancel?.call();
+              return;
+            }
             final workedHoursCtrl = TextEditingController();
             final reasonCtrl = TextEditingController();
             final data = await showDialog<({int? workedMinutes, String? reason})>(
               context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(stillLabel),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: workedHoursCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Heures travaillées',
-                          hintText: 'Ex: 5.5',
-                          border: OutlineInputBorder(),
-                        ),
+              builder: (ctx) => AlertDialog(
+                title: Text(stillLabel),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: workedHoursCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Heures travaillées',
+                        hintText: 'Ex: 5.5',
+                        border: OutlineInputBorder(),
                       ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: reasonCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Raison (optionnel)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
                     ),
-                    TextButton(
-                      onPressed: () {
-                        final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
-                        final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
-                        final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
-                        Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: reasonCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Raison (optionnel)',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                   ],
-                );
-              },
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
+                      final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
+                      final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
+                      Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
+                    },
+                    child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                  ),
+                ],
+              ),
             );
-            onStillWorking(data?.workedMinutes, data?.reason);
+            if (data != null) onStillWorking(data.workedMinutes, data.reason);
           },
         ),
+        // ── Fin du travail ───────────────────────────────────────────────
         FilterChip(
           label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
           selected: isFinished,
+          selectedColor: Colors.green.shade100,
+          checkmarkColor: Colors.green.shade800,
           onSelected: (_) async {
+            // Re-appui → annulation
+            if (isFinished) {
+              onCancel?.call();
+              return;
+            }
             if (finishWithoutOvertimeDialog) {
-              onFinished(0);
+              onFinished(null);
               return;
             }
             final controller = TextEditingController();
             final minutes = await showDialog<int?>(
               context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(overtimeLabel),
-                  content: TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: overtimeHint,
-                      border: const OutlineInputBorder(),
-                    ),
+              builder: (ctx) => AlertDialog(
+                title: Text(overtimeLabel),
+                content: TextField(
+                  controller: controller,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: overtimeHint,
+                    border: const OutlineInputBorder(),
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, null),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        final v = int.tryParse(controller.text.trim());
-                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                    ),
-                  ],
-                );
-              },
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, null),
+                    child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final v = int.tryParse(controller.text.trim());
+                      Navigator.pop(ctx, v != null && v > 0 ? v : null);
+                    },
+                    child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+                  ),
+                ],
+              ),
             );
             onFinished(minutes);
           },
