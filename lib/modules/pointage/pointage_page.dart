@@ -3476,6 +3476,85 @@ class _PointagePageState extends State<PointagePage> {
       final today = DateTime.now();
       final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
       final pointageConfig = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, today, shiftForEquipe);
+      final nowForDep = DateTime.now();
+      final inDepartureWindow = bypassPointageHours || pointageConfig.canMarkDepartureNow(nowForDep);
+
+      // Calcul des statuts de sortie pour les présents
+      int departureConfirmedCount = 0;
+      int departurePendingCount = 0;
+      for (final w in workersDisplay) {
+        final r = pointageProvider.getRecordForEmployee(w.id);
+        final isPresent = (r?.isFinalPresent ?? false) || getState(w.id) == AttendanceState.present;
+        if (!isPresent) continue;
+        final dep = r?.departureStatus ?? DepartureStatus.unset;
+        if (dep == DepartureStatus.finished || dep == DepartureStatus.stillWorking) {
+          departureConfirmedCount++;
+        } else {
+          departurePendingCount++;
+        }
+      }
+
+      // Bloquer l'envoi si on est dans la fenêtre de départ et des présents n'ont pas confirmé leur sortie
+      if (inDepartureWindow && departurePendingCount > 0) {
+        if (context.mounted) {
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 22),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Sortie non confirmée')),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(Icons.exit_to_app, color: Colors.orange.shade700, size: 28),
+                        const SizedBox(height: 6),
+                        Text(
+                          '$departurePendingCount',
+                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.orange.shade800),
+                        ),
+                        Text(
+                          departurePendingCount == 1
+                              ? 'travailleur sans confirmation de sortie'
+                              : 'travailleurs sans confirmation de sortie',
+                          style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Veuillez confirmer la sortie de tous les travailleurs présents (Fin du travail ou N\'a pas terminé) avant d\'envoyer le rapport.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Compris'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
 
       final confirmed = await showDialog<bool>(
         context: context,
@@ -3497,6 +3576,7 @@ class _PointagePageState extends State<PointagePage> {
                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
               ),
               const SizedBox(height: 16),
+              // ── Présents / Absents ──────────────────────────────────
               Row(
                 children: [
                   Expanded(
@@ -3544,6 +3624,59 @@ class _PointagePageState extends State<PointagePage> {
                   ),
                 ],
               ),
+              // ── Statuts de sortie (si dans fenêtre départ ou déjà confirmés) ──
+              if (inDepartureWindow || departureConfirmedCount > 0) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.teal.shade200),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.logout_rounded, color: Colors.teal.shade600, size: 22),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$departureConfirmedCount',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.teal.shade700),
+                            ),
+                            Text('Sorties confirmées', style: TextStyle(fontSize: 11, color: Colors.teal.shade700), textAlign: TextAlign.center),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (departurePendingCount > 0) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.orange.shade300),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.pending_outlined, color: Colors.orange.shade700, size: 22),
+                              const SizedBox(height: 4),
+                              Text(
+                                '$departurePendingCount',
+                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.orange.shade800),
+                              ),
+                              Text('Sorties en attente', style: TextStyle(fontSize: 11, color: Colors.orange.shade800), textAlign: TextAlign.center),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.all(10),
