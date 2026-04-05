@@ -145,7 +145,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                   Icon(Icons.edit, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
                   SizedBox(width: mobile ? 8 : 12),
                   Expanded(
-                    child: Text('Modifier Employé',
+                    child: Text('Modifier le collaborateur',
                         style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
                         overflow: TextOverflow.ellipsis),
                   ),

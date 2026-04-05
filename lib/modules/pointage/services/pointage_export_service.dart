@@ -508,6 +508,9 @@ class PointageExportService {
     required DateTime endDate,
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
+    bool singleSheet = false,
+    String singleSheetName = 'Société',
+    bool includeEquipeColumnInSingleSheet = true,
   }) async {
     final start = _dayKey(startDate);
     final end = _dayKey(endDate);
@@ -519,10 +522,21 @@ class PointageExportService {
 
     final book = excel.Excel.createExcel();
 
-    // تجميع الصفوف حسب اسم الفريق
+    // تجميع الصفوف حسب اسم الفريق (أو ورقة واحدة لكل الشركة)
     final grouped = <String, List<PointageExportRow>>{};
-    for (final r in rows) {
-      grouped.putIfAbsent(r.equipeName, () => []).add(r);
+    if (singleSheet) {
+      final name = singleSheetName.trim().isEmpty ? 'Société' : singleSheetName.trim();
+      final sorted = List<PointageExportRow>.from(rows)
+        ..sort((a, b) {
+          final c = a.equipeName.compareTo(b.equipeName);
+          if (c != 0) return c;
+          return a.employeNom.compareTo(b.employeNom);
+        });
+      grouped[name] = sorted;
+    } else {
+      for (final r in rows) {
+        grouped.putIfAbsent(r.equipeName, () => []).add(r);
+      }
     }
 
     bool isFirst = true;
@@ -582,13 +596,16 @@ class PointageExportService {
         ),
       );
 
-      sheet.updateCell(
-        excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow),
-        excel.TextCellValue('Employé'),
-      );
-      sheet
-          .cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: headerRow))
-          .cellStyle = headerStyle;
+      if (singleSheet && includeEquipeColumnInSingleSheet) {
+        final idxEquipe = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idxEquipe, excel.TextCellValue('Équipe'));
+        sheet.cell(idxEquipe).cellStyle = headerStyle;
+      }
+
+      final idxEmp = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+      sheet.updateCell(idxEmp, excel.TextCellValue('Collaborateur'));
+      sheet.cell(idxEmp).cellStyle = headerStyle;
+
       for (final d in days) {
         final idx =
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
@@ -614,10 +631,18 @@ class PointageExportService {
       int rowIndex = headerRow + 1;
       for (final r in teamRows) {
         col = 0;
-        sheet.updateCell(
+        if (singleSheet && includeEquipeColumnInSingleSheet) {
+          sheet.updateCell(
             excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.TextCellValue(r.employeNom));
-        int dayCol = 1;
+            excel.TextCellValue(r.equipeName),
+          );
+        }
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.TextCellValue(r.employeNom),
+        );
+        final firstDayCol = (singleSheet && includeEquipeColumnInSingleSheet) ? 2 : 1;
+        int dayCol = firstDayCol;
         excel.CellStyle makeDayStyle({
           String bg = '#FFFFFF',
           String fg = '#000000',
@@ -662,6 +687,8 @@ class PointageExportService {
             style = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
           } else if (dayStatus == 'rest') {
             style = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
+          } else if (dayStatus == 'pending_exit') {
+            style = makeDayStyle(bg: '#FFE082', fg: '#E65100');
           } else {
             style = makeDayStyle(bg: '#FFFFFF', fg: '#000000');
           }
@@ -716,9 +743,19 @@ class PointageExportService {
     required DateTime endDate,
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
+    bool singleSheet = false,
+    String singleSheetName = 'Société',
+    bool includeEquipeColumnInSingleSheet = true,
   }) async {
     final bytes = await buildPointageExcel(
-        startDate: startDate, endDate: endDate, rows: rows, reasonConfigs: reasonConfigs);
+      startDate: startDate,
+      endDate: endDate,
+      rows: rows,
+      reasonConfigs: reasonConfigs,
+      singleSheet: singleSheet,
+      singleSheetName: singleSheetName,
+      includeEquipeColumnInSingleSheet: includeEquipeColumnInSingleSheet,
+    );
     final name =
         'pointage_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
     return _saveAndOpen(bytes, name);
@@ -905,15 +942,40 @@ class PointageExportService {
             }
           }
 
-          if (hasAnyFinalPresent) {
+          final hasLeaveDay = dayRecords.any((r) =>
+              r.adminFinalStatus == AttendanceStatus.leave ||
+              r.status == AttendanceStatus.leave);
+
+          final anyFullAttendanceDay = dayRecords.any((r) {
+            if (r.adminFinalStatus == AttendanceStatus.leave || r.status == AttendanceStatus.leave) {
+              return false;
+            }
+            return r.arrivalMarkedAt != null && r.departureStatus == DepartureStatus.finished;
+          });
+
+          final anyPendingExitOnly = !hasLeaveDay &&
+              dayRecords.any((r) {
+                if (r.adminFinalStatus == AttendanceStatus.training) return false;
+                if (r.arrivalMarkedAt == null || r.departureStatus == DepartureStatus.finished) {
+                  return false;
+                }
+                return r.driverStatus == DriverPointageStatus.present ||
+                    r.driverStatus == DriverPointageStatus.enVehicule ||
+                    r.chefStatus == ChefPointageStatus.present ||
+                    r.adminFinalStatus == AttendanceStatus.present;
+              });
+
+          // Entrée enregistrée mais pas de sortie confirmée : pas d’heures / jour payé ; cellule explicite.
+          if (anyPendingExitOnly && !anyFullAttendanceDay) {
+            hoursByDay[d] = 'Att. sortie';
+            dayStatusByDay[d] = 'pending_exit';
+          } else if (hasAnyFinalPresent) {
             // Congé (leave) : cellule bleue foncée 'G', compte comme jour travaillé.
-            final hasLeave = dayRecords.any((r) =>
-                r.adminFinalStatus == AttendanceStatus.leave ||
-                r.status == AttendanceStatus.leave);
+            final hasLeave = hasLeaveDay;
             daysWorked++;
             if (hasNaturalHours) totalHours += hoursPerDay;
             overtimeHours += otForDay;
-            hoursByDay[d] = hasLeave ? 'G' : '8';
+            hoursByDay[d] = hasLeave ? 'G' : 'P';
             dayStatusByDay[d] = hasLeave ? 'leave' : 'present';
           } else {
             final r = dayRecords.isNotEmpty ? dayRecords.first : null;
@@ -922,7 +984,7 @@ class PointageExportService {
                 (r?.chefStatus == ChefPointageStatus.absent ? r?.absenceReason : null);
             final isPaidAbsence = absReason != null &&
                 !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
-            hoursByDay[d] = isPaidAbsence ? '8' : 'absent';
+            hoursByDay[d] = isPaidAbsence ? 'P' : 'A';
             dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
             if (absReason != null) {
               absenceReasonIdByDay[d] = absReason;
@@ -1038,7 +1100,7 @@ class PointageExportService {
 
         if (snap == null) {
           // لا يوجد snapshot → غائب (لم يتم تأكيد الفريق هذا اليوم)
-          hoursByDay[d] = 'absent';
+          hoursByDay[d] = 'A';
           dayStatusByDay[d] = 'absent';
         } else {
           switch (snap.status) {
@@ -1046,7 +1108,7 @@ class PointageExportService {
               daysWorked++;
               totalHours += hoursPerDay;
               overtimeHours += dayOt;
-              hoursByDay[d] = '8';
+              hoursByDay[d] = 'P';
               dayStatusByDay[d] = 'present';
             case 'formation':
               daysWorked++;
@@ -1063,7 +1125,7 @@ class PointageExportService {
             case 'paid_absence':
               daysWorked++;
               totalHours += hoursPerDay;
-              hoursByDay[d] = '8';
+              hoursByDay[d] = 'P';
               dayStatusByDay[d] = 'paid_absence';
               if (snap.absenceReason != null) absenceReasonIdByDay[d] = snap.absenceReason;
             case 'rest':
@@ -1077,11 +1139,11 @@ class PointageExportService {
               if (isPaid) {
                 daysWorked++;
                 totalHours += hoursPerDay;
-                hoursByDay[d] = '8';
+                hoursByDay[d] = 'P';
                 dayStatusByDay[d] = 'paid_absence';
                 absenceReasonIdByDay[d] = absReason;
               } else {
-                hoursByDay[d] = 'absent';
+                hoursByDay[d] = 'A';
                 dayStatusByDay[d] = 'absent';
                 if (absReason != null) absenceReasonIdByDay[d] = absReason;
               }

@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import '../employees/models/employe_model.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
 
-/// نافذة تسجيل الشاف: الدخول (بداية الشيفت + 2h) أو الخروج (نهاية الشيفت + 2h) — لإرسال التقرير يُكمّل الغياب في نافذة الخروج.
+/// نافذة تسجيل الشاف: الدخول (−30 د → بداية + 2h) أو الخروج (−30 د → نهاية + 2h) — لإرسال التقرير يُكمّل الغياب في نافذة الخروج.
 bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
   return config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace) ||
       config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace);
@@ -26,6 +27,10 @@ class PointageProvider extends ChangeNotifier {
   bool _loading = true;
   String? _error;
 
+  /// Verrouillage immédiat après confirmation d’envoi (réseau lent) — révoqué quand Firestore confirme.
+  bool _optimisticDriverReportLocked = false;
+  final Set<String> _optimisticChefLockedEmployeIds = <String>{};
+
   List<PointageRecord> get todayPointage => List.unmodifiable(_todayPointage);
   List<PointageRecord> get pointageByDate => List.unmodifiable(_pointageByDate);
   DateTime? get selectedReportDate => _selectedReportDate;
@@ -36,6 +41,12 @@ class PointageProvider extends ChangeNotifier {
   bool get loading => _loading;
   String? get error => _error;
   bool get firebaseAvailable => _firebaseAvailable;
+
+  bool get optimisticDriverReportLocked => _optimisticDriverReportLocked;
+
+  /// Au moins un document du jour porte déjà un envoi chauffeur (batch global).
+  bool get hasDriverReportBeenSubmittedGlobally =>
+      _todayPointage.any((p) => p.submittedByDriverAt != null);
 
   bool _ignoreTimeWindowsForTest = false;
   bool get ignoreTimeWindowsForTest => _ignoreTimeWindowsForTest;
@@ -73,6 +84,7 @@ class PointageProvider extends ChangeNotifier {
     _subPointage = repo.watchTodayPointage().listen(
       (list) {
         _todayPointage = list;
+        _reconcileOptimisticLocksWithRemote(list);
         _todayPresentCount = list.where((p) => p.isFinalPresent).length;
         _loading = false;
         _error = null;
@@ -101,6 +113,82 @@ class PointageProvider extends ChangeNotifier {
   }
 
   DateTime? _lastNonWorkingDate;
+
+  void _reconcileOptimisticLocksWithRemote(List<PointageRecord> list) {
+    if (_optimisticDriverReportLocked) {
+      final driverMarked =
+          list.where((p) => p.driverStatus != DriverPointageStatus.unset).toList();
+      if (driverMarked.isNotEmpty &&
+          driverMarked.every((p) => p.submittedByDriverAt != null)) {
+        _optimisticDriverReportLocked = false;
+      }
+    }
+    if (_optimisticChefLockedEmployeIds.isNotEmpty) {
+      _optimisticChefLockedEmployeIds.removeWhere(
+        (id) => list.any((p) => p.employeId == id && p.submittedByChefAt != null),
+      );
+    }
+  }
+
+  /// Après confirmation utilisateur : bloque tout de suite l’UI chauffeur (même si la sync tarde).
+  void applyOptimisticDriverReportLock() {
+    if (_optimisticDriverReportLocked) return;
+    _optimisticDriverReportLocked = true;
+    notifyListeners();
+  }
+
+  /// Après confirmation chef : bloque les fiches des IDs listés jusqu’à réception Firestore.
+  void applyOptimisticChefReportLock(Set<String> employeIds) {
+    _optimisticChefLockedEmployeIds
+      ..clear()
+      ..addAll(employeIds);
+    notifyListeners();
+  }
+
+  Duration get _timeGrace => _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
+
+  bool _arrivalWindowOk(PointageHoursConfig config, DateTime now, {bool bypassTimeWindows = false}) {
+    if (bypassTimeWindows) return true;
+    final g = _timeGrace;
+    return config.canMarkArrivalNow(now, graceBefore: g, graceAfter: g);
+  }
+
+  bool _chefMarkingWindowOk(PointageHoursConfig config, DateTime now, {bool bypassTimeWindows = false}) {
+    if (bypassTimeWindows) return true;
+    return _isChefMarkingWindow(config, now, _timeGrace);
+  }
+
+  bool _departureWindowOk(PointageHoursConfig config, DateTime now, {bool bypassTimeWindows = false}) {
+    if (bypassTimeWindows) return true;
+    final g = _timeGrace;
+    return config.canMarkDepartureNow(now, graceBefore: g, graceAfter: g);
+  }
+
+  bool _submitReportWindowOk(PointageHoursConfig config, DateTime now, {bool bypassTimeWindows = false}) {
+    if (bypassTimeWindows) return true;
+    final g = _timeGrace;
+    return config.canSubmitReportNow(now, graceBefore: g, graceAfter: g);
+  }
+
+  bool _overtimeRelatedWindowOk(PointageHoursConfig config, DateTime now, {bool bypassTimeWindows = false}) {
+    if (bypassTimeWindows) return true;
+    final g = _timeGrace;
+    return config.canMarkOvertimeRelatedNow(now, graceBefore: g, graceAfter: g);
+  }
+
+  /// Écrit seulement sur Firestore (fenêtre horaire vérifiée ici). Utiliser après verrou optimiste.
+  Future<bool> submitDriverReportToFirestore({
+    PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
+  }) async {
+    if (!_firebaseAvailable || _repo == null) return false;
+    final config = configOverride ?? PointageHoursConfig.instance;
+    final now = DateTime.now();
+    if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
+    final pointageDate = getPointageDateForConfig(config, now);
+    await _repo!.submitDriverReport(pointageDate);
+    return true;
+  }
 
   void selectReportDate(DateTime? date) {
     _selectedReportDate = date;
@@ -250,11 +338,16 @@ class PointageProvider extends ChangeNotifier {
 
   bool isDriverLockedForEmployee(String employeId) {
     if (_ignoreTimeWindowsForTest) return false;
+    if (_optimisticDriverReportLocked) {
+      final r = getRecordForEmployee(employeId);
+      if (r != null && r.driverStatus != DriverPointageStatus.unset) return true;
+    }
     return getRecordForEmployee(employeId)?.driverLocked ?? false;
   }
 
   bool isChefLockedForEmployee(String employeId) {
     if (_ignoreTimeWindowsForTest) return false;
+    if (_optimisticChefLockedEmployeIds.contains(employeId)) return true;
     return getRecordForEmployee(employeId)?.chefLocked ?? false;
   }
 
@@ -318,12 +411,12 @@ class PointageProvider extends ChangeNotifier {
     required DriverPointageStatus driverStatus,
     String? driverId,
     PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_arrivalWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -360,12 +453,12 @@ class PointageProvider extends ChangeNotifier {
     String? chefId,
     String? absenceReason,
     PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!_isChefMarkingWindow(config, now, grace)) return false;
+    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -391,6 +484,49 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Distribution: pointage يدوي على تاريخ محدد (عادةً الأمس)
+  /// بدون تقييد بنافذة الوقت.
+  Future<bool> markDistributionAttendanceForDate({
+    required String employeId,
+    required String employeNom,
+    required String employeCin,
+    required String equipeId,
+    required String equipeName,
+    required String chefName,
+    required ChefPointageStatus chefStatus,
+    required DateTime pointageDate,
+    String? chefId,
+    String? absenceReason,
+    DateTime? arrivalAt,
+    DateTime? departureAt,
+  }) async {
+    if (!_firebaseAvailable) return false;
+    final now = DateTime.now();
+    final record = PointageRecord(
+      id: '',
+      employeId: employeId,
+      employeNom: employeNom,
+      employeCin: employeCin,
+      equipeId: equipeId,
+      equipeName: equipeName,
+      chefName: chefName,
+      status: AttendanceStatus.unmarked,
+      date: DateTime(pointageDate.year, pointageDate.month, pointageDate.day),
+      createdAt: now,
+      chefStatus: chefStatus,
+      absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
+    );
+    await _repo!.setDistributionChefStatusManual(
+      record,
+      chefStatus,
+      chefId,
+      absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
+      arrivalAt: arrivalAt,
+      departureAt: departureAt,
+    );
+    return true;
+  }
+
   /// تسجيل حضور عامل renfort (محوَّل مؤقتاً) باستخدام سجله المستقل في الفريق الثاني.
   /// يستخدم record.id للكتابة على الـ docId الصحيح وليس السجل الأصلي.
   Future<bool> markRenfortChefAttendance({
@@ -399,12 +535,12 @@ class PointageProvider extends ChangeNotifier {
     String? chefId,
     String? absenceReason,
     PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!_isChefMarkingWindow(config, now, grace)) return false;
+    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     await _repo!.setChefStatus(
       renfortRecord,
       chefStatus,
@@ -421,12 +557,12 @@ class PointageProvider extends ChangeNotifier {
     required ChefPointageStatus overtimeChefStatus,
     String? chefId,
     PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkOvertimeRelatedNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_overtimeRelatedWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     await _repo!.setOvertimeChefStatus(
       record,
       overtimeChefStatus,
@@ -438,28 +574,97 @@ class PointageProvider extends ChangeNotifier {
 
   /// يُرجع true إذا تم الإرسال، false إذا كان خارج وقت البوانتاج.
   /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
-  Future<bool> submitDriverReport({PointageHoursConfig? configOverride}) async {
-    if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
-    final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canSubmitReportNow(now, graceBefore: grace, graceAfter: grace)) return false;
-    final pointageDate = getPointageDateForConfig(config, now);
-    await _repo!.submitDriverReport(pointageDate);
-    return true;
+  Future<bool> submitDriverReport({
+    PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
+  }) async {
+    return submitDriverReportToFirestore(
+      configOverride: configOverride,
+      bypassTimeWindows: bypassTimeWindows,
+    );
   }
 
   /// يُرجع true إذا تم الإرسال، false إذا كان خارج وقت البوانتاج.
   /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
-  Future<bool> submitChefReport(String equipeId, {PointageHoursConfig? configOverride}) async {
+  Future<bool> submitChefReport(
+    String equipeId, {
+    PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
+  }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canSubmitReportNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitChefReport(equipeId, pointageDate);
     return true;
+  }
+
+  /// Distribution: تأكيد تقرير الشاف لتاريخ محدد بدون نافذة توقيت.
+  Future<void> submitChefReportForDateManual(String equipeId, DateTime date) async {
+    if (!_firebaseAvailable || _repo == null || equipeId.isEmpty) return;
+    final day = DateTime(date.year, date.month, date.day);
+    await _repo!.submitChefReport(equipeId, day);
+  }
+
+  /// Avant envoi du rapport chef : compléter les non-marqués en « absent » (Firestore batch, moins de requêtes).
+  Future<void> batchMarkUnmarkedAbsentBeforeChefSubmit({
+    required List<Employe> workersDisplay,
+    required Set<String> overtimeWorkerIds,
+    required String equipeId,
+    required String equipeName,
+    required String chefName,
+    String? chefId,
+    PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
+  }) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    final config = configOverride ?? PointageHoursConfig.instance;
+    final now = DateTime.now();
+    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
+    final pointageDate = getPointageDateForConfig(config, now);
+
+    final regularTemplates = <PointageRecord>[];
+    final overtimeRecords = <PointageRecord>[];
+
+    for (final w in workersDisplay) {
+      final isOvertime = overtimeWorkerIds.contains(w.id);
+      final r = getRecordForEmployee(w.id);
+      if (r?.adminFinalStatus == AttendanceStatus.leave ||
+          r?.adminFinalStatus == AttendanceStatus.training) {
+        continue;
+      }
+      final isUnmarked = isOvertime
+          ? (r?.overtimeChefStatus ?? ChefPointageStatus.unset) == ChefPointageStatus.unset
+          : (r == null || r.chefStatus == ChefPointageStatus.unset);
+      if (!isUnmarked) continue;
+      if (isOvertime && r != null) {
+        overtimeRecords.add(r);
+      } else {
+        regularTemplates.add(
+          PointageRecord(
+            id: '',
+            employeId: w.id,
+            employeNom: w.nom,
+            employeCin: w.cin,
+            equipeId: equipeId,
+            equipeName: equipeName,
+            chefName: chefName,
+            status: AttendanceStatus.unmarked,
+            date: pointageDate,
+            createdAt: now,
+            chefStatus: ChefPointageStatus.absent,
+          ),
+        );
+      }
+    }
+
+    await _repo!.batchMarkUnmarkedAbsentBeforeChefSubmit(
+      regularTemplates: regularTemplates,
+      overtimeRecords: overtimeRecords,
+      chefId: chefId,
+      ignoreLock: _ignoreTimeWindowsForTest,
+    );
   }
 
   /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية).
@@ -471,12 +676,12 @@ class PointageProvider extends ChangeNotifier {
     String? incompleteShiftReason,
     int? workedMinutesBeforeStop,
     PointageHoursConfig? configOverride,
+    bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    final grace = _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
-    if (!config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace)) return false;
+    if (!_departureWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     int? resolvedOvertime = overtimeMinutes;
     if (status == DepartureStatus.finished) {
       if (record.tempAssigned) {

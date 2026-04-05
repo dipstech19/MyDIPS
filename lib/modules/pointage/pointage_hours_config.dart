@@ -1,6 +1,8 @@
 import '../employees/models/equipe_model.dart';
 import '../shifts/models/shift_models.dart';
 
+/// فتح النافذة قبل بداية الشيفت / نهايته بـ 30 دقيقة؛ الإغلاق بعد ساعتين من البداية / النهاية.
+const Duration kPointageWindowOpenBefore = Duration(minutes: 30);
 /// مدة نافذة تأكيد الدخول بعد بداية الشيفت، ونافذة تأكيد الخروج بعد نهايته.
 const Duration kPointageArrivalWindow = Duration(hours: 2);
 const Duration kPointageDepartureWindow = Duration(hours: 2);
@@ -42,7 +44,7 @@ class PointageHoursConfig {
     return !now.isBefore(a) && now.isBefore(b);
   }
 
-  /// نافذة الدخول: من بداية الشيفت حتى بداية الشيفت + ساعتان.
+  /// نافذة الدخول: من (بداية الشيفت − 30 د) حتى بداية الشيفت + ساعتان.
   bool canMarkArrivalNow(DateTime now,
       {Duration graceBefore = Duration.zero,
       Duration graceAfter = Duration.zero}) {
@@ -50,10 +52,11 @@ class PointageHoursConfig {
     final day = getPointageDateForConfig(this, now);
     final start = _shiftStartDateTime(this, day);
     final end = start.add(kPointageArrivalWindow);
-    return _inWindow(now, start, end, graceBefore: graceBefore, graceAfter: graceAfter);
+    return _inWindow(now, start, end,
+        graceBefore: graceBefore + kPointageWindowOpenBefore, graceAfter: graceAfter);
   }
 
-  /// نافذة الخروج: من نهاية الشيفت حتى نهاية الشيفت + ساعتان.
+  /// نافذة الخروج: من (نهاية الشيفت − 30 د) حتى نهاية الشيفت + ساعتان.
   bool canMarkDepartureNow(DateTime now,
       {Duration graceBefore = Duration.zero,
       Duration graceAfter = Duration.zero}) {
@@ -61,7 +64,8 @@ class PointageHoursConfig {
     final day = getPointageDateForConfig(this, now);
     final shiftEnd = _shiftEndDateTime(this, day);
     final end = shiftEnd.add(kPointageDepartureWindow);
-    return _inWindow(now, shiftEnd, end, graceBefore: graceBefore, graceAfter: graceAfter);
+    return _inWindow(now, shiftEnd, end,
+        graceBefore: graceBefore + kPointageWindowOpenBefore, graceAfter: graceAfter);
   }
 
   /// إرسال التقرير (شاف / سائق): نفس [نافذة تأكيد الخروج] — من نهاية الشيفت حتى نهاية الشيفت + ساعتان، ثم يُقفل.
@@ -96,24 +100,26 @@ class PointageHoursConfig {
     return '${endHour.toString().padLeft(2, '0')}:${endMinute.toString().padLeft(2, '0')}';
   }
 
-  /// نافذة تأكيد الدخول (ساعتان بعد بداية الشيفت)
+  /// نافذة تأكيد الدخول (−30 د من البداية → +2 س من البداية)
   String arrivalWindowFormatted([DateTime? referenceNow]) {
     if (isRestDay) return '—';
     final now = referenceNow ?? DateTime.now();
     final day = getPointageDateForConfig(this, now);
     final start = _shiftStartDateTime(this, day);
-    final end = start.add(kPointageArrivalWindow);
-    return '${_fmt(start)} – ${_fmt(end)}';
+    final winStart = start.subtract(kPointageWindowOpenBefore);
+    final winEnd = start.add(kPointageArrivalWindow);
+    return '${_fmt(winStart)} – ${_fmt(winEnd)}';
   }
 
-  /// نافذة تأكيد الخروج (ساعتان بعد نهاية الشيفت)
+  /// نافذة تأكيد الخروج (−30 د من النهاية → +2 س من النهاية)
   String departureWindowFormatted([DateTime? referenceNow]) {
     if (isRestDay) return '—';
     final now = referenceNow ?? DateTime.now();
     final day = getPointageDateForConfig(this, now);
     final shiftEnd = _shiftEndDateTime(this, day);
-    final end = shiftEnd.add(kPointageDepartureWindow);
-    return '${_fmt(shiftEnd)} – ${_fmt(end)}';
+    final winStart = shiftEnd.subtract(kPointageWindowOpenBefore);
+    final winEnd = shiftEnd.add(kPointageDepartureWindow);
+    return '${_fmt(winStart)} – ${_fmt(winEnd)}';
   }
 }
 

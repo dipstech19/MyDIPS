@@ -56,6 +56,84 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+# firebase_core's Windows CMake script skips extraction when the destination
+# directory exists. If a previous build leaves an empty extracted directory,
+# configuration fails because firebase targets are missing. Clean this stale
+# state proactively before loading generated plugins.
+
+# Determine the Firebase C++ SDK version expected by the firebase_core Windows
+# plugin. We'll remove cached extracted contents if they don't match, because
+# a version mismatch can lead to compile/link failures (e.g. missing
+# Storage::UseEmulator).
+set(firebase_core_windows_cmake
+  "${CMAKE_CURRENT_SOURCE_DIR}/flutter/ephemeral/.plugin_symlinks/firebase_core/windows/CMakeLists.txt")
+set(firebase_expected_sdk_version "")
+if(EXISTS "${firebase_core_windows_cmake}")
+  file(READ "${firebase_core_windows_cmake}" _firebase_core_windows_cmake_content)
+  string(REGEX MATCH "set\\(FIREBASE_SDK_VERSION \"([0-9]+\\.[0-9]+\\.[0-9]+)\"\\)" _ ${_firebase_core_windows_cmake_content})
+  if(CMAKE_MATCH_1)
+    set(firebase_expected_sdk_version "${CMAKE_MATCH_1}")
+  endif()
+endif()
+
+# If extracted exists, verify the SDK version inside it. If it differs from
+# the version expected by firebase_core, force a re-download/re-extract.
+set(firebase_extracted_version_h "${CMAKE_BINARY_DIR}/extracted/firebase_cpp_sdk_windows/include/firebase/version.h")
+if(EXISTS "${firebase_extracted_version_h}" AND NOT "${firebase_expected_sdk_version}" STREQUAL "")
+  file(READ "${firebase_extracted_version_h}" _firebase_version_h_content)
+  string(REGEX MATCH "FIREBASE_VERSION_MAJOR ([0-9]+)" _ ${_firebase_version_h_content})
+  set(_major "${CMAKE_MATCH_1}")
+  string(REGEX MATCH "FIREBASE_VERSION_MINOR ([0-9]+)" _ ${_firebase_version_h_content})
+  set(_minor "${CMAKE_MATCH_1}")
+  string(REGEX MATCH "FIREBASE_VERSION_REVISION ([0-9]+)" _ ${_firebase_version_h_content})
+  set(_revision "${CMAKE_MATCH_1}")
+
+  set(_firebase_extracted_sdk_version "${_major}.${_minor}.${_revision}")
+
+  if(NOT "${_firebase_extracted_sdk_version}" STREQUAL "${firebase_expected_sdk_version}")
+    message(STATUS "Firebase SDK version mismatch: extracted=${_firebase_extracted_sdk_version} expected=${firebase_expected_sdk_version}. Purging cached extracted/zip.")
+    file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/extracted")
+    file(GLOB _cached_firebase_zips "${CMAKE_BINARY_DIR}/firebase_cpp_sdk_windows_*.zip")
+    foreach(_zip IN LISTS _cached_firebase_zips)
+      file(REMOVE "${_zip}")
+    endforeach()
+  endif()
+endif()
+
+if(EXISTS "${CMAKE_BINARY_DIR}/extracted")
+  file(GLOB extracted_children "${CMAKE_BINARY_DIR}/extracted/*")
+  list(LENGTH extracted_children extracted_children_count)
+  if(extracted_children_count EQUAL 0)
+    message(STATUS "Removing stale empty Firebase extracted directory")
+    file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/extracted")
+  endif()
+endif()
+set(FIREBASE_SDK_ZIP "${CMAKE_BINARY_DIR}/firebase_cpp_sdk_windows_12.7.0.zip")
+if(EXISTS "${FIREBASE_SDK_ZIP}")
+  file(SIZE "${FIREBASE_SDK_ZIP}" firebase_zip_size)
+  # If the cached ZIP is incomplete/corrupted, firebase_core's Windows script
+  # will still try to extract it and later produce broken .lib files
+  # (LNK1127). Use a rough minimum size threshold to force a re-download.
+  set(firebase_zip_min_bytes 150000000) # ~150MB
+  if(firebase_zip_size LESS firebase_zip_min_bytes)
+    message(STATUS "Removing stale small/invalid Firebase SDK zip (${firebase_zip_size} bytes)")
+    file(REMOVE "${FIREBASE_SDK_ZIP}")
+    if(EXISTS "${CMAKE_BINARY_DIR}/extracted")
+      file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/extracted")
+    endif()
+  endif()
+  if(firebase_zip_size EQUAL 0)
+    message(STATUS "Removing stale empty Firebase SDK zip")
+    file(REMOVE "${FIREBASE_SDK_ZIP}")
+  endif()
+endif()
+
+# Also ensure extracted content is actually present.
+set(firebase_version_h "${CMAKE_BINARY_DIR}/extracted/firebase_cpp_sdk_windows/include/firebase/version.h")
+if(EXISTS "${CMAKE_BINARY_DIR}/extracted" AND NOT EXISTS "${firebase_version_h}")
+  message(STATUS "Removing Firebase extracted dir missing version.h")
+  file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/extracted")
+endif()
 include(flutter/generated_plugins.cmake)
 
 

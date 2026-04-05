@@ -208,7 +208,7 @@ class _FormationPageState extends State<FormationPage> {
                     ),
                   ),
                   Text(
-                    'Planifier des formations pour les employés',
+                    'Planifier des formations pour les collaborateurs',
                     style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600]),
                   ),
                 ],
@@ -326,7 +326,7 @@ class _FormationPageState extends State<FormationPage> {
                       label: Text(
                         _saving
                             ? 'Enregistrement...'
-                            : 'Planifier (${_fmtDate(_startDate)} → ${_fmtDate(_endDate)}) — ${_selectedEmployeIds.length} employé(s)',
+                            : 'Planifier (${_fmtDate(_startDate)} → ${_fmtDate(_endDate)}) — ${_selectedEmployeIds.length} collaborateur(s)',
                       ),
                       style: FilledButton.styleFrom(
                         backgroundColor: Colors.blue.shade700,

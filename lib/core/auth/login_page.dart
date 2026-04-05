@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../utils/responsive.dart';
+import '../widgets/dips_brand_logo.dart';
 import 'auth_provider.dart';
 
 class LoginPage extends StatefulWidget {
@@ -61,9 +62,8 @@ class _LoginPageState extends State<LoginPage> {
               padding: const EdgeInsets.only(top: 24, bottom: 20),
               child: Column(
                 children: [
-                  Icon(Icons.business, color: const Color(0xFF1565C0), size: 52),
-                  const SizedBox(height: 10),
-                  const Text('DIPS', style: TextStyle(color: Color(0xFF1565C0), fontSize: 28, fontWeight: FontWeight.bold)),
+                  const DipsBrandLogo(height: 72),
+                  const SizedBox(height: 12),
                   Text('Système de Gestion', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                 ],
               ),
@@ -82,19 +82,17 @@ class _LoginPageState extends State<LoginPage> {
         Expanded(
           child: Container(
             color: const Color(0xFF1565C0),
-            child: const Column(
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.business, color: Colors.white, size: 80),
-                SizedBox(height: 20),
-                Text('DIPS', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
-                Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 18)),
-                SizedBox(height: 40),
-                _FeatureItem(icon: Icons.people, text: 'Gestion des Employés'),
-                _FeatureItem(icon: Icons.access_time, text: 'Pointage'),
-                _FeatureItem(icon: Icons.inventory_2, text: 'Stock'),
-                _FeatureItem(icon: Icons.bar_chart, text: 'Rapports'),
+                const DipsBrandLogo(height: 100),
+                const SizedBox(height: 16),
+                const Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 18)),
+                const SizedBox(height: 40),
+                const _FeatureItem(icon: Icons.people, text: 'Gestion des Collaborateurs'),
+                const _FeatureItem(icon: Icons.access_time, text: 'Pointage'),
+                const _FeatureItem(icon: Icons.inventory_2, text: 'Stock'),
+                const _FeatureItem(icon: Icons.bar_chart, text: 'Rapports'),
               ],
             ),
           ),
@@ -142,7 +140,7 @@ class _LoginPageState extends State<LoginPage> {
           controller: _usernameCtrl,
           keyboardType: TextInputType.emailAddress,
           decoration: InputDecoration(
-            hintText: 'admin / email (chef)',
+            hintText: 'Email ou identifiant',
             prefixIcon: const Icon(Icons.person_outline),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
             filled: true,
@@ -231,7 +229,6 @@ class _LoginPageState extends State<LoginPage> {
             children: [
               Text('Comptes:', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 4),
-              Text('admin / 1234  →  Directeur', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
               Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
               Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
             ],

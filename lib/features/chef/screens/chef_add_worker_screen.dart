@@ -7,7 +7,7 @@ import '../../../shared/widgets/shared_widgets.dart';
 import '../../../modules/employees/employees_provider.dart';
 import '../../../modules/pointage/pointage_data.dart';
 
-/// عمال الفرق الأخرى فقط (نفس البيانات كـ Employés)
+/// عمال الفرق الأخرى فقط (نفس البيانات كـ Collaborateurs)
 class ChefAddWorkerScreen extends StatefulWidget {
   const ChefAddWorkerScreen({super.key});
 

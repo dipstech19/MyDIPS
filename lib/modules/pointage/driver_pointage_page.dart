@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -27,6 +29,15 @@ class DriverPointagePage extends StatefulWidget {
 class _DriverPointagePageState extends State<DriverPointagePage> {
   String? _selectedEquipeId;
   bool _nonWorkingLoadRequested = false;
+
+  bool _isProtectedHigherPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef de zone') ||
+        p.contains('chef d\'atelier') ||
+        p.contains('rh') ||
+        p.contains('admin') ||
+        p.contains('directeur');
+  }
 
   bool _isHiddenForDriver(Employe e, PointageProvider pointageProvider) {
     final r = pointageProvider.getRecordForEmployee(e.id);
@@ -85,25 +96,68 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 
   Future<void> _sendReport(PointageHoursConfig? pointageConfig) async {
     final pointageProvider = context.read<PointageProvider>();
-    final ok = await pointageProvider.submitDriverReport(configOverride: pointageConfig);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr(ctx, 'pointage_confirm_send_title')),
+        content: Text(tr(ctx, 'pointage_confirm_send_message')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr(ctx, 'report_send')),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+
+    pointageProvider.applyOptimisticDriverReportLock();
     if (!mounted) return;
-    if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(trOf(context, 'report_sent')),
-          backgroundColor: AppColors.green,
-          behavior: SnackBarBehavior.fixed,
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.fixed,
-        ),
-      );
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(trOf(context, 'pointage_report_locked_pending_sync')),
+        backgroundColor: AppColors.green,
+        behavior: SnackBarBehavior.fixed,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+
+    unawaited(() async {
+      try {
+        final ok = await pointageProvider.submitDriverReportToFirestore(configOverride: pointageConfig);
+        if (!mounted) return;
+        if (ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(trOf(context, 'report_sent')),
+              backgroundColor: AppColors.green,
+              behavior: SnackBarBehavior.fixed,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.fixed,
+            ),
+          );
+        }
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.fixed,
+          ),
+        );
+      }
+    }());
   }
 
   @override
@@ -137,8 +191,10 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final workers = team?.workers ?? <Employe>[];
     // Ne pas afficher les travailleurs en formation ou en congé approuvé
     // (ils sont considérés présents automatiquement dans les rapports)
-    final workersDisplay =
-        workers.where((e) => !_isHiddenForDriver(e, pointageProvider)).toList();
+    final workersDisplay = workers
+        .where((e) => !_isHiddenForDriver(e, pointageProvider))
+        .where((e) => !_isProtectedHigherPoste(e.poste))
+        .toList();
     final borderColor = Colors.grey.shade300;
     final padding = pagePadding(context);
     final selectedEquipeList = emp.equipes.where((e) => e.id == _selectedEquipeId).toList();
@@ -146,10 +202,10 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final shiftForEquipe = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, today) : null;
     final config = getConfigForEquipeAndDate(selectedEquipe, today, shiftForEquipe);
     final now = DateTime.now();
-    final ignoreTime = pointageProvider.ignoreTimeWindowsForTest;
-    final hoursStatus = ignoreTime ? PointageHoursStatus.open : getPointageHoursStatus(now, config);
-    final isWithinArrival = ignoreTime || config.canMarkArrivalNow(now);
-    final isWithinDeparture = ignoreTime || config.canMarkDepartureNow(now);
+    // Chauffeur: toujours les vraies fenêtres horaires (pas de mode test).
+    final hoursStatus = getPointageHoursStatus(now, config);
+    final isWithinArrival = config.canMarkArrivalNow(now);
+    final isWithinDeparture = config.canMarkDepartureNow(now);
     final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
     final yesterday = today.subtract(const Duration(days: 1));
 
@@ -182,31 +238,6 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             ),
             const SizedBox(height: 12),
             _PointageHoursBanner(context: context, status: hoursStatus, config: config),
-            const SizedBox(height: 10),
-            Material(
-              color: Colors.blueGrey.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.science_outlined, size: 20, color: Colors.blueGrey[700]),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Test créneaux (± 8h)',
-                        style: TextStyle(fontSize: 13, color: Colors.blueGrey[800]),
-                      ),
-                    ),
-                    Switch(
-                      value: pointageProvider.ignoreTimeWindowsForTest,
-                      onChanged: (v) => pointageProvider.setIgnoreTimeWindowsForTest(v),
-                      activeColor: Colors.blueGrey,
-                    ),
-                  ],
-                ),
-              ),
-            ),
             const SizedBox(height: 12),
             if (mobile) _buildMobileChefSelector(context, teams),
             if (mobile) const SizedBox(height: 12),
@@ -347,17 +378,22 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 width: double.infinity,
                 child: PrimaryButton(
                   label: tr(context, 'send_report_btn'),
-                  onTap: (isWithinDeparture && canSendReport) ? () => _sendReport(config) : () {
-                    if (!canSendReport && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-                          backgroundColor: Colors.orange,
-                          behavior: SnackBarBehavior.fixed,
-                        ),
-                      );
-                    }
-                  },
+                  onTap: (isWithinDeparture &&
+                          canSendReport &&
+                          !pointageProvider.optimisticDriverReportLocked &&
+                          !pointageProvider.hasDriverReportBeenSubmittedGlobally)
+                      ? () => _sendReport(config)
+                      : () {
+                          if (!canSendReport && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+                                backgroundColor: Colors.orange,
+                                behavior: SnackBarBehavior.fixed,
+                              ),
+                            );
+                          }
+                        },
                 ),
               ),
             ),
@@ -534,7 +570,8 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final narrow = constraints.maxWidth < 380;
+                    // < 520: chips (Présent/Absent + départ) passent sous le nom pour éviter RenderFlex overflow.
+                    final narrow = constraints.maxWidth < 520;
                     if (narrow) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

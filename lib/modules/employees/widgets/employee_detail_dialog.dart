@@ -250,7 +250,7 @@ class EmployeeDetailDialog extends StatelessWidget {
                             )
                           else if (equipementsSortis.isEmpty)
                             Text(
-                              'Aucune sortie enregistrée pour cet employé.',
+                              'Aucune sortie enregistrée pour ce collaborateur.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade600,

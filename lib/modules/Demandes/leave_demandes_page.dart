@@ -214,8 +214,9 @@ class _AdminRecipient {
   final String id;
   final String name;
   final String email;
+  final String role;
 
-  const _AdminRecipient({required this.id, required this.name, required this.email});
+  const _AdminRecipient({required this.id, required this.name, required this.email, required this.role});
 }
 
 class _LeaveRepository {
@@ -278,6 +279,7 @@ class DemandesPage extends StatefulWidget {
 
 class _DemandesPageState extends State<DemandesPage>
     with AutomaticKeepAliveClientMixin {
+  static const Duration _decisionEditWindow = Duration(hours: 24);
   final _repo = _LeaveRepository();
   DateTime _selectedCalendarDate = DateTime.now();
   int _selectedYear = DateTime.now().year;
@@ -293,6 +295,13 @@ class _DemandesPageState extends State<DemandesPage>
 
   @override
   bool get wantKeepAlive => true;
+
+  bool _canEditDecision(LeaveRequest req) {
+    if (req.status == LeaveStatus.pending) return true;
+    final decidedAt = req.decidedAt;
+    if (decidedAt == null) return false;
+    return DateTime.now().difference(decidedAt) <= _decisionEditWindow;
+  }
 
   @override
   void initState() {
@@ -354,12 +363,13 @@ class _DemandesPageState extends State<DemandesPage>
                         reason: reason,
                         details: details,
                       ),
+                      onCreatePendingSelf: (r) => _createPendingByChef(context, r),
                       onApprove: (r, comment) => _approveRequest(context, r, comment),
                       onReject: (r, comment) => _rejectRequest(context, r, comment),
                     )
                   : _ChefLeaveView(
                       requests: filtered,
-                      onCreate: (r) => _repo.create(r),
+                      onCreate: (r) => _createPendingByChef(context, r),
                     ),
             ),
           ],
@@ -369,7 +379,23 @@ class _DemandesPageState extends State<DemandesPage>
   }
 
   List<LeaveRequest> _adminViewRequests(AuthProvider auth, List<LeaveRequest> all) {
-    return all;
+    // Super/top admin keeps full visibility.
+    if (auth.isSuperAdmin || auth.adminRole.contains('général') || auth.adminRole.contains('general')) {
+      return all;
+    }
+    // Chef d'atelier must keep approval page for workers + chefs d'équipe requests.
+    if (auth.isChefAtelierAdmin) {
+      return all.where((r) {
+        final p = r.employeePoste.trim().toLowerCase();
+        final isZoneOrRh =
+            p.contains('chef de zone') || p.contains('chef zone') || p == 'rh' || p.contains('ressource');
+        return !isZoneOrRh;
+      }).toList();
+    }
+    final uid = auth.userId;
+    if (uid == null || uid.isEmpty) return all;
+    // Role-based approvers (atelier/zone/rh) see requests assigned to them.
+    return all.where((r) => r.assignedAdminId == uid).toList();
   }
 
   Widget _header(bool isAdmin, List<LeaveRequest> requests) {
@@ -490,7 +516,11 @@ class _DemandesPageState extends State<DemandesPage>
       decidedByAdminId: auth.currentUser?.id ?? '',
       decidedByAdminName: adminName,
     );
-    final pdf = await _buildApprovedLeavePdf(baseReq, adminName);
+    final pdf = await _buildApprovedLeavePdf(
+      baseReq,
+      adminName,
+      resolvedChefName: _resolveChefNameForPdf(baseReq, empProv.equipes, empProv.employes),
+    );
     final finalReq = LeaveRequest(
       id: baseReq.id,
       employeeId: baseReq.employeeId,
@@ -540,9 +570,59 @@ class _DemandesPageState extends State<DemandesPage>
     }
   }
 
+  Future<void> _createPendingByChef(BuildContext context, LeaveRequest req) async {
+    final empProv = context.read<EmployeesProvider>();
+    final chefName = _resolveChefNameForPdf(req, empProv.equipes, empProv.employes);
+    final pdf = await _buildApprovedLeavePdf(
+      req,
+      req.assignedAdminName.isEmpty ? 'Administrateur' : req.assignedAdminName,
+      decisionStatus: LeaveStatus.pending,
+      resolvedChefName: chefName,
+    );
+    final withPdf = LeaveRequest(
+      id: req.id,
+      employeeId: req.employeeId,
+      employeeName: req.employeeName,
+      employeeCin: req.employeeCin,
+      employeePoste: req.employeePoste,
+      equipeId: req.equipeId,
+      equipeName: req.equipeName,
+      chefName: chefName,
+      leaveTypeId: req.leaveTypeId,
+      leaveTypeLabel: req.leaveTypeLabel,
+      startDate: req.startDate,
+      endDate: req.endDate,
+      startAt: req.startAt,
+      endAt: req.endAt,
+      reason: req.reason,
+      professionalDetails: req.professionalDetails,
+      submittedByUserId: req.submittedByUserId,
+      submittedByName: req.submittedByName,
+      assignedAdminId: req.assignedAdminId,
+      assignedAdminName: req.assignedAdminName,
+      createdAt: req.createdAt,
+      status: req.status,
+      adminComment: req.adminComment,
+      decidedAt: req.decidedAt,
+      decidedByAdminId: req.decidedByAdminId,
+      decidedByAdminName: req.decidedByAdminName,
+      approvedPdf: pdf,
+    );
+    await _repo.create(withPdf);
+  }
+
   Future<void> _approveRequest(BuildContext context, LeaveRequest req, String comment) async {
+    if (!_canEditDecision(req)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Impossible de modifier après 24h.')),
+        );
+      }
+      return;
+    }
     final auth = context.read<AuthProvider>();
     final empProv = context.read<EmployeesProvider>();
+    if (req.status == LeaveStatus.approved) return;
     final employee = empProv.employes.where((e) => e.id == req.employeeId).toList();
     if (employee.isNotEmpty) {
       final requestedDays = _requestedLeaveDays(req.startDate, req.endDate);
@@ -575,7 +655,12 @@ class _DemandesPageState extends State<DemandesPage>
       return;
     }
 
-    final pdf = await _buildApprovedLeavePdf(req, auth.currentUser?.nom ?? 'Administrateur');
+    final pdf = await _buildApprovedLeavePdf(
+      req,
+      auth.currentUser?.nom ?? 'Administrateur',
+      decisionStatus: LeaveStatus.approved,
+      resolvedChefName: _resolveChefNameForPdf(req, empProv.equipes, empProv.employes),
+    );
     await _repo.updateDecision(
       req: req,
       newStatus: LeaveStatus.approved,
@@ -618,41 +703,96 @@ class _DemandesPageState extends State<DemandesPage>
   }
 
   Future<void> _rejectRequest(BuildContext context, LeaveRequest req, String comment) async {
+    if (!_canEditDecision(req)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Impossible de modifier après 24h.')),
+        );
+      }
+      return;
+    }
     final auth = context.read<AuthProvider>();
+    final empProv = context.read<EmployeesProvider>();
+    if (req.status == LeaveStatus.rejected) return;
+    final pdf = await _buildApprovedLeavePdf(
+      req,
+      auth.currentUser?.nom ?? 'Administrateur',
+      decisionStatus: LeaveStatus.rejected,
+      resolvedChefName: _resolveChefNameForPdf(req, empProv.equipes, empProv.employes),
+    );
     await _repo.updateDecision(
       req: req,
       newStatus: LeaveStatus.rejected,
       adminId: auth.currentUser?.id ?? '',
       adminName: auth.currentUser?.nom ?? '',
       comment: comment.trim().isEmpty ? 'Demande refusée' : comment.trim(),
+      approvedPdf: pdf,
     );
+
+    // If this request was previously approved, rollback leave effects.
+    if (req.status == LeaveStatus.approved) {
+      final pointageProvider = context.read<PointageProvider>();
+      final conges = context.read<CongesProvider>();
+      final employee = empProv.employes.where((e) => e.id == req.employeeId).toList();
+      if (employee.isNotEmpty) {
+        final equipe = empProv.equipes.where((e) => e.id == req.equipeId).toList();
+        final chefId = equipe.isNotEmpty ? equipe.first.chefId : '';
+        final chef = empProv.employes.where((e) => e.id == chefId).toList();
+        final chefName = chef.isNotEmpty ? chef.first.nom : req.submittedByName;
+
+        for (DateTime d = req.startDate;
+            !d.isAfter(req.endDate);
+            d = d.add(const Duration(days: 1))) {
+          await pointageProvider.setAdminOverrideForEmployee(
+            employeId: employee.first.id,
+            employeNom: employee.first.nom,
+            employeCin: employee.first.cin,
+            equipeId: req.equipeId,
+            equipeName: req.equipeName,
+            chefName: chefName,
+            status: AttendanceStatus.unmarked,
+            viewDate: d,
+          );
+        }
+      }
+      final days = req.endDate.difference(req.startDate).inDays + 1;
+      await conges.addDaysTaken(req.employeeId, -days.toDouble());
+    }
   }
 
-  Future<Uint8List> _buildApprovedLeavePdf(LeaveRequest req, String adminName) async {
+  Future<Uint8List> _buildApprovedLeavePdf(
+    LeaveRequest req,
+    String adminName, {
+    LeaveStatus decisionStatus = LeaveStatus.approved,
+    String? resolvedChefName,
+  }) async {
     final pdf = pw.Document();
     final fmt = (DateTime d) =>
         '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final days = req.endDate.difference(req.startDate).inDays + 1;
     final logoBytes = await _loadLogoBytes();
     final decidedAt = req.decidedAt ?? DateTime.now();
+    final isApproved = decisionStatus == LeaveStatus.approved;
+    final isRejected = decisionStatus == LeaveStatus.rejected;
+    final isPendingDecision = decisionStatus == LeaveStatus.pending;
+    final employeePoste = req.employeePoste.trim().isEmpty ? '-' : req.employeePoste.trim();
+    final isChefAtelierRequester =
+        employeePoste.toLowerCase().contains('chef atelier') ||
+        employeePoste.toLowerCase().contains('chef d\'atelier') ||
+        employeePoste.toLowerCase().contains('chef datelier');
 
     final employeeName  = req.employeeName.trim().isEmpty  ? '-' : req.employeeName.trim();
     final employeeCin   = req.employeeCin.trim().isEmpty   ? '-' : req.employeeCin.trim();
-    final employeePoste = req.employeePoste.trim().isEmpty ? '-' : req.employeePoste.trim();
-    final chefName      = req.chefName.trim().isEmpty      ? '-' : req.chefName.trim();
+    final chefNameRaw   = (resolvedChefName ?? req.chefName).trim();
+    final chefName      = chefNameRaw.isEmpty ? '-' : chefNameRaw;
     final equipeName    = req.equipeName.trim().isEmpty    ? '-' : req.equipeName.trim();
     final adminComment  = (req.adminComment ?? '').trim().isEmpty ? '' : req.adminComment!.trim();
     final reason        = req.reason.trim().isEmpty        ? '-' : req.reason.trim();
     final leaveType     = req.leaveTypeLabel.trim().isEmpty ? 'Congé' : req.leaveTypeLabel.trim();
 
-    // Corps de la lettre
-    final letterBody =
-        'Je sollicite, par la présente, votre autorisation de bien vouloir m\'accorder '
-        '$days jour${days > 1 ? 's' : ''} de congé ($leaveType) '
-        'pour la période du ${fmt(req.startDate)} au ${fmt(req.endDate)} inclus.\n\n'
-        'Motif : $reason\n\n'
-        'En vous remerciant à l\'avance pour votre compréhension, je vous prie de croire, '
-        'Monsieur le Directeur, en l\'expression de mes salutations distinguées.';
+    final daysLabel = '$days jour${days > 1 ? 's' : ''}';
+    final startLabel = fmt(req.startDate);
+    final endLabel = fmt(req.endDate);
 
     pdf.addPage(
       pw.Page(
@@ -660,7 +800,13 @@ class _DemandesPageState extends State<DemandesPage>
         margin: const pw.EdgeInsets.symmetric(horizontal: 44, vertical: 36),
         build: (ctx) {
           // ── helpers ────────────────────────────────────────────────
-          pw.Widget _signBox(String title, String name, String date) =>
+          pw.Widget _signBox(
+            String title, {
+            required String name,
+            required String date,
+            required bool signed,
+            required PdfColor accent,
+          }) =>
               pw.Expanded(
                 child: pw.Container(
                   padding: const pw.EdgeInsets.fromLTRB(10, 10, 10, 8),
@@ -676,7 +822,27 @@ class _DemandesPageState extends State<DemandesPage>
                         style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
                         textAlign: pw.TextAlign.center,
                       ),
-                      pw.SizedBox(height: 36), // espace pour la signature
+                      pw.SizedBox(height: 10),
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: pw.BoxDecoration(
+                          color: signed ? accent.shade(0.12) : PdfColors.grey200,
+                          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
+                          border: pw.Border.all(
+                            color: signed ? accent : PdfColors.grey500,
+                            width: 0.6,
+                          ),
+                        ),
+                        child: pw.Text(
+                          signed ? '[X] Signé' : '[ ] En attente',
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            color: signed ? accent : PdfColors.grey700,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      pw.SizedBox(height: 12),
                       pw.Divider(color: PdfColors.grey500, thickness: 0.5),
                       pw.SizedBox(height: 4),
                       pw.Text(name, style: const pw.TextStyle(fontSize: 9),
@@ -769,7 +935,7 @@ class _DemandesPageState extends State<DemandesPage>
                         children: [
                           _infoLine('Équipe', equipeName),
                           pw.SizedBox(height: 3),
-                          _infoLine('Chef d\'équipe', chefName),
+                          _infoLine('Chef d\'équipe', isChefAtelierRequester ? '-' : chefName),
                           pw.SizedBox(height: 3),
                           _infoLine('Type de congé', leaveType),
                         ],
@@ -792,9 +958,37 @@ class _DemandesPageState extends State<DemandesPage>
               pw.SizedBox(height: 8),
 
               // ── corps ──────────────────────────────────────────
-              pw.Text(letterBody,
-                  style: const pw.TextStyle(fontSize: 10),
-                  textAlign: pw.TextAlign.justify),
+              pw.RichText(
+                textAlign: pw.TextAlign.justify,
+                text: pw.TextSpan(
+                  style: const pw.TextStyle(fontSize: 10, color: PdfColors.black),
+                  children: [
+                    const pw.TextSpan(
+                      text: 'Je sollicite, par la présente, votre autorisation de bien vouloir m\'accorder ',
+                    ),
+                    pw.TextSpan(
+                      text: daysLabel,
+                      style: pw.TextStyle(color: PdfColors.blue800, fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.TextSpan(text: ' de congé ($leaveType) pour la période du '),
+                    pw.TextSpan(
+                      text: startLabel,
+                      style: pw.TextStyle(color: PdfColors.blue800, fontWeight: pw.FontWeight.bold),
+                    ),
+                    const pw.TextSpan(text: ' au '),
+                    pw.TextSpan(
+                      text: endLabel,
+                      style: pw.TextStyle(color: PdfColors.blue800, fontWeight: pw.FontWeight.bold),
+                    ),
+                    const pw.TextSpan(text: ' inclus.\n\n'),
+                    pw.TextSpan(text: 'Motif : $reason\n\n'),
+                    const pw.TextSpan(
+                      text: 'En vous remerciant à l\'avance pour votre compréhension, je vous prie de croire, '
+                          'Monsieur le Directeur, en l\'expression de mes salutations distinguées.',
+                    ),
+                  ],
+                ),
+              ),
 
               pw.SizedBox(height: 14),
 
@@ -803,8 +997,19 @@ class _DemandesPageState extends State<DemandesPage>
                 width: double.infinity,
                 padding: const pw.EdgeInsets.all(8),
                 decoration: pw.BoxDecoration(
-                  color: PdfColors.green50,
-                  border: pw.Border.all(color: PdfColors.green300, width: 0.8),
+                  color: isApproved
+                      ? PdfColors.green50
+                      : isRejected
+                          ? PdfColors.red50
+                          : PdfColors.grey100,
+                  border: pw.Border.all(
+                    color: isApproved
+                        ? PdfColors.green400
+                        : isRejected
+                            ? PdfColors.red400
+                            : PdfColors.grey500,
+                    width: 0.8,
+                  ),
                   borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
                 ),
                 child: pw.Column(
@@ -814,9 +1019,22 @@ class _DemandesPageState extends State<DemandesPage>
                       children: [
                         pw.Text('Décision : ',
                             style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
-                        pw.Text('[X] Congé APPROUVÉ    [ ] Refusé',
-                            style: pw.TextStyle(fontSize: 9, color: PdfColors.green800,
-                                fontWeight: pw.FontWeight.bold)),
+                        pw.Text(
+                          isApproved
+                              ? '[X] Congé APPROUVÉ'
+                              : isRejected
+                                  ? '[X] Refusé'
+                                  : '[ ] En attente de validation',
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            color: isApproved
+                                ? PdfColors.green800
+                                : isRejected
+                                    ? PdfColors.red800
+                                    : PdfColors.grey800,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                     pw.SizedBox(height: 4),
@@ -825,8 +1043,15 @@ class _DemandesPageState extends State<DemandesPage>
                         pw.Text('Période accordée : ',
                             style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
                         pw.Text(
-                          '${fmt(req.startDate)} → ${fmt(req.endDate)}  ($days jour${days > 1 ? 's' : ''})',
-                          style: const pw.TextStyle(fontSize: 9),
+                          '${fmt(req.startDate)} - ${fmt(req.endDate)}  ($days jour${days > 1 ? 's' : ''})',
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            color: isApproved
+                                ? PdfColors.green800
+                                : isRejected
+                                    ? PdfColors.red800
+                                    : PdfColors.grey800,
+                          ),
                         ),
                       ],
                     ),
@@ -849,7 +1074,17 @@ class _DemandesPageState extends State<DemandesPage>
                       children: [
                         pw.Text('Date de validation : ',
                             style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
-                        pw.Text(fmt(decidedAt), style: const pw.TextStyle(fontSize: 9)),
+                        pw.Text(
+                          fmt(decidedAt),
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            color: isApproved
+                                ? PdfColors.green800
+                                : isRejected
+                                    ? PdfColors.red800
+                                    : PdfColors.grey800,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -859,28 +1094,56 @@ class _DemandesPageState extends State<DemandesPage>
               pw.Spacer(),
 
               // ── 3 blocs de signature ───────────────────────────
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  _signBox(
-                    'Signature du demandeur',
-                    employeeName,
-                    'Le ${fmt(req.createdAt)}',
-                  ),
-                  pw.SizedBox(width: 10),
-                  _signBox(
-                    'Visa Chef d\'équipe',
-                    chefName,
-                    'Le ${fmt(req.createdAt)}',
-                  ),
-                  pw.SizedBox(width: 10),
-                  _signBox(
-                    'Approbation Admin / Directeur',
-                    adminName,
-                    'Le ${fmt(decidedAt)}',
-                  ),
-                ],
-              ),
+              if (isChefAtelierRequester)
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    _signBox(
+                      'Signature Chef d\'atelier',
+                      name: employeeName,
+                      date: 'Le ${fmt(req.createdAt)}',
+                      signed: true,
+                      accent: PdfColors.blue700,
+                    ),
+                    pw.SizedBox(width: 10),
+                    _signBox(
+                      'Validation (Chef zone / RH / Admin)',
+                      name: isPendingDecision ? '' : adminName,
+                      date: isPendingDecision ? '' : 'Le ${fmt(decidedAt)}',
+                      signed: !isPendingDecision,
+                      accent: isApproved ? PdfColors.green700 : PdfColors.red700,
+                    ),
+                  ],
+                )
+              else
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    _signBox(
+                      'Signature du demandeur',
+                      name: employeeName,
+                      date: 'Le ${fmt(req.createdAt)}',
+                      signed: true,
+                      accent: PdfColors.blue700,
+                    ),
+                    pw.SizedBox(width: 10),
+                    _signBox(
+                      'Visa Chef d\'équipe',
+                      name: chefName,
+                      date: 'Le ${fmt(req.createdAt)}',
+                      signed: true,
+                      accent: PdfColors.blue700,
+                    ),
+                    pw.SizedBox(width: 10),
+                    _signBox(
+                      'Validation Chef d\'atelier',
+                      name: isPendingDecision ? '' : adminName,
+                      date: isPendingDecision ? '' : 'Le ${fmt(decidedAt)}',
+                      signed: !isPendingDecision,
+                      accent: isApproved ? PdfColors.green700 : PdfColors.red700,
+                    ),
+                  ],
+                ),
 
               pw.SizedBox(height: 10),
               pw.Divider(color: PdfColors.grey400, thickness: 0.5),
@@ -896,6 +1159,25 @@ class _DemandesPageState extends State<DemandesPage>
       ),
     );
     return pdf.save();
+  }
+
+  String _resolveChefNameForPdf(LeaveRequest req, List<Equipe> equipes, List<Employe> employes) {
+    final rawChef = req.chefName.trim();
+    final rawEquipe = req.equipeName.trim();
+    final looksLikeEquipeName = rawChef.isNotEmpty && rawChef.toLowerCase() == rawEquipe.toLowerCase();
+    if (rawChef.isNotEmpty && !looksLikeEquipeName) return rawChef;
+
+    final eq = equipes.where((e) => e.id == req.equipeId).toList();
+    if (eq.isNotEmpty && eq.first.chefId.isNotEmpty) {
+      final chef = employes.where((e) => e.id == eq.first.chefId).toList();
+      if (chef.isNotEmpty) return chef.first.nom;
+    }
+
+    final submittedBy = req.submittedByName.trim();
+    if (submittedBy.isNotEmpty && submittedBy.toLowerCase() != rawEquipe.toLowerCase()) {
+      return submittedBy;
+    }
+    return rawChef;
   }
 
   /// Ligne label: valeur pour la fiche employé en haut du PDF
@@ -939,26 +1221,148 @@ class _DemandesPageState extends State<DemandesPage>
   }
 }
 
-class _ChefLeaveView extends StatelessWidget {
+class _ChefLeaveView extends StatefulWidget {
   final List<LeaveRequest> requests;
   final Future<void> Function(LeaveRequest req) onCreate;
 
   const _ChefLeaveView({required this.requests, required this.onCreate});
 
   @override
+  State<_ChefLeaveView> createState() => _ChefLeaveViewState();
+}
+
+class _ChefLeaveViewState extends State<_ChefLeaveView> {
+  late int _calYear;
+  late int _calMonth;
+  late DateTime _selectedCalDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final n = DateTime.now();
+    _calYear = n.year;
+    _calMonth = n.month;
+    _selectedCalDate = DateTime(n.year, n.month, n.day);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(14),
+    final sorted = [...widget.requests]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final monthStart = DateTime(_calYear, _calMonth, 1);
+    final monthEnd = DateTime(_calYear, _calMonth + 1, 0);
+    final monthRequestsExact = widget.requests
+        .where((r) => !(r.endDate.isBefore(monthStart) || r.startDate.isAfter(monthEnd)))
+        .toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ChefLeaveForm(onCreate: onCreate),
-          const SizedBox(height: 14),
-          Expanded(
-            child: ListView.builder(
-              itemCount: requests.length,
-              itemBuilder: (context, i) => _LeaveRequestCard(req: requests[i], isAdmin: false),
+          _ChefLeaveForm(onCreate: widget.onCreate),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Icon(Icons.calendar_month, size: 22, color: Colors.blue.shade700),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Vue calendrier (équipe)',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                ),
+              ),
+              DropdownButton<int>(
+                value: _calYear,
+                items: List.generate(5, (i) => DateTime.now().year - 2 + i)
+                    .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
+                    .toList(),
+                onChanged: (y) {
+                  if (y == null) return;
+                  setState(() {
+                    _calYear = y;
+                    final maxD = DateTime(_calYear, _calMonth + 1, 0).day;
+                    final d = _selectedCalDate.day.clamp(1, maxD);
+                    _selectedCalDate = DateTime(_calYear, _calMonth, d);
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              DropdownButton<int>(
+                value: _calMonth,
+                items: List.generate(12, (i) => i + 1)
+                    .map((m) => DropdownMenuItem(value: m, child: Text('$m')))
+                    .toList(),
+                onChanged: (m) {
+                  if (m == null) return;
+                  setState(() {
+                    _calMonth = m;
+                    final maxD = DateTime(_calYear, _calMonth + 1, 0).day;
+                    final d = _selectedCalDate.day.clamp(1, maxD);
+                    _selectedCalDate = DateTime(_calYear, _calMonth, d);
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: _LargeLeaveCalendar(
+                year: _calYear,
+                month: _calMonth,
+                selectedDate: _selectedCalDate,
+                requests: monthRequestsExact,
+                onDateChanged: (d) => setState(() => _selectedCalDate = DateTime(d.year, d.month, d.day)),
+              ),
             ),
           ),
+          const SizedBox(height: 8),
+          Text(
+            'Appuyez sur un jour pour voir le détail des congés (popup).',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey[600], height: 1.25),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Icon(Icons.history, size: 22, color: Colors.blue.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  sorted.isEmpty ? 'Vos demandes' : 'Vos demandes (${sorted.length})',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.grey.shade900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Demandes envoyées pour votre équipe — les plus récentes en premier.',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey[600], height: 1.25),
+          ),
+          const SizedBox(height: 12),
+          if (sorted.isEmpty)
+            Card(
+              elevation: 0,
+              color: Colors.grey.shade100,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                child: Center(
+                  child: Text(
+                    'Aucune demande pour le moment.\nUtilisez le formulaire ci-dessus pour en créer une.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey[700], height: 1.35),
+                  ),
+                ),
+              ),
+            )
+          else
+            ...sorted.map((r) => _LeaveRequestCard(req: r, isAdmin: false)),
         ],
       ),
     );
@@ -984,6 +1388,7 @@ class _AdminLeaveView extends StatelessWidget {
     String reason,
     String details,
   ) onCreateApprovedByAdmin;
+  final Future<void> Function(LeaveRequest req)? onCreatePendingSelf;
   final Future<void> Function(LeaveRequest req, String comment) onApprove;
   final Future<void> Function(LeaveRequest req, String comment) onReject;
 
@@ -998,12 +1403,16 @@ class _AdminLeaveView extends StatelessWidget {
     required this.onYearChanged,
     required this.onMonthChanged,
     required this.onCreateApprovedByAdmin,
+    this.onCreatePendingSelf,
     required this.onApprove,
     required this.onReject,
   });
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final canCreateAndApprove = auth.isDirecteur;
+    final canCreatePersonalPending = auth.isChefAtelierAdmin;
     final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final yearRequests = requests.where((r) => r.startDate.year == selectedYear || r.endDate.year == selectedYear).toList();
     final filteredRequests = selectedMonth == null
@@ -1075,11 +1484,18 @@ class _AdminLeaveView extends StatelessWidget {
                       icon: const Icon(Icons.category_outlined),
                       onPressed: () => _showLeaveTypeManagerDialog(context),
                     ),
-                    IconButton(
-                      tooltip: 'Créer et approuver (Admin)',
-                      icon: const Icon(Icons.add_task_outlined),
-                      onPressed: () => _showAdminCreateApproveDialog(context),
-                    ),
+                    if (canCreateAndApprove)
+                      IconButton(
+                        tooltip: 'Créer et approuver (Admin)',
+                        icon: const Icon(Icons.add_task_outlined),
+                        onPressed: () => _showAdminCreateApproveDialog(context),
+                      ),
+                    if (canCreatePersonalPending)
+                      IconButton(
+                        tooltip: 'Demande personnelle (en attente)',
+                        icon: const Icon(Icons.person_add_alt_1_outlined),
+                        onPressed: () => _showCreatePersonalPendingDialog(context),
+                      ),
                     IconButton(
                       tooltip: 'Réinitialiser soldes congé (Test)',
                       icon: const Icon(Icons.restart_alt, color: Colors.orange),
@@ -1097,6 +1513,13 @@ class _AdminLeaveView extends StatelessWidget {
                       requests: monthRequestsExact,
                       onDateChanged: onDateChanged,
                     ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+                  child: Text(
+                    'Appuyez sur un jour : détail des congés (popup).',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1353,7 +1776,7 @@ class _AdminLeaveView extends StatelessWidget {
           'Cette action va :\n'
           '• Supprimer TOUTES les demandes de congé\n'
           '• Effacer les marquages congé dans le pointage\n'
-          '• Remettre à zéro les jours pris pour tous les employés\n\n'
+          '• Remettre à zéro les jours pris pour tous les collaborateurs\n\n'
           'À utiliser uniquement en phase de test.',
         ),
         actions: [
@@ -1442,7 +1865,7 @@ class _AdminLeaveView extends StatelessWidget {
               'Réinitialisation complète : '
               '${leaveSnap.docs.length} demande(s) supprimée(s), '
               '${pointageSnap.docs.length} pointage(s) effacé(s), '
-              '${empSnap.docs.length} employé(s) remis à zéro.',
+              '${empSnap.docs.length} collaborateur(s) remis à zéro.',
             ),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
@@ -1472,11 +1895,18 @@ class _AdminLeaveView extends StatelessWidget {
     String? leaveTypeId;
     List<_LeaveType> leaveTypes = const [];
 
-    final activeEmployees = employees.where((e) {
-      final acquired = leaveDaysAcquired(e.dateDebut);
-      final remaining = (acquired - e.leaveDaysTaken).clamp(0.0, double.infinity);
-      return remaining > 0;
-    }).toList();
+    final auth = context.read<AuthProvider>();
+    bool isZoneOrRh(String poste) {
+      final p = poste.trim().toLowerCase();
+      return p.contains('chef de zone') ||
+          p.contains('chef zone') ||
+          p == 'rh' ||
+          p.contains('ressource');
+    }
+    bool isAtelier(String poste) {
+      final p = poste.trim().toLowerCase();
+      return p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier');
+    }
     String? teamIdForEmployee(String employeId) {
       final team = equipes.where((q) => q.chefId == employeId || q.membreIds.contains(employeId)).toList();
       return team.isNotEmpty ? team.first.id : null;
@@ -1485,6 +1915,18 @@ class _AdminLeaveView extends StatelessWidget {
       final team = equipes.where((q) => q.chefId == employeId || q.membreIds.contains(employeId)).toList();
       return team.isNotEmpty ? team.first.nom : 'Sans équipe';
     }
+    final activeEmployees = employees.where((e) {
+      final acquired = leaveDaysAcquired(e.dateDebut);
+      final remaining = (acquired - e.leaveDaysTaken).clamp(0.0, double.infinity);
+      if (remaining <= 0) return false;
+      if (auth.isChefAtelierAdmin) {
+        // Chef d'atelier can auto-approve only for chefs d'équipe/workers, not himself/atelier, not zone/rh.
+        if (isZoneOrRh(e.poste) || isAtelier(e.poste)) return false;
+        // Also must be attached to a real team (no "Sans équipe" / unrelated people).
+        if (teamIdForEmployee(e.id) == null) return false;
+      }
+      return true;
+    }).toList();
     if (activeEmployees.isNotEmpty) {
       employeeId = activeEmployees.first.id;
       selectedTeamId = teamIdForEmployee(employeeId) ?? '__no_team__';
@@ -1546,15 +1988,25 @@ class _AdminLeaveView extends StatelessWidget {
                       decoration: const InputDecoration(labelText: 'Filtre équipe', border: OutlineInputBorder()),
                       items: [
                         const DropdownMenuItem<String?>(value: null, child: Text('Toutes les équipes')),
-                        ...equipes.map((q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom))),
-                        const DropdownMenuItem<String?>(value: '__no_team__', child: Text('Sans équipe')),
+                        ...(() {
+                          final source = auth.isChefAtelierAdmin
+                              ? equipes
+                                  .where((q) => activeEmployees.any((e) => (teamIdForEmployee(e.id) ?? '') == q.id))
+                                  .toList()
+                              : equipes;
+                          return source
+                              .map((q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom)))
+                              .toList();
+                        })(),
+                        if (!auth.isChefAtelierAdmin)
+                          const DropdownMenuItem<String?>(value: '__no_team__', child: Text('Sans équipe')),
                       ],
                       onChanged: (v) => setS(() => selectedTeamId = v),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String?>(
                       value: employeeId,
-                      decoration: const InputDecoration(labelText: 'Employé', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Collaborateur', border: OutlineInputBorder()),
                       items: filteredEmployees
                           .map((e) {
                             final rem = (leaveDaysAcquired(e.dateDebut) - e.leaveDaysTaken).clamp(0.0, double.infinity);
@@ -1583,7 +2035,10 @@ class _AdminLeaveView extends StatelessWidget {
                                 firstDate: DateTime.now().subtract(const Duration(days: 1)),
                                 lastDate: DateTime.now().add(const Duration(days: 730)),
                               );
-                              if (d != null) setS(() => start = DateTime(d.year, d.month, d.day));
+                              if (d != null) setS(() {
+                                start = DateTime(d.year, d.month, d.day);
+                                if (end.isBefore(start)) end = start;
+                              });
                             },
                             child: Text('Du: ${start.day}/${start.month}/${start.year}'),
                           ),
@@ -1594,8 +2049,8 @@ class _AdminLeaveView extends StatelessWidget {
                             onPressed: () async {
                               final d = await showDatePicker(
                                 context: ctx,
-                                initialDate: end,
-                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                                initialDate: end.isBefore(start) ? start : end,
+                                firstDate: start,
                                 lastDate: DateTime.now().add(const Duration(days: 730)),
                               );
                               if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
@@ -1605,6 +2060,40 @@ class _AdminLeaveView extends StatelessWidget {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    // ── Compteur de jours ──
+                    Builder(builder: (_) {
+                      final days = end.difference(start).inDays + 1;
+                      final valid = !end.isBefore(start);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: valid ? Colors.blue.shade50 : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: valid ? Colors.blue.shade200 : Colors.red.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.date_range,
+                              size: 16,
+                              color: valid ? Colors.blue.shade700 : Colors.red.shade700,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              valid
+                                  ? '$days jour${days > 1 ? 's' : ''} de congé'
+                                  : 'Date de fin invalide',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                color: valid ? Colors.blue.shade800 : Colors.red.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String?>(
                       value: leaveTypeId,
@@ -1663,6 +2152,228 @@ class _AdminLeaveView extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _showCreatePersonalPendingDialog(BuildContext context) async {
+    final auth = context.read<AuthProvider>();
+    final reasonCtrl = TextEditingController();
+    final detailsCtrl = TextEditingController();
+    DateTime start = DateTime.now();
+    DateTime end = DateTime.now();
+    List<_LeaveType> leaveTypes = const [];
+    String? leaveTypeId;
+
+    final leaveSnap = await FirebaseFirestore.instance
+        .collection('leave_types')
+        .where('actif', isEqualTo: true)
+        .get();
+    leaveTypes = leaveSnap.docs
+        .map((d) {
+          final data = d.data();
+          return _LeaveType(
+            id: d.id,
+            label: ((data['label'] as String?) ?? '').trim().isEmpty ? 'Congé' : (data['label'] as String).trim(),
+            defaultReason: ((data['defaultReason'] as String?) ?? '').trim(),
+          );
+        })
+        .toList();
+    if (leaveTypes.isEmpty) leaveTypes = const [_LeaveType(id: 'default', label: 'Congé')];
+    leaveTypeId = leaveTypes.first.id;
+    if (leaveTypes.first.defaultReason.isNotEmpty) reasonCtrl.text = leaveTypes.first.defaultReason;
+
+    final approversSnap = await FirebaseFirestore.instance
+        .collection('admins')
+        .where('actif', isEqualTo: true)
+        .get();
+    final approvers = approversSnap.docs
+        .map((d) {
+          final m = d.data();
+          return _AdminRecipient(
+            id: d.id,
+            name: '${m['prenom'] ?? ''} ${m['nom'] ?? ''}'.trim(),
+            email: m['email'] as String? ?? '',
+            role: (m['role'] as String? ?? '').trim(),
+          );
+        })
+        .where((a) {
+          final r = a.role.toLowerCase();
+          final isUpward = r.contains('zone') || r.contains('rh') || r.contains('general') || r.contains('général');
+          final isAtelier = r.contains('atelier');
+          final isSelf = auth.userId != null && a.id == auth.userId;
+          return isUpward && !isAtelier && !isSelf;
+        })
+        .toList();
+    String? adminId = approvers.isNotEmpty ? approvers.first.id : null;
+
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return AlertDialog(
+            title: const Text('Créer demande personnelle (en attente)'),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      value: adminId,
+                      decoration: const InputDecoration(labelText: 'Destinataire (Chef zone / RH)', border: OutlineInputBorder()),
+                      items: approvers
+                          .map((a) => DropdownMenuItem<String?>(
+                                value: a.id,
+                                child: Text('${a.name.isEmpty ? a.email : a.name} (${a.role})'),
+                              ))
+                          .toList(),
+                      onChanged: (v) => setS(() => adminId = v),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              final d = await showDatePicker(
+                                context: ctx,
+                                initialDate: start,
+                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                                lastDate: DateTime.now().add(const Duration(days: 730)),
+                              );
+                              if (d != null) setS(() {
+                                start = DateTime(d.year, d.month, d.day);
+                                if (end.isBefore(start)) end = start;
+                              });
+                            },
+                            child: Text('Du: ${start.day}/${start.month}/${start.year}'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              final d = await showDatePicker(
+                                context: ctx,
+                                initialDate: end.isBefore(start) ? start : end,
+                                firstDate: start,
+                                lastDate: DateTime.now().add(const Duration(days: 730)),
+                              );
+                              if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                            },
+                            child: Text('Au: ${end.day}/${end.month}/${end.year}'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // ── Compteur de jours ──
+                    Builder(builder: (_) {
+                      final days = end.difference(start).inDays + 1;
+                      final valid = !end.isBefore(start);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: valid ? Colors.blue.shade50 : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: valid ? Colors.blue.shade200 : Colors.red.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.date_range,
+                              size: 16,
+                              color: valid ? Colors.blue.shade700 : Colors.red.shade700,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              valid
+                                  ? '$days jour${days > 1 ? 's' : ''} de congé'
+                                  : 'Date de fin invalide',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                color: valid ? Colors.blue.shade800 : Colors.red.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String?>(
+                      value: leaveTypeId,
+                      decoration: const InputDecoration(labelText: 'Type de congé', border: OutlineInputBorder()),
+                      items: leaveTypes.map((t) => DropdownMenuItem<String?>(value: t.id, child: Text(t.label))).toList(),
+                      onChanged: (v) {
+                        setS(() {
+                          leaveTypeId = v;
+                          if (v != null) {
+                            final sel = leaveTypes.where((t) => t.id == v).toList();
+                            if (sel.isNotEmpty && sel.first.defaultReason.isNotEmpty) {
+                              reasonCtrl.text = sel.first.defaultReason;
+                            }
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: reasonCtrl,
+                      decoration: const InputDecoration(labelText: 'Motif', border: OutlineInputBorder()),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: detailsCtrl,
+                      decoration: const InputDecoration(labelText: 'Détails professionnels', border: OutlineInputBorder()),
+                      maxLines: 2,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              FilledButton(
+                onPressed: () async {
+                  if (adminId == null || leaveTypeId == null || end.isBefore(start) || reasonCtrl.text.trim().isEmpty) return;
+                  final approver = approvers.firstWhere((a) => a.id == adminId);
+                  final lt = leaveTypes.firstWhere((t) => t.id == leaveTypeId);
+                  final req = LeaveRequest(
+                    id: '',
+                    employeeId: auth.userId ?? 'self',
+                    employeeName: auth.currentUser?.nom ?? 'Chef d\'atelier',
+                    employeeCin: '',
+                    employeePoste: 'Chef d\'atelier',
+                    equipeId: auth.equipeId ?? '',
+                    equipeName: auth.equipeId ?? '',
+                    chefName: auth.currentUser?.nom ?? '',
+                    leaveTypeId: lt.id,
+                    leaveTypeLabel: lt.label,
+                    startDate: start,
+                    endDate: end,
+                    startAt: DateTime(start.year, start.month, start.day, 0, 0),
+                    endAt: DateTime(end.year, end.month, end.day, 23, 59),
+                    reason: reasonCtrl.text.trim(),
+                    professionalDetails: detailsCtrl.text.trim(),
+                    submittedByUserId: auth.userId ?? '',
+                    submittedByName: auth.currentUser?.nom ?? '',
+                    assignedAdminId: approver.id,
+                    assignedAdminName: approver.name.isEmpty ? approver.email : approver.name,
+                    createdAt: DateTime.now(),
+                    status: LeaveStatus.pending,
+                  );
+                  Navigator.pop(ctx);
+                  await onCreatePendingSelf?.call(req);
+                },
+                child: const Text('Créer la demande'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _ChefLeaveForm extends StatefulWidget {
@@ -1671,6 +2382,98 @@ class _ChefLeaveForm extends StatefulWidget {
 
   @override
   State<_ChefLeaveForm> createState() => _ChefLeaveFormState();
+}
+
+void _showLeaveDayDetailsDialog(BuildContext context, DateTime day, List<LeaveRequest> dayRequests) {
+  final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  final title = 'Congés — ${fmt(day)}';
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.event_note, color: Colors.blue.shade700),
+          const SizedBox(width: 8),
+          Expanded(child: Text(title, style: const TextStyle(fontSize: 18))),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: dayRequests.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Aucun congé enregistré pour ce jour.',
+                  style: TextStyle(color: Colors.grey[700], height: 1.35),
+                ),
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${dayRequests.length} demande(s)',
+                      style: TextStyle(fontWeight: FontWeight.w700, color: Colors.grey.shade800),
+                    ),
+                    const SizedBox(height: 12),
+                    ...dayRequests.map((r) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Material(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  r.employeeName,
+                                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  r.leaveTypeLabel,
+                                  style: TextStyle(fontSize: 14, color: Colors.grey.shade900, fontWeight: FontWeight.w600),
+                                ),
+                                const SizedBox(height: 4),
+                                Text('Équipe: ${r.equipeName}', style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+                                Text(
+                                  'Période: ${fmt(r.startDate)} → ${fmt(r.endDate)}',
+                                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: r.status.color.withValues(alpha: 0.16),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        r.status.label,
+                                        style: TextStyle(color: r.status.color, fontWeight: FontWeight.w800, fontSize: 12),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
+      ],
+    ),
+  );
 }
 
 class _LargeLeaveCalendar extends StatelessWidget {
@@ -1713,7 +2516,10 @@ class _LargeLeaveCalendar extends StatelessWidget {
       final selected = selectedDate.year == year && selectedDate.month == month && selectedDate.day == d;
       cells.add(
         InkWell(
-          onTap: () => onDateChanged(dayDate),
+          onTap: () {
+            onDateChanged(dayDate);
+            _showLeaveDayDetailsDialog(context, dayDate, dayReq);
+          },
           child: Container(
             margin: const EdgeInsets.all(2),
             padding: const EdgeInsets.all(4),
@@ -1791,6 +2597,65 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   bool _loadingLeaveTypes = true;
   bool _saving = false;
 
+  bool _isAtelierPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('atelier');
+  }
+
+  bool _isZonePoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('zone');
+  }
+
+  bool _isRhPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p == 'rh' || p.contains('ressource') || p.contains('rh');
+  }
+
+  bool _isTopAdminRole(String role) {
+    final r = role.trim().toLowerCase();
+    return r.contains('général') || r.contains('general') || r.contains('directeur');
+  }
+
+  List<_AdminRecipient> _eligibleAdminsForPoste(
+    AuthProvider auth,
+    String poste,
+    List<_AdminRecipient> admins,
+  ) {
+    if (admins.isEmpty) return const [];
+    // Regular demandeur (ex: Chef d'équipe) sends to Chef d'atelier.
+    if (!auth.isDirecteur) {
+      final atelierTargets = admins.where((a) => a.role.toLowerCase().contains('atelier')).toList();
+      if (atelierTargets.isNotEmpty) return atelierTargets;
+      return admins;
+    }
+    // If connected user is Chef d'atelier admin, he can only send upward:
+    // RH / Chef de zone / higher admin (never to another Chef d'atelier).
+    if (auth.isChefAtelierAdmin) {
+      return admins.where((a) {
+        final r = a.role.toLowerCase();
+        final isUpward = r.contains('zone') || r.contains('rh') || _isTopAdminRole(a.role);
+        final isAtelier = r.contains('atelier');
+        final isSelf = auth.userId != null && a.id == auth.userId;
+        return isUpward && !isAtelier && !isSelf;
+      }).toList();
+    }
+    // Chef de zone sends upward to top admin only.
+    if (auth.isChefZoneAdmin) {
+      return admins.where((a) => _isTopAdminRole(a.role)).toList();
+    }
+    if (_isAtelierPoste(poste)) {
+      return admins.where((a) {
+        final r = a.role.toLowerCase();
+        return r.contains('zone') || r.contains('rh') || _isTopAdminRole(a.role);
+      }).toList();
+    }
+    if (_isZonePoste(poste) || _isRhPoste(poste)) {
+      return admins.where((a) => _isTopAdminRole(a.role)).toList();
+    }
+    return admins;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1809,6 +2674,7 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
         id: d.id,
         name: '${m['prenom'] ?? ''} ${m['nom'] ?? ''}'.trim(),
         email: m['email'] as String? ?? '',
+        role: (m['role'] as String? ?? '').trim(),
       );
     }).toList();
     if (mounted) {
@@ -1865,41 +2731,44 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     }
 
     final adminsUnique = <String, _AdminRecipient>{for (final a in _admins) a.id: a}.values.toList();
-    if (adminsUnique.isEmpty) {
-      _adminId = null;
-    } else if (_adminId == null || !adminsUnique.any((a) => a.id == _adminId)) {
-      _adminId = adminsUnique.first.id;
-    }
     Employe? selectedEmployee;
     if (_employeeId != null) {
       final selected = employeesEligible.where((e) => e.id == _employeeId).toList();
       if (selected.isNotEmpty) selectedEmployee = selected.first;
     }
+    final adminsEligible = _eligibleAdminsForPoste(auth, selectedEmployee?.poste ?? '', adminsUnique);
+    if (adminsEligible.isEmpty) {
+      _adminId = null;
+    } else if (_adminId == null || !adminsEligible.any((a) => a.id == _adminId)) {
+      _adminId = adminsEligible.first.id;
+    }
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              children: [
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Nouvelle demande de congé', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Nouvelle demande de congé', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String?>(
                         value: _employeeId,
-                        decoration: const InputDecoration(labelText: 'Employé concerné', border: OutlineInputBorder()),
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'Collaborateur concerné', border: OutlineInputBorder()),
                         items: employeesEligible
                             .map((e) {
                               final rem = (leaveDaysAcquired(e.dateDebut) - e.leaveDaysTaken).clamp(0.0, double.infinity);
-                              return DropdownMenuItem<String?>(value: e.id, child: Text('${e.nom} (${rem.toStringAsFixed(1)}j)'));
+                              return DropdownMenuItem<String?>(
+                                value: e.id,
+                                child: Text('${e.nom} (${rem.toStringAsFixed(1)}j)', overflow: TextOverflow.ellipsis),
+                              );
                             })
                             .toList(),
                         onChanged: (v) => setState(() => _employeeId = v),
@@ -1911,15 +2780,37 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                           ? const LinearProgressIndicator()
                           : DropdownButtonFormField<String?>(
                               value: _adminId,
+                              isExpanded: true,
                               decoration: const InputDecoration(labelText: 'Admin destinataire', border: OutlineInputBorder()),
-                              items: adminsUnique
-                                  .map((a) => DropdownMenuItem<String?>(value: a.id, child: Text(a.name.isEmpty ? a.email : a.name)))
+                              items: adminsEligible
+                                  .map((a) => DropdownMenuItem<String?>(
+                                        value: a.id,
+                                        child: Text(
+                                          '${a.name.isEmpty ? a.email : a.name}${a.role.isNotEmpty ? ' (${a.role})' : ''}',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ))
                                   .toList(),
                               onChanged: (v) => setState(() => _adminId = v),
                             ),
                     ),
                   ],
                 ),
+                if (!_loadingAdmins && adminsEligible.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 10),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Text(
+                      'Aucun validateur supérieur disponible pour ce poste.',
+                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 if (employeesEligible.isEmpty)
                   Container(
                     width: double.infinity,
@@ -1931,7 +2822,7 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                       border: Border.all(color: Colors.orange.shade200),
                     ),
                     child: Text(
-                      'Aucun employé avec solde de congé disponible.',
+                      'Aucun collaborateur avec solde de congé disponible.',
                       style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -2041,7 +2932,6 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
             ),
           ),
         ),
-      ),
     );
   }
 
@@ -2055,6 +2945,25 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   }
 
   List<Employe> _resolveTeamEmployees(Equipe? equipe, EmployeesProvider emps, AuthProvider auth) {
+    // Admin role-based demandeur mode (Chef d'atelier / Chef de zone):
+    // when no equipe link exists, resolve target employees by poste hierarchy.
+    if (equipe == null && auth.isChefAtelierAdmin) {
+      final list = emps.employes.where((e) {
+        final p = e.poste.trim().toLowerCase();
+        return e.statut == EmployeStatut.enService &&
+            (p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier'));
+      }).toList();
+      if (list.isNotEmpty) return list;
+    }
+    if (equipe == null && auth.isChefZoneAdmin) {
+      final list = emps.employes.where((e) {
+        final p = e.poste.trim().toLowerCase();
+        return e.statut == EmployeStatut.enService &&
+            (p.contains('chef zone') || p.contains('chef de zone'));
+      }).toList();
+      if (list.isNotEmpty) return list;
+    }
+
     if (equipe == null) {
       return [
         Employe(
@@ -2196,7 +3105,57 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   }
 }
 
-class _LeaveRequestCard extends StatelessWidget {
+/// Affiche le nom du compte connecté si la demande est la sienne, sinon le nom stocké.
+String _leaveSubmittedByDisplay(LeaveRequest req, AuthProvider auth) {
+  final uid = auth.userId;
+  if (uid != null && uid.isNotEmpty && req.submittedByUserId == uid) {
+    final n = (auth.currentUser?.nom ?? '').trim();
+    if (n.isNotEmpty) return n;
+  }
+  final s = req.submittedByName.trim();
+  return s.isEmpty ? '—' : s;
+}
+
+class _LeaveCardInfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _LeaveCardInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: Colors.grey.shade600),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 2),
+                Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeaveRequestCard extends StatefulWidget {
   final LeaveRequest req;
   final bool isAdmin;
   final Future<void> Function(LeaveRequest req, String comment)? onApprove;
@@ -2210,75 +3169,190 @@ class _LeaveRequestCard extends StatelessWidget {
   });
 
   @override
+  State<_LeaveRequestCard> createState() => _LeaveRequestCardState();
+}
+
+class _LeaveRequestCardState extends State<_LeaveRequestCard> {
+  static const Duration _decisionEditWindow = Duration(hours: 24);
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final req = widget.req;
     final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final isPending = req.status == LeaveStatus.pending;
+    final canEditDecision = isPending ||
+        (req.decidedAt != null &&
+            DateTime.now().difference(req.decidedAt!) <= _decisionEditWindow);
+    final auth = context.watch<AuthProvider>();
+    final isOwnRequest = auth.userId != null && req.submittedByUserId == auth.userId;
+    final canActAsAdmin = !(auth.isChefAtelierAdmin && isOwnRequest);
+    final employeesProvider = context.watch<EmployeesProvider>();
+    final resolvedChefName = _resolveChefName(
+      req,
+      employeesProvider.equipes,
+      employeesProvider.employes,
+    );
+    final submittedByDisplay = _leaveSubmittedByDisplay(req, auth);
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: widget.isAdmin ? 1 : 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text('${req.employeeName} • ${req.employeeCin} • ${req.equipeName}', style: const TextStyle(fontWeight: FontWeight.w700)),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          req.employeeName,
+                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                        ),
+                      ),
+                      AnimatedRotation(
+                        turns: _expanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Icon(Icons.keyboard_arrow_down_rounded, color: Colors.grey.shade700, size: 28),
+                      ),
+                    ],
+                  ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: req.status.color.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                  child: Text(req.status.label, style: TextStyle(color: req.status.color, fontWeight: FontWeight.w700)),
-                ),
-              ],
+              ),
             ),
-            const SizedBox(height: 6),
-            Text('Type: ${req.leaveTypeLabel}'),
-            Text('Chef: ${req.chefName}'),
-            Text('Période: ${fmt(req.startDate)} -> ${fmt(req.endDate)}'),
-            Text('Motif (texte): ${req.reason}'),
-            if (req.professionalDetails.isNotEmpty) Text('Détails: ${req.professionalDetails}'),
-            Text('Soumis par: ${req.submittedByName}'),
-            Text('Admin destinataire: ${req.assignedAdminName}'),
-            if (req.adminComment != null && req.adminComment!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text('Commentaire admin: ${req.adminComment}'),
-            ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                if (req.isApproved && req.approvedPdf != null)
-                  OutlinedButton.icon(
-                    onPressed: () async => _downloadPdf(context),
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: Text(isAdmin ? 'Télécharger PDF (Admin)' : 'Télécharger PDF'),
+                if (_expanded) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${req.employeeCin.isNotEmpty ? '${req.employeeCin} · ' : ''}${req.equipeName}',
+                              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: req.status.color.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          req.status.label,
+                          style: TextStyle(color: req.status.color, fontWeight: FontWeight.w800, fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
-                if (isAdmin && isPending) ...[
-                  FilledButton.icon(
-                    onPressed: () async {
-                      final c = await _askComment(context, title: 'Approuver la demande');
-                      if (c == null) return;
-                      await onApprove?.call(req, c);
-                    },
-                    icon: const Icon(Icons.check),
-                    label: const Text('Approuver'),
+                  const SizedBox(height: 10),
+                  Divider(height: 1, color: Colors.grey.shade200),
+                  const SizedBox(height: 10),
+                  _LeaveCardInfoRow(icon: Icons.category_outlined, label: 'Type', value: req.leaveTypeLabel),
+                  _LeaveCardInfoRow(icon: Icons.groups_outlined, label: 'Chef d\'équipe', value: resolvedChefName),
+                  _LeaveCardInfoRow(
+                    icon: Icons.date_range,
+                    label: 'Période',
+                    value: '${fmt(req.startDate)} → ${fmt(req.endDate)}',
                   ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final c = await _askComment(context, title: 'Refuser la demande', requiredComment: true);
-                      if (c == null) return;
-                      await onReject?.call(req, c);
-                    },
-                    icon: const Icon(Icons.close),
-                    label: const Text('Refuser'),
+                  _LeaveCardInfoRow(icon: Icons.send_outlined, label: 'Soumis par', value: submittedByDisplay),
+                  _LeaveCardInfoRow(icon: Icons.admin_panel_settings_outlined, label: 'Admin destinataire', value: req.assignedAdminName),
+                  const SizedBox(height: 8),
+                  Text('Motif', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Colors.grey.shade800)),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Text(req.reason, style: TextStyle(height: 1.35, color: Colors.grey.shade900)),
+                  ),
+                  if (req.professionalDetails.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('Détails professionnels', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Colors.grey.shade800)),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.blueGrey.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blueGrey.shade100),
+                      ),
+                      child: Text(req.professionalDetails, style: TextStyle(height: 1.35, color: Colors.grey.shade900)),
+                    ),
+                  ],
+                  if (req.adminComment != null && req.adminComment!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('Commentaire admin', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Colors.grey.shade800)),
+                    const SizedBox(height: 4),
+                    Text(req.adminComment!, style: TextStyle(color: Colors.grey.shade800)),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (req.approvedPdf != null)
+                        OutlinedButton.icon(
+                          onPressed: () async => _downloadPdf(context),
+                          icon: const Icon(Icons.picture_as_pdf),
+                          label: const Text('Télécharger PDF'),
+                        ),
+                      if (widget.isAdmin && canEditDecision && canActAsAdmin) ...[
+                        if (req.status != LeaveStatus.approved)
+                          FilledButton.icon(
+                            onPressed: () async {
+                              final c = await _askComment(
+                                context,
+                                title: isPending ? 'Approuver la demande' : 'Changer vers Approuvé',
+                              );
+                              if (c == null) return;
+                              await widget.onApprove?.call(req, c);
+                            },
+                            icon: const Icon(Icons.check),
+                            label: Text(isPending ? 'Approuver' : 'Mettre Approuvé'),
+                          ),
+                        if (req.status != LeaveStatus.approved) const SizedBox(width: 8),
+                        if (req.status != LeaveStatus.rejected)
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final c = await _askComment(
+                                context,
+                                title: isPending ? 'Refuser la demande' : 'Changer vers Refusé',
+                                requiredComment: true,
+                              );
+                              if (c == null) return;
+                              await widget.onReject?.call(req, c);
+                            },
+                            icon: const Icon(Icons.close),
+                            label: Text(isPending ? 'Refuser' : 'Mettre Refusé'),
+                          ),
+                      ],
+                    ],
                   ),
                 ],
               ],
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 
@@ -2317,11 +3391,12 @@ class _LeaveRequestCard extends StatelessWidget {
   }
 
   Future<void> _downloadPdf(BuildContext context) async {
-    final bytes = req.approvedPdf;
+    final r = widget.req;
+    final bytes = r.approvedPdf;
     if (bytes == null || bytes.isEmpty) return;
 
-    final safeEmployee = req.employeeName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    final fileName = 'conge_${safeEmployee}_${req.startDate.year}${req.startDate.month.toString().padLeft(2, '0')}${req.startDate.day.toString().padLeft(2, '0')}.pdf';
+    final safeEmployee = r.employeeName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final fileName = 'conge_${safeEmployee}_${r.startDate.year}${r.startDate.month.toString().padLeft(2, '0')}${r.startDate.day.toString().padLeft(2, '0')}.pdf';
 
     try {
       if (kIsWeb) {
@@ -2354,5 +3429,30 @@ class _LeaveRequestCard extends StatelessWidget {
         );
       }
     }
+  }
+
+  String _resolveChefName(LeaveRequest request, List<Equipe> equipes, List<Employe> employes) {
+    final rawChef = request.chefName.trim();
+    final rawEquipe = request.equipeName.trim();
+    final normalizedChef = rawChef.toLowerCase();
+    final normalizedEquipe = rawEquipe.toLowerCase();
+    final looksLikeEquipeName = normalizedChef.isNotEmpty && normalizedChef == normalizedEquipe;
+
+    if (rawChef.isNotEmpty && !looksLikeEquipeName) {
+      return rawChef;
+    }
+
+    final equipeMatches = equipes.where((e) => e.id == request.equipeId).toList();
+    if (equipeMatches.isNotEmpty) {
+      final equipe = equipeMatches.first;
+      final chefMatches = employes.where((e) => e.id == equipe.chefId).toList();
+      if (chefMatches.isNotEmpty) return chefMatches.first.nom;
+    }
+
+    final submittedBy = request.submittedByName.trim();
+    if (submittedBy.isNotEmpty && submittedBy.toLowerCase() != normalizedEquipe) {
+      return submittedBy;
+    }
+    return rawChef.isNotEmpty ? rawChef : '-';
   }
 }

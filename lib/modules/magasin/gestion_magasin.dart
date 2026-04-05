@@ -2214,7 +2214,7 @@ class _MouvFormState extends State<_MouvForm> {
     final postes = activeEmployes.map((e) => e.poste.trim()).where((p) => p.isNotEmpty).toSet().toList()..sort();
 
     if (!employeesProv.firebaseAvailable) {
-      await showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Employés'), content: const Text('Firebase غير متاح حالياً.'), actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Fermer'))]));
+      await showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text('Collaborateurs'), content: const Text('Firebase غير متاح حالياً.'), actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Fermer'))]));
       return;
     }
 
@@ -2247,7 +2247,7 @@ class _MouvFormState extends State<_MouvForm> {
                   onChanged: (v) => setStateD(() => selectedPoste = v),
                 ),
                 const SizedBox(height: 12),
-                SizedBox(height: 320, child: activeEmployes.isEmpty ? const Center(child: Text('Aucun employé en service')) : !hasAnyFilter ? const Center(child: Text('Choisissez un nom ou un poste')) : filtered.isEmpty ? const Center(child: Text('Aucun résultat'))
+                SizedBox(height: 320, child: activeEmployes.isEmpty ? const Center(child: Text('Aucun collaborateur en service')) : !hasAnyFilter ? const Center(child: Text('Choisissez un nom ou un poste')) : filtered.isEmpty ? const Center(child: Text('Aucun résultat'))
                     : ListView.builder(itemCount: filtered.length, itemBuilder: (_, i) {
                   final e = filtered[i];
                   final selected = currentPreneur == e.nom.trim();

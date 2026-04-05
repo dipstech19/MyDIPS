@@ -34,9 +34,9 @@ class AppPermissions {
   static const String trainingManage = 'settings.training.manage';
 
   static const Map<String, String> labelsFr = {
-    employeesView: 'Voir module Employés',
-    employeesManage: 'Gérer employés (ajout/modification)',
-    employeesDelete: 'Supprimer employés',
+    employeesView: 'Voir module Collaborateurs',
+    employeesManage: 'Gérer les collaborateurs (ajout/modification)',
+    employeesDelete: 'Supprimer des collaborateurs',
     teamsManage: 'Gérer équipes',
     groupsManage: 'Gérer groupes',
     pointageView: 'Voir module Pointage',

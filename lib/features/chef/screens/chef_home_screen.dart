@@ -8,7 +8,7 @@ import '../../../shared/widgets/shared_widgets.dart';
 import '../../../modules/employees/employees_provider.dart';
 import '../../../modules/pointage/pointage_data.dart';
 
-/// يعرض فقط عمال فريق الشاف المتصل (نفس العمال الظاهرين في Employés لفريقه)
+/// يعرض فقط عمال فريق الشاف المتصل (نفس العمال الظاهرين في Collaborateurs لفريقه)
 class ChefHomeScreen extends StatefulWidget {
   const ChefHomeScreen({super.key});
 

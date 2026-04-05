@@ -230,6 +230,8 @@ class _ShiftsPageState extends State<ShiftsPage> {
                 constraints: BoxConstraints(minHeight: 280),
                 child: _ScheduleTable(equipes: equipes, isAdmin: isAdmin),
               ),
+              SizedBox(height: 32),
+              _DoubleDaysSection(isAdmin: isAdmin),
             ],
           ],
         ),
@@ -518,17 +520,50 @@ class _ScheduleTableState extends State<_ScheduleTable> {
                         ),
                     ],
                     rows: [
-                      for (final s in schedule)
-                        DataRow(
-                          cells: [
-                            DataCell(Text('${s.date.day}/${s.date.month}', style: TextStyle(fontWeight: FontWeight.w500, fontSize: mobile ? 11 : 12))),
-                            for (var pos = 0; pos < 4; pos++) ...[
+                      for (final s in schedule) ...[
+                        () {
+                          final isDouble = shifts.isDoubleDay(s.date);
+                          final doubleLabel = shifts.doubleDayLabel(s.date);
+                          return DataRow(
+                            color: isDouble
+                                ? WidgetStateProperty.all(Colors.orange.shade50)
+                                : null,
+                            cells: [
                               DataCell(
-                                _buildShiftCell(context, shifts, s, pos, config, mobile),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '${s.date.day}/${s.date.month}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        fontSize: mobile ? 11 : 12,
+                                        color: isDouble ? Colors.orange.shade900 : null,
+                                      ),
+                                    ),
+                                    if (isDouble) ...[
+                                      const SizedBox(width: 4),
+                                      Tooltip(
+                                        message: doubleLabel?.isNotEmpty == true ? '×2 — $doubleLabel' : 'Jour ×2',
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: Colors.orange.shade700,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: const Text('×2', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800)),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
+                              for (var pos = 0; pos < 4; pos++)
+                                DataCell(_buildShiftCell(context, shifts, s, pos, config, mobile, isDouble: isDouble)),
                             ],
-                          ],
-                        ),
+                          );
+                        }(),
+                      ],
                     ],
                   ),
                 ),
@@ -540,20 +575,56 @@ class _ScheduleTableState extends State<_ScheduleTable> {
     );
   }
 
-  Widget _buildShiftCell(BuildContext context, ShiftsProvider shifts, ({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe}) s, int pos, RotationConfig config, bool mobile) {
+  Widget _buildShiftCell(
+    BuildContext context,
+    ShiftsProvider shifts,
+    ({DateTime date, List<({String equipeId, ShiftType shift})> perEquipe}) s,
+    int pos,
+    RotationConfig config,
+    bool mobile, {
+    bool isDouble = false,
+  }) {
     final shift = s.perEquipe.length > pos ? s.perEquipe[pos].shift : ShiftType.rest;
     final equipeId = config.equipeIds.length > pos ? config.equipeIds[pos] : '';
+    final isWorking = shift != ShiftType.rest;
     return InkWell(
       onTap: widget.isAdmin && equipeId.isNotEmpty
           ? () => _showEditShiftDialog(context, shifts, s.date, equipeId, shift)
           : null,
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        decoration: BoxDecoration(
-          color: _shiftColor(shift).withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(_shiftLabel(context, shift), style: TextStyle(fontSize: mobile ? 10 : 12)),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: _shiftColor(shift).withValues(alpha: isDouble && isWorking ? 0.25 : 0.15),
+              borderRadius: BorderRadius.circular(6),
+              border: isDouble && isWorking
+                  ? Border.all(color: Colors.orange.shade400, width: 1.5)
+                  : null,
+            ),
+            child: Text(
+              _shiftLabel(context, shift),
+              style: TextStyle(
+                fontSize: mobile ? 10 : 12,
+                fontWeight: isDouble && isWorking ? FontWeight.w700 : FontWeight.normal,
+              ),
+            ),
+          ),
+          if (isDouble && isWorking)
+            Positioned(
+              top: -5,
+              right: -5,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade700,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('★', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800)),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -850,6 +921,417 @@ class _ConfigSectionState extends State<_ConfigSection> {
               },
               icon: Icon(Icons.save),
               label: Text(tr(context, 'shifts_save')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Section Jours ×2 ────────────────────────────────────────────────────────
+
+class _DoubleDaysSection extends StatefulWidget {
+  final bool isAdmin;
+  const _DoubleDaysSection({required this.isAdmin});
+
+  @override
+  State<_DoubleDaysSection> createState() => _DoubleDaysSectionState();
+}
+
+class _DoubleDaysSectionState extends State<_DoubleDaysSection> {
+  int _filterYear = DateTime.now().year;
+
+  @override
+  Widget build(BuildContext context) {
+    final shifts = context.watch<ShiftsProvider>();
+    final allDays = shifts.doubleDays;
+    final years = <int>{};
+    for (final d in allDays) years.add(d.date.year);
+    years.add(_filterYear);
+    final sortedYears = years.toList()..sort();
+
+    final filtered = allDays.where((d) => d.date.year == _filterYear).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── En-tête ──
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade700,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.star, color: Colors.white, size: 16),
+                  SizedBox(width: 6),
+                  Text('×2', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Jours ×2',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Sélecteur d'année
+            DropdownButton<int>(
+              value: _filterYear,
+              underline: const SizedBox(),
+              items: sortedYears
+                  .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
+                  .toList(),
+              onChanged: (v) => setState(() => _filterYear = v ?? _filterYear),
+            ),
+            if (widget.isAdmin) ...[
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.orange.shade700,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () => _showAddDoubleDayDialog(context, shifts),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Ajouter', style: TextStyle(fontSize: 13)),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Jours de travail doublé (×2) — shifts comptés double.',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 14),
+
+        // ── Contenu ──
+        if (filtered.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.event_available, size: 40, color: Colors.grey.shade400),
+                const SizedBox(height: 8),
+                Text(
+                  'Aucun jour ×2 pour $_filterYear',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                ),
+              ],
+            ),
+          )
+        else
+          _DoubleDaysCalendarView(
+            days: filtered,
+            year: _filterYear,
+            isAdmin: widget.isAdmin,
+            onRemove: (d) => shifts.removeDoubleDay(d.date),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showAddDoubleDayDialog(BuildContext context, ShiftsProvider shifts) async {
+    final now = DateTime.now();
+    DateTime? pickedDate;
+    final labelCtrl = TextEditingController();
+    bool useRange = false;
+    DateTime? rangeStart;
+    DateTime? rangeEnd;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.star, color: Colors.orange.shade700, size: 20),
+              const SizedBox(width: 8),
+              const Text('Ajouter jour(s) ×2'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Date unique'),
+                      selected: !useRange,
+                      onSelected: (_) => setS(() { useRange = false; rangeStart = null; rangeEnd = null; }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Plage de dates'),
+                      selected: useRange,
+                      onSelected: (_) => setS(() { useRange = true; pickedDate = null; }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                if (!useRange) ...[
+                  const Text('Date :', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final d = await showDatePicker(
+                        context: ctx,
+                        initialDate: pickedDate ?? now,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035),
+                      );
+                      if (d != null) setS(() => pickedDate = d);
+                    },
+                    icon: const Icon(Icons.calendar_today, size: 16),
+                    label: Text(pickedDate != null
+                        ? '${pickedDate!.day.toString().padLeft(2, '0')}/${pickedDate!.month.toString().padLeft(2, '0')}/${pickedDate!.year}'
+                        : 'Choisir une date'),
+                  ),
+                ] else ...[
+                  const Text('Plage de dates :', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final range = await showDateRangePicker(
+                        context: ctx,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035),
+                        initialDateRange: rangeStart != null && rangeEnd != null
+                            ? DateTimeRange(start: rangeStart!, end: rangeEnd!)
+                            : null,
+                      );
+                      if (range != null) setS(() { rangeStart = range.start; rangeEnd = range.end; });
+                    },
+                    icon: const Icon(Icons.date_range, size: 16),
+                    label: Text(rangeStart != null && rangeEnd != null
+                        ? '${rangeStart!.day}/${rangeStart!.month}/${rangeStart!.year}  →  ${rangeEnd!.day}/${rangeEnd!.month}/${rangeEnd!.year}'
+                        : 'Choisir une plage'),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                const Text('Libellé (optionnel) :', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: labelCtrl,
+                  decoration: const InputDecoration(
+                    hintText: 'Ex: Aïd El Fitr, Fête du travail…',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+            ),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+              onPressed: () async {
+                final label = labelCtrl.text.trim().isEmpty ? null : labelCtrl.text.trim();
+                if (!useRange && pickedDate != null) {
+                  await shifts.setDoubleDay(pickedDate!, label: label);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  setState(() => _filterYear = pickedDate!.year);
+                } else if (useRange && rangeStart != null && rangeEnd != null) {
+                  final totalDays = rangeEnd!.difference(rangeStart!).inDays + 1;
+                  for (var i = 0; i < totalDays; i++) {
+                    await shifts.setDoubleDay(rangeStart!.add(Duration(days: i)), label: label);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  setState(() => _filterYear = rangeStart!.year);
+                }
+              },
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Ajouter'),
+            ),
+          ],
+        ),
+      ),
+    );
+    labelCtrl.dispose();
+  }
+}
+
+class _DoubleDaysCalendarView extends StatelessWidget {
+  final List<DoubleDay> days;
+  final int year;
+  final bool isAdmin;
+  final void Function(DoubleDay) onRemove;
+
+  const _DoubleDaysCalendarView({
+    required this.days,
+    required this.year,
+    required this.isAdmin,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final byMonth = <int, List<DoubleDay>>{};
+    for (final d in days) {
+      byMonth.putIfAbsent(d.date.month, () => []).add(d);
+    }
+    final months = byMonth.keys.toList()..sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.orange.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.star, color: Colors.orange.shade700, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                '${days.length} jour(s) ×2 en $year',
+                style: TextStyle(fontWeight: FontWeight.w700, color: Colors.orange.shade800, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        for (final month in months) ...[
+          _MonthDoubleDaysCard(
+            year: year,
+            month: month,
+            days: byMonth[month]!,
+            isAdmin: isAdmin,
+            onRemove: onRemove,
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class _MonthDoubleDaysCard extends StatelessWidget {
+  final int year;
+  final int month;
+  final List<DoubleDay> days;
+  final bool isAdmin;
+  final void Function(DoubleDay) onRemove;
+
+  const _MonthDoubleDaysCard({
+    required this.year,
+    required this.month,
+    required this.days,
+    required this.isAdmin,
+    required this.onRemove,
+  });
+
+  static const _monthNames = [
+    '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...days]..sort((a, b) => a.date.compareTo(b.date));
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.orange.shade200),
+      ),
+      color: Colors.orange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.calendar_month, color: Colors.orange.shade700, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  _monthNames[month],
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: Colors.orange.shade900),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade700,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${sorted.length} jour(s)',
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: sorted.map((d) {
+                final dayStr = d.date.day.toString().padLeft(2, '0');
+                final label = d.label?.isNotEmpty == true ? d.label! : null;
+                return Chip(
+                  avatar: CircleAvatar(
+                    backgroundColor: Colors.orange.shade700,
+                    child: Text(dayStr, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                  label: Text(
+                    label != null ? '$dayStr — $label' : dayStr,
+                    style: TextStyle(fontWeight: FontWeight.w600, color: Colors.orange.shade900),
+                  ),
+                  backgroundColor: Colors.white,
+                  side: BorderSide(color: Colors.orange.shade300),
+                  deleteIcon: isAdmin ? Icon(Icons.close, size: 16, color: Colors.red.shade400) : null,
+                  onDeleted: isAdmin
+                      ? () async {
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Supprimer ce jour ×2 ?'),
+                              content: Text(
+                                '${dayStr}/${month.toString().padLeft(2, '0')}/$year${label != null ? ' — $label' : ''}',
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel)),
+                                FilledButton(
+                                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Supprimer'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok == true) onRemove(d);
+                        }
+                      : null,
+                );
+              }).toList(),
             ),
           ],
         ),

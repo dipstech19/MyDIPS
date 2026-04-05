@@ -9,6 +9,8 @@ class ShiftsProvider extends ChangeNotifier {
   ShiftsRepository? _repo;
   RotationConfig? _config;
   Map<String, Map<String, ShiftType>> _overrides = {};
+  /// Map dateKey → DoubleDay pour accès rapide.
+  Map<String, DoubleDay> _doubleDays = {};
   bool _loading = false;
   String? _error;
 
@@ -25,6 +27,27 @@ class ShiftsProvider extends ChangeNotifier {
   bool get hasConfig => _config != null && _config!.equipeIds.any((id) => id.isNotEmpty);
   RotationConfig? get config => _config;
 
+  /// Liste triée des jours ×2.
+  List<DoubleDay> get doubleDays {
+    final list = _doubleDays.values.toList();
+    list.sort((a, b) => a.date.compareTo(b.date));
+    return list;
+  }
+
+  /// Retourne true si la date est un jour ×2 (travail doublé).
+  bool isDoubleDay(DateTime date) {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _doubleDays.containsKey(key);
+  }
+
+  /// Retourne le label du jour ×2 ou null.
+  String? doubleDayLabel(DateTime date) {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _doubleDays[key]?.label;
+  }
+
   Future<void> _loadAll() async {
     _loading = true;
     _error = null;
@@ -32,10 +55,11 @@ class ShiftsProvider extends ChangeNotifier {
     try {
       final data = await _repo!.loadAll().timeout(
         const Duration(seconds: 15),
-        onTimeout: () => (config: null, overrides: <String, Map<String, ShiftType>>{}),
+        onTimeout: () => (config: null, overrides: <String, Map<String, ShiftType>>{}, doubleDays: <DoubleDay>[]),
       );
       _config = data.config;
       _overrides = data.overrides;
+      _doubleDays = {for (final d in data.doubleDays) d.dateKey: d};
     } catch (e) {
       _error = e.toString();
     }
@@ -106,5 +130,30 @@ class ShiftsProvider extends ChangeNotifier {
       } catch (_) {}
     }
     notifyListeners();
+  }
+
+  /// Ajouter ou mettre à jour un jour ×2.
+  Future<void> setDoubleDay(DateTime date, {String? label}) async {
+    final day = DoubleDay(date: DateTime(date.year, date.month, date.day), label: label?.trim().isEmpty == true ? null : label?.trim());
+    _doubleDays[day.dateKey] = day;
+    notifyListeners();
+    if (_repo != null) {
+      try {
+        await _repo!.setDoubleDay(day);
+      } catch (_) {}
+    }
+  }
+
+  /// Supprimer un jour ×2.
+  Future<void> removeDoubleDay(DateTime date) async {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    _doubleDays.remove(key);
+    notifyListeners();
+    if (_repo != null) {
+      try {
+        await _repo!.removeDoubleDay(date);
+      } catch (_) {}
+    }
   }
 }

@@ -441,7 +441,7 @@ class DipsPdfService {
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text('Signature de l\'employé', style: pw.TextStyle(fontSize: 11)),
+              pw.Text('Signature du collaborateur', style: pw.TextStyle(fontSize: 11)),
               pw.Text('Le Directeur Général',   style: pw.TextStyle(fontSize: 11)),
             ],
           ),

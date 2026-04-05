@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
+import '../../core/utils/responsive.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
 import '../pointage/models/pointage_model.dart';
@@ -94,81 +95,126 @@ class GroupePointagePage extends StatelessWidget {
                     createdAt: now,
                   );
 
+              final chips = <Widget>[
+                FilterChip(
+                  label: Text(tr(context, 'present')),
+                  selected: present,
+                  onSelected: canMark
+                      ? (_) async {
+                          final ok = await pointageProv.markChefAttendance(
+                            employeId: e.id,
+                            employeNom: e.nom,
+                            employeCin: e.cin,
+                            equipeId: equipeId,
+                            equipeName: equipeName,
+                            chefName: chefName,
+                            chefStatus: ChefPointageStatus.present,
+                            chefId: auth.currentUser?.id,
+                            configOverride: config,
+                          );
+                          if (!ok && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange),
+                            );
+                          }
+                        }
+                      : null,
+                ),
+                FilterChip(
+                  label: Text(tr(context, 'absent')),
+                  selected: absent,
+                  onSelected: canMark
+                      ? (_) async {
+                          final ok = await pointageProv.markChefAttendance(
+                            employeId: e.id,
+                            employeNom: e.nom,
+                            employeCin: e.cin,
+                            equipeId: equipeId,
+                            equipeName: equipeName,
+                            chefName: chefName,
+                            chefStatus: ChefPointageStatus.absent,
+                            chefId: auth.currentUser?.id,
+                            configOverride: config,
+                          );
+                          if (!ok && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange),
+                            );
+                          }
+                        }
+                      : null,
+                ),
+                if (canDeparture && present)
+                  FilterChip(
+                    label: Text(tr(context, 'departure_finished')),
+                    selected: recordOrPlaceholder.departureStatus == DepartureStatus.finished,
+                    onSelected: (_) async {
+                      await pointageProv.setDepartureStatus(
+                        record: recordOrPlaceholder,
+                        status: DepartureStatus.finished,
+                        overtimeMinutes: 0,
+                        configOverride: config,
+                      );
+                    },
+                  ),
+              ];
+
               return Card(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  child: Row(
-                    children: [
-                      CircleAvatar(child: Text(e.nom.isNotEmpty ? e.nom[0] : 'E')),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600))),
-                      if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
-                      const SizedBox(width: 8),
-                      FilterChip(
-                        label: Text(tr(context, 'present')),
-                        selected: present,
-                        onSelected: canMark
-                            ? (_) async {
-                                final ok = await pointageProv.markChefAttendance(
-                                  employeId: e.id,
-                                  employeNom: e.nom,
-                                  employeCin: e.cin,
-                                  equipeId: equipeId,
-                                  equipeName: equipeName,
-                                  chefName: chefName,
-                                  chefStatus: ChefPointageStatus.present,
-                                  chefId: auth.currentUser?.id,
-                                  configOverride: config,
-                                );
-                                if (!ok && context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange),
-                                  );
-                                }
-                              }
-                            : null,
-                      ),
-                      const SizedBox(width: 6),
-                      FilterChip(
-                        label: Text(tr(context, 'absent')),
-                        selected: absent,
-                        onSelected: canMark
-                            ? (_) async {
-                                final ok = await pointageProv.markChefAttendance(
-                                  employeId: e.id,
-                                  employeNom: e.nom,
-                                  employeCin: e.cin,
-                                  equipeId: equipeId,
-                                  equipeName: equipeName,
-                                  chefName: chefName,
-                                  chefStatus: ChefPointageStatus.absent,
-                                  chefId: auth.currentUser?.id,
-                                  configOverride: config,
-                                );
-                                if (!ok && context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange),
-                                  );
-                                }
-                              }
-                            : null,
-                      ),
-                      const SizedBox(width: 6),
-                      if (canDeparture)
-                        FilterChip(
-                          label: Text(tr(context, 'departure_finished')),
-                          selected: recordOrPlaceholder.departureStatus == DepartureStatus.finished,
-                          onSelected: (_) async {
-                            await pointageProv.setDepartureStatus(
-                              record: recordOrPlaceholder,
-                              status: DepartureStatus.finished,
-                              overtimeMinutes: 0,
-                              configOverride: config,
-                            );
-                          },
+                  child: isMobile(context)
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CircleAvatar(child: Text(e.nom.isNotEmpty ? e.nom[0] : 'E')),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    e.nom,
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: chips,
+                            ),
+                          ],
+                        )
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(child: Text(e.nom.isNotEmpty ? e.nom[0] : 'E')),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                e.nom,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                alignment: WrapAlignment.end,
+                                children: chips,
+                              ),
+                            ),
+                          ],
                         ),
-                    ],
-                  ),
                 ),
               );
             }),

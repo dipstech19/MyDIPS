@@ -6,6 +6,7 @@ import '../core/locale/app_locale.dart';
 import '../core/site/site_model.dart';
 import '../core/site/site_provider.dart';
 import '../core/utils/responsive.dart';
+import '../core/widgets/dips_brand_logo.dart';
 import '../modules/Paramètres/paramètres.dart';
 import '../modules/Demandes/leave_demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
@@ -21,6 +22,7 @@ import '../modules/pointage/validated_excels_page.dart';
 import '../modules/overtime/overtime_page.dart';
 import '../modules/overtime/overtime_provider.dart';
 import '../modules/groupes/groupe_pointage_page.dart';
+import '../modules/distribution/distribution_pointage_page.dart';
 import '../modules/shifts/shifts_page.dart';
 
 class MainLayout extends StatefulWidget {
@@ -63,7 +65,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     }
   }
 
-  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Employés، Pointage، Shifts، Paramètres. مسؤول مجموعة: Pointage فقط.
+  /// السائق: Pointage + Rapport فقط. الشاف: Tableau de bord، Collaborateurs، Pointage، Shifts، Paramètres.
+  /// مسؤول مجموعة/Distribution: Pointage فقط.
   List<_NavItem> _navItems(
     BuildContext context,
     bool isChauffeur,
@@ -107,6 +110,9 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       if (auth.hasPermission(AppPermissions.pointageView))
         _NavItem(
             key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+      if (auth.isChefAtelierAdmin)
+        _NavItem(
+            key: 'distribution_review', icon: Icons.fact_check, label: 'Distribution (hier)'),
       if (auth.hasPermission(AppPermissions.overtimeView))
         _NavItem(
             key: 'overtime', icon: Icons.access_time_filled, label: 'Heures Sup.'),
@@ -147,21 +153,19 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             bottom: false,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 24),
-              child: const Column(
+              child: Column(
                 children: [
-                  Icon(Icons.business, color: Colors.white, size: 44),
-                  SizedBox(height: 8),
-                  Text(
-                    'DIPS',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: DipsBrandLogo(
+                      height: 56,
+                      fit: BoxFit.contain,
+                    ),
                   ),
-                  Text(
+                  const SizedBox(height: 6),
+                  const Text(
                     'Système de Gestion',
-                    style:
-                    TextStyle(color: Colors.white70, fontSize: 11),
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                 ],
               ),
@@ -345,6 +349,9 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                                       : auth.isChauffeur
                                       ? Colors.orange
                                       .withOpacity(0.3)
+                                      : auth.isDistributionResponsable
+                                      ? Colors.cyan
+                                      .withOpacity(0.3)
                                       : Colors.green
                                       .withOpacity(0.3),
                                   borderRadius:
@@ -356,6 +363,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                                       : auth.isChauffeur
                                       ? tr(context,
                                       'role_chauffeur')
+                                      : auth.isDistributionResponsable
+                                      ? 'Responsable Distribution'
                                       : tr(context,
                                       'role_chef_equipe'),
                                   style: TextStyle(
@@ -363,6 +372,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                                         ? Colors.amber[200]
                                         : auth.isChauffeur
                                         ? Colors.orange[200]
+                                        : auth.isDistributionResponsable
+                                        ? Colors.cyan[200]
                                         : Colors.green[200],
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
@@ -437,6 +448,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     final isChauffeur = auth.isChauffeur;
     final isChefEquipe = auth.isChefEquipe && !auth.isDirecteur;
     final isGroupe = auth.isGroupeResponsable;
+    final isDistribution = auth.isDistributionResponsable;
 
     // Si l'utilisateur change (logout/login), vider le cache et réinitialiser.
     final currentUserId = auth.userId;
@@ -469,28 +481,33 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       isGroupe,
       overtimeBadgeCount: overtimeBadgeCount,
     );
+    final effectiveItems = isDistribution
+        ? <_NavItem>[
+            _NavItem(key: 'distribution_pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+          ]
+        : items;
     final mobile = isMobile(context);
 
     // Clamp index in case item list changes between role switches
-    final safeIndex = _selectedIndex.clamp(0, items.length - 1);
+    final safeIndex = _selectedIndex.clamp(0, effectiveItems.length - 1);
 
     // Construire chaque page une seule fois et la mettre en cache.
     // IndexedStack préserve le State (Stream, scroll, formulaires, etc.)
     // quand l'utilisateur navigue entre les onglets.
-    final pages = items.map((item) {
+    final pages = effectiveItems.map((item) {
       final cacheKey = '${currentUserId}_${item.key}';
       _pageCache[cacheKey] ??= _buildPage(
-          context, item.key, isChauffeur, isChefEquipe, isGroupe);
+          context, item.key, isChauffeur, isChefEquipe, isGroupe, isDistribution);
       return _pageCache[cacheKey]!;
     }).toList();
 
     if (mobile) {
-      _syncMobileTabController(items.length, safeIndex);
+      _syncMobileTabController(effectiveItems.length, safeIndex);
       return Scaffold(
         key: _scaffoldKey,
         appBar: AppBar(
           title: Text(
-            items[safeIndex].label,
+            effectiveItems[safeIndex].label,
             style: const TextStyle(fontSize: 18),
             overflow: TextOverflow.ellipsis,
           ),
@@ -512,7 +529,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                 indicatorColor: Colors.white,
                 indicatorWeight: 3,
                 labelPadding: const EdgeInsets.symmetric(horizontal: 12),
-                tabs: items.map((item) {
+                tabs: effectiveItems.map((item) {
                   return Tab(
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -575,7 +592,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             builder: (ctx) => _buildSidebarContent(
               context,
               auth,
-              items,
+              effectiveItems,
               mobileTabController: _mobileTabController,
               onItemTap: () => Navigator.of(ctx).pop(),
             ),
@@ -591,7 +608,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     return Scaffold(
       body: Row(
         children: [
-          _buildSidebarContent(context, auth, items),
+          _buildSidebarContent(context, auth, effectiveItems),
           Expanded(
             child: Center(
               child: ConstrainedBox(
@@ -634,7 +651,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildPage(BuildContext context, String pageKey, bool isChauffeur, bool isChefEquipe, bool isGroupe) {
+  Widget _buildPage(BuildContext context, String pageKey, bool isChauffeur, bool isChefEquipe, bool isGroupe, bool isDistribution) {
     if (isChauffeur) {
       if (pageKey == 'pointage') return const DriverPointagePage();
       if (pageKey == 'report') return const ReportPage();
@@ -642,6 +659,9 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     }
     if (isGroupe) {
       return const GroupePointagePage();
+    }
+    if (isDistribution) {
+      return const DistributionPointagePage();
     }
     if (isChefEquipe) {
       switch (pageKey) {
@@ -667,6 +687,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
         return const EmployeesPage();
       case 'pointage':
         return const PointagePage();
+      case 'distribution_review':
+        return const DistributionPointagePage(reviewOnly: true);
       case 'overtime':
         return const OvertimePage();
       case 'shifts':
@@ -802,7 +824,7 @@ class _DashboardPage extends StatelessWidget {
 
     final cards = [
       _StatCard(
-          title: 'Employés',
+          title: 'Collaborateurs',
           value: '$employesCount',
           icon: Icons.people,
           color: Colors.blue),

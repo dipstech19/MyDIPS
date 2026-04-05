@@ -7,7 +7,7 @@ import '../../../shared/widgets/shared_widgets.dart';
 import '../../../modules/employees/employees_provider.dart';
 import '../../../modules/pointage/pointage_data.dart';
 
-/// قائمة اليوم: كل الفرق والعمال (نفس البيانات كـ Employés)
+/// قائمة اليوم: كل الفرق والعمال (نفس البيانات كـ Collaborateurs)
 class DriverHomeScreen extends StatefulWidget {
   const DriverHomeScreen({super.key});
 

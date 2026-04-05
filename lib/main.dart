@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +15,8 @@ import 'modules/employees/departements_provider.dart';
 import 'modules/employees/postes_provider.dart';
 import 'modules/groupes/groupes_provider.dart';
 import 'modules/groupes/groupe_comptes_provider.dart';
+import 'modules/distribution/distribution_groups_provider.dart';
+import 'modules/distribution/distribution_comptes_provider.dart';
 import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
@@ -31,6 +34,18 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    // Firestore — résilience (réseau lent / coupures):
+    // - Persistance disque: moins de re-téléchargements; lectures possibles depuis le cache si déjà chargées.
+    // - Les écritures sont mises en file d’attente hors ligne puis envoyées au retour du réseau (SDK).
+    // - Ne pas multiplier les requêtes: regrouper en WriteBatch côté repository quand c’est pertinent.
+    try {
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+    } catch (e) {
+      debugPrint('Firestore settings: $e');
+    }
   } catch (e) {
     debugPrint('Firebase init error: $e');
   }
@@ -45,6 +60,8 @@ void main() async {
         ChangeNotifierProvider(create: (_) => PostesProvider()),
         ChangeNotifierProvider(create: (_) => GroupesProvider()),
         ChangeNotifierProvider(create: (_) => GroupeComptesProvider()),
+        ChangeNotifierProvider(create: (_) => DistributionGroupsProvider()),
+        ChangeNotifierProvider(create: (_) => DistributionComptesProvider()),
         ChangeNotifierProvider(create: (_) => AdminsProvider()),
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),

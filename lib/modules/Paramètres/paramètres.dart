@@ -1,4 +1,5 @@
 import 'dart:io' as dart_io;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -13,6 +14,10 @@ import '../employees/departements_provider.dart';
 import '../employees/postes_provider.dart';
 import '../groupes/groupes_provider.dart';
 import '../groupes/groupe_comptes_provider.dart';
+import '../distribution/distribution_groups_provider.dart';
+import '../distribution/distribution_comptes_provider.dart';
+import '../distribution/models/distribution_group_model.dart';
+import '../distribution/models/distribution_compte_model.dart';
 import '../groupes/models/groupe_model.dart';
 import '../groupes/models/groupe_compte_model.dart';
 import '../employees/employees_provider.dart';
@@ -82,7 +87,7 @@ class _ChefEquipeDropdown extends StatelessWidget {
     final value = (chefId != null && chefId!.isNotEmpty && candidates.any((e) => e.id == chefId)) ? chefId! : '';
     return DropdownButtonFormField<String>(
       value: value,
-      decoration: const InputDecoration(labelText: 'Chef (employé)'),
+      decoration: const InputDecoration(labelText: 'Chef (collaborateur)'),
       items: [
         const DropdownMenuItem(value: '', child: Text('— Aucun —')),
         ...candidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
@@ -116,6 +121,20 @@ Widget _offlineBanner() {
 }
 
 // ─────────────────────────────────────────────
+//  Horizontal tab bar: mouse wheel + drag + chevrons (desktop)
+// ─────────────────────────────────────────────
+
+class _HorizontalTabScrollBehavior extends ScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      };
+}
+
+// ─────────────────────────────────────────────
 //  MAIN SETTINGS PAGE
 // ─────────────────────────────────────────────
 
@@ -129,6 +148,8 @@ class ParametresPage extends StatefulWidget {
 class _ParametresPageState extends State<ParametresPage> {
   int _selectedSectionIndex = 0;
 
+  final ScrollController _tabScrollController = ScrollController();
+
   final List<_SettingsSection> _sections = [
     _SettingsSection(icon: Icons.admin_panel_settings, label: 'Administrateurs'),
     _SettingsSection(icon: Icons.groups, label: 'Chefs d\'équipe'),
@@ -136,6 +157,8 @@ class _ParametresPageState extends State<ParametresPage> {
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.group_work, label: 'Groupes'),
     _SettingsSection(icon: Icons.vpn_key, label: 'Comptes Groupes'),
+    _SettingsSection(icon: Icons.groups_2, label: 'Groupes Distribution'),
+    _SettingsSection(icon: Icons.admin_panel_settings_outlined, label: 'Comptes Distribution'),
     _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
     _SettingsSection(icon: Icons.account_tree_outlined, label: 'Départements'),
@@ -164,28 +187,91 @@ class _ParametresPageState extends State<ParametresPage> {
       case 5:
         return auth.hasPermission(AppPermissions.groupeAccountsManage);
       case 6:
-        return auth.hasPermission(AppPermissions.driversManage);
+        return auth.hasPermission(AppPermissions.groupsManage);
       case 7:
-        return auth.hasPermission(AppPermissions.postesManage);
+        return auth.hasPermission(AppPermissions.groupeAccountsManage);
       case 8:
-        return auth.hasPermission(AppPermissions.departementsManage);
+        return auth.hasPermission(AppPermissions.driversManage);
       case 9:
-        return auth.hasPermission(AppPermissions.absenceReasonsManage);
+        return auth.hasPermission(AppPermissions.postesManage);
       case 10:
-        return true; // Types de congé — accessible à tous les admins
+        return auth.hasPermission(AppPermissions.departementsManage);
       case 11:
-        return auth.hasPermission(AppPermissions.generalManage);
+        return auth.hasPermission(AppPermissions.absenceReasonsManage);
       case 12:
-        return auth.hasPermission(AppPermissions.notificationsManage);
+        return true; // Types de congé — accessible à tous les admins
       case 13:
-        return auth.hasPermission(AppPermissions.securityManage);
+        return auth.hasPermission(AppPermissions.generalManage);
       case 14:
-        return auth.hasPermission(AppPermissions.databaseManage);
+        return auth.hasPermission(AppPermissions.notificationsManage);
       case 15:
+        return auth.hasPermission(AppPermissions.securityManage);
+      case 16:
+        return auth.hasPermission(AppPermissions.databaseManage);
+      case 17:
         return auth.hasPermission(AppPermissions.aboutView);
       default:
         return false;
     }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _tabScrollController.addListener(_onTabBarScroll);
+  }
+
+  void _onTabBarScroll() {
+    if (mounted) setState(() {});
+  }
+
+  void _scrollTabBarBy(double delta) {
+    final c = _tabScrollController;
+    if (!c.hasClients) return;
+    final target = (c.offset + delta).clamp(
+      c.position.minScrollExtent,
+      c.position.maxScrollExtent,
+    );
+    c.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onTabBarPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final c = _tabScrollController;
+    if (!c.hasClients) return;
+    // Molette verticale ou Shift+molette → défilement horizontal (Windows / desktop)
+    final dy = event.scrollDelta.dy;
+    final dx = event.scrollDelta.dx;
+    final delta = dx != 0.0 ? dx : dy;
+    if (delta == 0.0) return;
+    final target = (c.offset + delta).clamp(
+      c.position.minScrollExtent,
+      c.position.maxScrollExtent,
+    );
+    c.jumpTo(target);
+  }
+
+  bool get _tabCanScrollLeft {
+    final c = _tabScrollController;
+    if (!c.hasClients) return false;
+    return c.offset > c.position.minScrollExtent + 0.5;
+  }
+
+  bool get _tabCanScrollRight {
+    final c = _tabScrollController;
+    if (!c.hasClients) return false;
+    return c.offset < c.position.maxScrollExtent - 0.5;
+  }
+
+  @override
+  void dispose() {
+    _tabScrollController.removeListener(_onTabBarScroll);
+    _tabScrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -275,12 +361,34 @@ class _ParametresPageState extends State<ParametresPage> {
                   ],
                 ),
               ),
-              // ── Tab row (scrollable on mobile) ──
+              // ── Tab row: molette → scroll horizontal, souris drag, flèches sur desktop ──
               Padding(
                 padding: EdgeInsets.only(left: mobile ? 4 : 8, right: mobile ? 4 : 8, top: 4),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (!mobile)
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left, size: 22),
+                        tooltip: 'Onglets précédents',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _tabCanScrollLeft ? () => _scrollTabBarBy(-140) : null,
+                        color: const Color(0xFF328EEE),
+                      ),
+                    Expanded(
+                      child: Listener(
+                        onPointerSignal: _onTabBarPointerSignal,
+                        child: ScrollConfiguration(
+                          behavior: _HorizontalTabScrollBehavior(),
+                          child: Scrollbar(
+                            controller: _tabScrollController,
+                            thumbVisibility: !mobile,
+                            thickness: 4,
+                            radius: const Radius.circular(8),
+                            child: SingleChildScrollView(
+                              controller: _tabScrollController,
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
                     children: visibleSectionIndices.map((i) {
                       final s = _sections[i];
                       final selected = _selectedSectionIndex == i;
@@ -362,7 +470,21 @@ class _ParametresPageState extends State<ParametresPage> {
                         ),
                       );
                     }).toList(),
-                  ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (!mobile)
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right, size: 22),
+                        tooltip: 'Onglets suivants',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _tabCanScrollRight ? () => _scrollTabBarBy(140) : null,
+                        color: const Color(0xFF328EEE),
+                      ),
+                  ],
                 ),
               ),
             ],
@@ -389,16 +511,18 @@ class _ParametresPageState extends State<ParametresPage> {
       case 3:  return const _ChefComptesSection();
       case 4:  return const _GroupesSection();
       case 5:  return const _GroupeComptesSection();
-      case 6:  return const _ChauffeursSection();
-      case 7:  return const _PostesSection();
-      case 8:  return const _DepartementsSection();
-      case 9:  return const _AbsenceReasonsSection();
-      case 10: return const _LeaveTypesSection();
-      case 11: return const _GeneralSection();
-      case 12: return const _NotificationsSection();
-      case 13: return const _SecuriteSection();
-      case 14: return const _DatabaseSection();
-      case 15: return const _AboutSection();
+      case 6:  return const _DistributionGroupsSection();
+      case 7:  return const _DistributionComptesSection();
+      case 8:  return const _ChauffeursSection();
+      case 9:  return const _PostesSection();
+      case 10: return const _DepartementsSection();
+      case 11: return const _AbsenceReasonsSection();
+      case 12: return const _LeaveTypesSection();
+      case 13: return const _GeneralSection();
+      case 14: return const _NotificationsSection();
+      case 15: return const _SecuriteSection();
+      case 16: return const _DatabaseSection();
+      case 17: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -1448,6 +1572,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nomCtrl, _prenomCtrl, _emailCtrl, _telCtrl, _pwdCtrl;
   String _role = 'Admin RH';
+  String? _selectedEmployeId;
   List<String> _perms = [];
   bool _actif = true;
   bool _showPwd = false;
@@ -1489,8 +1614,8 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       AppPermissions.reportsView,
       AppPermissions.aboutView,
     ],
-    // Chef de zone: full admin scope except direct pointage access.
-    'zone': _allPerms.where((p) => p != AppPermissions.pointageView).toList(),
+    // Chef de zone: full admin scope with pointage access (restricted in UI to Chef d'atelier only).
+    'zone': _allPerms,
     'atelier': [
       AppPermissions.employeesView,
       AppPermissions.employeesManage,
@@ -1530,6 +1655,28 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     if (same(perms, _permissionPresets['atelier']!)) return 'atelier';
     if (same(perms, _permissionPresets['zone']!)) return 'zone';
     return 'custom';
+  }
+
+  bool _roleMatchesPoste(String role, String poste) {
+    final r = role.trim().toLowerCase();
+    final p = poste.trim().toLowerCase();
+    if (r.contains('atelier')) return p.contains('atelier');
+    if (r.contains('zone')) return p.contains('zone');
+    if (r.contains('rh')) return p == 'rh' || p.contains('ressource') || p.contains('rh');
+    if (r.contains('pointage')) return p.contains('pointage') || p.contains('chef d\'équipe');
+    return true;
+  }
+
+  void _applyEmployeToForm(emp.Employe e) {
+    final parts = e.nom.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+    final prenom = parts.isNotEmpty ? parts.first : '';
+    final nom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    setState(() {
+      _selectedEmployeId = e.id;
+      _prenomCtrl.text = prenom;
+      _nomCtrl.text = nom;
+      _telCtrl.text = e.telephone;
+    });
   }
 
   void _applyPreset(String key) {
@@ -1608,6 +1755,62 @@ class _AdminDrawerState extends State<_AdminDrawer> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Role & Status ──
+            _DrawerSection(label: 'RÔLE & STATUT'),
+            const SizedBox(height: 10),
+            _DrawerDropdown(
+              label: 'Rôle *',
+              value: _role,
+              items: _roles,
+              onChanged: (v) => setState(() {
+                _role = v!;
+                _selectedEmployeId = null;
+              }),
+            ),
+            const SizedBox(height: 10),
+            Builder(
+              builder: (context) {
+                final empsProv = context.watch<EmployeesProvider>();
+                final candidates = empsProv.employes
+                    .where((e) => e.statut == emp.EmployeStatut.enService && _roleMatchesPoste(_role, e.poste))
+                    .toList()
+                  ..sort((a, b) => a.nom.compareTo(b.nom));
+                if (candidates.isEmpty) {
+                  return Text(
+                    'Aucun collaborateur trouvé pour ce rôle.',
+                    style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                  );
+                }
+                if (_selectedEmployeId != null &&
+                    !candidates.any((e) => e.id == _selectedEmployeId)) {
+                  _selectedEmployeId = null;
+                }
+                return DropdownButtonFormField<String>(
+                  value: _selectedEmployeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Collaborateur source *',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                  items: candidates
+                      .map((e) => DropdownMenuItem<String>(
+                            value: e.id,
+                            child: Text('${e.nom} — ${e.poste}'),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    final selected = candidates.where((e) => e.id == v).toList();
+                    if (selected.isEmpty) return;
+                    _applyEmployeToForm(selected.first);
+                  },
+                  validator: (v) => (v == null || v.isEmpty) ? 'Choisissez un collaborateur' : null,
+                );
+              },
+            ),
+            const SizedBox(height: 12),
             // ── Identity ──
             _DrawerSection(label: 'IDENTITÉ'),
             const SizedBox(height: 10),
@@ -1692,16 +1895,6 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               ),
             ],
             const SizedBox(height: 20),
-            // ── Role & Status ──
-            _DrawerSection(label: 'RÔLE & STATUT'),
-            const SizedBox(height: 10),
-            _DrawerDropdown(
-              label: 'Rôle *',
-              value: _role,
-              items: _roles,
-              onChanged: (v) => setState(() => _role = v!),
-            ),
-            const SizedBox(height: 12),
             const Text(
               'Modèles de permissions',
               style: TextStyle(
@@ -2393,7 +2586,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                         color: widget.deptColor, size: 20),
                     const SizedBox(width: 10),
                     Text(
-                      existing == null ? 'Ajouter un employé' : 'Modifier l\'employé',
+                      existing == null ? 'Ajouter un collaborateur' : 'Modifier le collaborateur',
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark),
                     ),
                     const Spacer(),
@@ -2485,7 +2678,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(children: const [Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20), SizedBox(width: 8), Text('Supprimer l\'employé', style: TextStyle(fontSize: 15))]),
+        title: Row(children: const [Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20), SizedBox(width: 8), Text('Supprimer le collaborateur', style: TextStyle(fontSize: 15))]),
         content: Text('Supprimer ${emp.prenom} ${emp.nom} ?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
@@ -2576,7 +2769,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                         const SizedBox(height: 14),
                         _DetailRow(icon: Icons.email_outlined,  label: 'Email',   value: c.email),
                         _DetailRow(icon: Icons.phone_outlined,  label: 'Tél.',    value: c.telephone),
-                        _DetailRow(icon: Icons.people_outline,  label: 'Effectif', value: '${_employes.length} employé(s)'),
+                        _DetailRow(icon: Icons.people_outline,  label: 'Effectif', value: '${_employes.length} collaborateur(s)'),
                         _DetailRow(icon: Icons.calendar_today,  label: 'Créé le',
                             value: '${c.dateCreation.day.toString().padLeft(2,'0')}/${c.dateCreation.month.toString().padLeft(2,'0')}/${c.dateCreation.year}'),
                         const SizedBox(height: 16),
@@ -2646,7 +2839,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                             child: Column(mainAxisSize: MainAxisSize.min, children: [
                               Icon(Icons.people_outline, size: 36, color: Colors.grey[300]),
                               const SizedBox(height: 8),
-                              Text('Aucun employé enregistré',
+                              Text('Aucun collaborateur enregistré',
                                   style: TextStyle(fontSize: 13, color: Colors.grey[400])),
                               const SizedBox(height: 10),
                               TextButton.icon(
@@ -2834,7 +3027,7 @@ class _ChefDrawerState extends State<_ChefDrawer> {
             ),
             const SizedBox(height: 12),
             _DrawerField(
-              label: 'Nombre d\'employés sous sa responsabilité',
+              label: 'Nombre de collaborateurs sous sa responsabilité',
               controller: _nbEmpCtrl,
               hint: '0',
               isNumber: true,
@@ -3432,7 +3625,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
                     const Text('Membres', style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 6),
                     Text(
-                      'Seuls les employés non affectés à une équipe ou à un autre groupe sont affichés.',
+                      'Seuls les collaborateurs non affectés à une équipe ou à un autre groupe sont affichés.',
                       style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 8),
@@ -3755,6 +3948,505 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
   }
 }
 
+class _DistributionGroupsSection extends StatefulWidget {
+  const _DistributionGroupsSection();
+
+  @override
+  State<_DistributionGroupsSection> createState() => _DistributionGroupsSectionState();
+}
+
+class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> {
+  String _q = '';
+
+  bool _isProtectedForDistribution(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef') ||
+        p.contains('rh') ||
+        p.contains('dev') ||
+        p.contains('it') ||
+        p.contains('admin') ||
+        p.contains('directeur') ||
+        p.contains('responsable');
+  }
+
+  void _showDialogGroup(
+      BuildContext context, DistributionGroupsProvider prov, EmployeesProvider emps, DistributionGroup? existing) {
+    final nameCtrl = TextEditingController(text: existing?.nom ?? '');
+    final selectedIds = <String>{...(existing?.membreIds ?? const [])};
+    final employees = emps.employes.toList()..sort((a, b) => a.nom.compareTo(b.nom));
+    String search = '';
+    String? selectedPoste;
+    final groupesProv = context.read<GroupesProvider>();
+
+    final usedInEquipes = <String>{
+      for (final eq in emps.equipes) ...[
+        if (eq.chefId.isNotEmpty) eq.chefId,
+        ...eq.membreIds,
+      ]
+    };
+    final usedInGroupes = <String>{
+      for (final g in groupesProv.groupes) ...g.membreIds,
+    };
+    final usedInOtherDistribution = <String>{
+      for (final g in prov.groups)
+        if (existing == null || g.id != existing.id) ...g.membreIds,
+    };
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final eligible = employees.where((e) {
+            if (selectedIds.contains(e.id)) return true; // Keep current selected visible in edit mode.
+            if (_isProtectedForDistribution(e.poste)) return false;
+            if (usedInEquipes.contains(e.id)) return false;
+            if (usedInGroupes.contains(e.id)) return false;
+            if (usedInOtherDistribution.contains(e.id)) return false;
+            return true;
+          }).toList();
+          final postes = eligible.map((e) => e.poste.trim()).where((p) => p.isNotEmpty).toSet().toList()..sort();
+          selectedPoste ??= postes.isNotEmpty ? postes.first : null;
+          final filtered = eligible.where((e) {
+            final okSearch = search.trim().isEmpty ||
+                e.nom.toLowerCase().contains(search.trim().toLowerCase()) ||
+                e.poste.toLowerCase().contains(search.trim().toLowerCase());
+            final okPoste = selectedPoste == null || selectedPoste!.isEmpty || e.poste.trim() == selectedPoste!.trim();
+            return okSearch && okPoste;
+          }).toList();
+          return AlertDialog(
+            title: Text(existing == null ? 'Nouveau groupe Distribution' : 'Modifier groupe Distribution'),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Nom', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Filtrer par nom/poste',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (v) => setStateD(() => search = v),
+                    ),
+                    const SizedBox(height: 10),
+                    if (postes.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        value: selectedPoste,
+                        decoration: const InputDecoration(labelText: 'Poste', border: OutlineInputBorder()),
+                        items: postes.map((p) => DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
+                        onChanged: (v) => setStateD(() => selectedPoste = v),
+                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Affichage: collaborateurs non affectés (hors équipes/groupes) et hors postes protégés (Chef/RH/DEV/IT...).',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 280,
+                      decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+                      child: ListView(
+                        children: filtered.map((e) {
+                          final checked = selectedIds.contains(e.id);
+                          return CheckboxListTile(
+                            value: checked,
+                            dense: true,
+                            title: Text(e.nom),
+                            subtitle: Text(e.poste),
+                            onChanged: (v) => setStateD(() {
+                              if (v == true) {
+                                selectedIds.add(e.id);
+                              } else {
+                                selectedIds.remove(e.id);
+                              }
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+              ElevatedButton(
+                onPressed: () async {
+                  final nom = nameCtrl.text.trim();
+                  if (nom.isEmpty) return;
+                  final g = DistributionGroup(id: existing?.id ?? '', nom: nom, membreIds: selectedIds.toList());
+                  if (existing == null) {
+                    await prov.addGroup(g);
+                  } else {
+                    await prov.updateGroup(g);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: Text(existing == null ? 'Créer' : 'Enregistrer'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<DistributionGroupsProvider>();
+    final emps = context.watch<EmployeesProvider>();
+    final padding = pagePadding(context);
+    final list = prov.groups.where((g) => g.nom.toLowerCase().contains(_q.toLowerCase())).toList();
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 36,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Rechercher...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      filled: true,
+                      fillColor: const Color(0xFFF7F9FC),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                    onChanged: (v) => setState(() => _q = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                onPressed: () => _showDialogGroup(context, prov, emps, null),
+                icon: const Icon(Icons.add),
+                label: const Text('Nouveau groupe'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(padding),
+            itemCount: list.length,
+            itemBuilder: (_, i) {
+              final g = list[i];
+              return Card(
+                child: ListTile(
+                  title: Text(g.nom, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('Membres: ${g.membreIds.length}'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogGroup(context, prov, emps, g)),
+                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteGroup(g.id)),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DistributionComptesSection extends StatefulWidget {
+  const _DistributionComptesSection();
+
+  @override
+  State<_DistributionComptesSection> createState() => _DistributionComptesSectionState();
+}
+
+class _DistributionComptesSectionState extends State<_DistributionComptesSection> {
+  String _q = '';
+
+  Future<String?> _pickEmployeWithFilter(
+    BuildContext context,
+    List<emp.Employe> candidates,
+  ) async {
+    String search = '';
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final filtered = candidates.where((e) {
+            final q = search.trim().toLowerCase();
+            if (q.isEmpty) return true;
+            return e.nom.toLowerCase().contains(q) || e.poste.toLowerCase().contains(q);
+          }).toList();
+          return AlertDialog(
+            title: const Text('Choisir un chef'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Rechercher (nom / poste)',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (v) => setStateD(() => search = v),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 320,
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('Aucun collaborateur trouvé.'))
+                        : ListView.builder(
+                            itemCount: filtered.length,
+                            itemBuilder: (_, i) {
+                              final e = filtered[i];
+                              return ListTile(
+                                title: Text(e.nom),
+                                subtitle: Text(e.poste),
+                                onTap: () => Navigator.pop(ctx, e.id),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDialogCompte(
+      BuildContext context,
+      DistributionComptesProvider prov,
+      DistributionGroupsProvider groupsProv,
+      EmployeesProvider empsProv,
+      DistributionCompte? existing) {
+    final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+    final emailCtrl = TextEditingController(text: existing?.email ?? '');
+    final pwdCtrl = TextEditingController(text: existing?.password ?? '');
+    final selected = <String>{...(existing?.distributionGroupIds ?? const <String>[])};
+    String? selectedEmployeId = existing?.employeId;
+    bool actif = existing?.actif ?? true;
+    final groups = groupsProv.groups;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final selectedGroups = groups.where((g) => selected.contains(g.id)).toList();
+          final sourceGroups = selectedGroups.isNotEmpty ? selectedGroups : groups;
+          final allowedEmployeeIds = <String>{for (final g in sourceGroups) ...g.membreIds};
+          final candidates = empsProv.employes
+              .where((e) => allowedEmployeeIds.contains(e.id))
+              .toList()
+            ..sort((a, b) => a.nom.compareTo(b.nom));
+          if (selectedEmployeId != null && !candidates.any((e) => e.id == selectedEmployeId)) {
+            selectedEmployeId = null;
+          }
+          final selectedEmp = selectedEmployeId == null
+              ? null
+              : candidates.firstWhere((e) => e.id == selectedEmployeId);
+          if (selectedEmp != null && nomCtrl.text.trim() != selectedEmp.nom.trim()) {
+            nomCtrl.text = selectedEmp.nom;
+          }
+          return AlertDialog(
+          title: Text(existing == null ? 'Nouveau compte Distribution' : 'Modifier compte Distribution'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  TextFormField(
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Chef (depuis les ouvriers)',
+                      border: OutlineInputBorder(),
+                      suffixIcon: Icon(Icons.arrow_drop_down),
+                    ),
+                    controller: TextEditingController(
+                      text: selectedEmp == null ? '' : '${selectedEmp.nom} — ${selectedEmp.poste}',
+                    ),
+                    onTap: () async {
+                      final id = await _pickEmployeWithFilter(context, candidates);
+                      if (id == null) return;
+                      setStateD(() => selectedEmployeId = id);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nomCtrl,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Nom (auto depuis collaborateur)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (selected.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Astuce: aucun groupe sélectionné -> la recherche couvre tous les groupes Distribution.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ),
+                  if (selected.isEmpty) const SizedBox(height: 10),
+                  TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(controller: pwdCtrl, decoration: const InputDecoration(labelText: 'Mot de passe', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: groups.map((g) {
+                        final checked = selected.contains(g.id);
+                        return CheckboxListTile(
+                          value: checked,
+                          dense: true,
+                          title: Text(g.nom),
+                          onChanged: (v) => setStateD(() {
+                            if (v == true) {
+                              selected.add(g.id);
+                            } else {
+                              selected.remove(g.id);
+                            }
+                            // If selected employee no longer belongs to selected groups, clear it.
+                            final allowed = <String>{
+                              for (final gx in groups)
+                                if (selected.contains(gx.id)) ...gx.membreIds,
+                            };
+                            if (selectedEmployeId != null && !allowed.contains(selectedEmployeId)) {
+                              selectedEmployeId = null;
+                              nomCtrl.text = '';
+                            }
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile(
+                    value: actif,
+                    onChanged: (v) => setStateD(() => actif = v),
+                    title: const Text('Actif'),
+                    dense: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+            ElevatedButton(
+              onPressed: () async {
+                final nom = nomCtrl.text.trim();
+                final email = emailCtrl.text.trim().toLowerCase();
+                final pwd = pwdCtrl.text;
+                if (selectedEmployeId == null || nom.isEmpty || email.isEmpty || pwd.isEmpty || selected.isEmpty) return;
+                final c = DistributionCompte(
+                  id: existing?.id ?? '',
+                  nom: nom,
+                  email: email,
+                  password: pwd,
+                  employeId: selectedEmployeId,
+                  distributionGroupIds: selected.toList(),
+                  actif: actif,
+                  dateCreation: existing?.dateCreation,
+                );
+                if (existing == null) {
+                  await prov.addCompte(c);
+                } else {
+                  await prov.updateCompte(c);
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: Text(existing == null ? 'Créer' : 'Enregistrer'),
+            ),
+          ],
+        );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<DistributionComptesProvider>();
+    final groupsProv = context.watch<DistributionGroupsProvider>();
+    final empsProv = context.watch<EmployeesProvider>();
+    final padding = pagePadding(context);
+    final list = prov.comptes.where((c) {
+      final q = _q.toLowerCase();
+      return c.nom.toLowerCase().contains(q) || c.email.toLowerCase().contains(q);
+    }).toList();
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 36,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Rechercher...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      filled: true,
+                      fillColor: const Color(0xFFF7F9FC),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                    onChanged: (v) => setState(() => _q = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                onPressed: () => _showDialogCompte(context, prov, groupsProv, empsProv, null),
+                icon: const Icon(Icons.add),
+                label: const Text('Nouveau compte'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(padding),
+            itemCount: list.length,
+            itemBuilder: (_, i) {
+              final c = list[i];
+              final names = groupsProv.groups.where((g) => c.distributionGroupIds.contains(g.id)).map((e) => e.nom).join(', ');
+              return Card(
+                child: ListTile(
+                  title: Text(c.nom, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('${c.email}  •  Groupes: $names  •  ${c.actif ? 'Actif' : 'Inactif'}'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogCompte(context, prov, groupsProv, empsProv, c)),
+                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteCompte(c.id)),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 
 // ─────────────────────────────────────────────
 //  SECTION: CHAUFFEURS (السائقون)
@@ -4027,7 +4719,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                     DropdownButtonFormField<String>(
                       value: dropdownValue,
                       decoration: const InputDecoration(
-                        labelText: 'Lier à un employé (Chauffeur)',
+                        labelText: 'Lier à un collaborateur (Chauffeur)',
                         prefixIcon: Icon(Icons.local_shipping_outlined),
                       ),
                       items: [
@@ -4049,7 +4741,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          'ℹ️ Aucun employé avec le poste "Chauffeur" trouvé. Ajoutez d\'abord un employé avec ce poste.',
+                          'ℹ️ Aucun collaborateur avec le poste "Chauffeur" trouvé. Ajoutez d\'abord un collaborateur avec ce poste.',
                           style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
                         ),
                       ),

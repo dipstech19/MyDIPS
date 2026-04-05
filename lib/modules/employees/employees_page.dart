@@ -177,9 +177,9 @@ class _EmployeesPageState extends State<EmployeesPage>
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Gestion des Employés', style: TextStyle(fontSize: titleFontSize(context), fontWeight: FontWeight.bold)),
+                Text('Gestion des Collaborateurs', style: TextStyle(fontSize: titleFontSize(context), fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text(auth.isDirecteur ? 'Vue complète - ${employes.length} employés' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
+                Text(auth.isDirecteur ? 'Vue complète - ${employes.length} collaborateurs' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
                 if (canManageEmployees) ...[
                   const SizedBox(height: 12),
                   SizedBox(
@@ -187,7 +187,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     child: ElevatedButton.icon(
                       onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
                       icon: const Icon(Icons.person_add, size: 20),
-                      label: const Text('Nouvel Employé'),
+                      label: const Text('Nouveau Collaborateur'),
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
                     ),
                   ),
@@ -201,15 +201,15 @@ class _EmployeesPageState extends State<EmployeesPage>
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Gestion des Employés', style: TextStyle(fontSize: titleFontSize(context), fontWeight: FontWeight.bold)),
-                    Text(auth.isDirecteur ? 'Vue complète - ${employes.length} employés' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
+                    Text('Gestion des Collaborateurs', style: TextStyle(fontSize: titleFontSize(context), fontWeight: FontWeight.bold)),
+                    Text(auth.isDirecteur ? 'Vue complète - ${employes.length} collaborateurs' : 'Mon équipe - ${employes.length} membre(s)', style: TextStyle(color: Colors.grey[600], fontSize: subtitleFontSize(context))),
                   ],
                 ),
                 if (canManageEmployees)
                   ElevatedButton.icon(
                     onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
                     icon: const Icon(Icons.person_add),
-                    label: const Text('Nouvel Employé'),
+                    label: const Text('Nouveau Collaborateur'),
                     style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
                   ),
               ],
@@ -267,7 +267,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.people, size: 18),
                   const SizedBox(width: 8),
-                  Text('Employés (${employes.length})'),
+                  Text('Collaborateurs (${employes.length})'),
                 ]),
               ),
               Tab(
@@ -457,7 +457,7 @@ class _EmployeesPageState extends State<EmployeesPage>
               borderRadius: const BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
             ),
             child: Row(children: [
-              const Expanded(flex: 3, child: Text('Employé', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              const Expanded(flex: 3, child: Text('Collaborateur', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
               if (!isChefOnly) ...[
                 const Expanded(flex: 2, child: Text('Poste / Magasin', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
                 const Expanded(flex: 2, child: Text('Contrat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
@@ -475,7 +475,7 @@ class _EmployeesPageState extends State<EmployeesPage>
           if (filtered.isEmpty)
             Padding(
               padding: const EdgeInsets.all(24),
-              child: Center(child: Text('Aucun employé trouvé', style: TextStyle(color: Colors.grey[600], fontSize: mobile ? 12 : 14))),
+              child: Center(child: Text('Aucun collaborateur trouvé', style: TextStyle(color: Colors.grey[600], fontSize: mobile ? 12 : 14))),
             )
           else
             Expanded(
@@ -602,7 +602,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                                         if (canDeleteEmployees)
                                           IconButton(
                                             icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
-                                            tooltip: 'Supprimer l\'employé',
+                                            tooltip: 'Supprimer le collaborateur',
                                             onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
                                             padding: EdgeInsets.zero,
                                             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -722,7 +722,7 @@ class _EmployeesPageState extends State<EmployeesPage>
           children: [
             Icon(Icons.delete_outline, color: Colors.red[700], size: 24),
             const SizedBox(width: 8),
-            const Expanded(child: Text('Supprimer l\'employé')),
+            const Expanded(child: Text('Supprimer le collaborateur')),
           ],
         ),
         content: Text(
@@ -740,7 +740,7 @@ class _EmployeesPageState extends State<EmployeesPage>
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Employé ${employe.nom} supprimé'),
+                    content: Text('Collaborateur ${employe.nom} supprimé'),
                     backgroundColor: Colors.green,
                     behavior: SnackBarBehavior.fixed,
                   ),

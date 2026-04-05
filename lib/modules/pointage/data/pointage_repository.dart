@@ -178,6 +178,47 @@ class PointageRepository {
     }
   }
 
+  /// Distribution: تسجيل الشاف يدوياً على تاريخ محدد (عادةً الأمس)
+  /// مع إمكانية تحديد وقت الدخول والخروج يدوياً.
+  Future<void> setDistributionChefStatusManual(
+    PointageRecord record,
+    ChefPointageStatus status,
+    String? chefId, {
+    String? absenceReason,
+    DateTime? arrivalAt,
+    DateTime? departureAt,
+  }) async {
+    final docId = record.id.isNotEmpty ? record.id : _docId(record.employeId, record.date);
+    final existing = record.id.isNotEmpty
+        ? await _firestore.collection(_pointageCollection).doc(docId).get().then(
+            (d) => d.exists ? PointageRecord.fromMap({...d.data()!, 'id': d.id}) : null)
+        : await getByEmployeAndDate(record.employeId, record.date);
+    final isPresent = status == ChefPointageStatus.present;
+    final updates = <String, dynamic>{
+      'chefStatus': status.name,
+      'markedByChefId': chefId,
+      'absenceReason': isPresent ? null : absenceReason,
+      'arrivalMarkedAt': isPresent ? (arrivalAt ?? existing?.arrivalMarkedAt ?? DateTime.now()).toIso8601String() : null,
+      'departureStatus': isPresent ? DepartureStatus.finished.name : DepartureStatus.unset.name,
+      'departureMarkedAt': isPresent
+          ? (departureAt ?? existing?.departureMarkedAt ?? DateTime.now()).toIso8601String()
+          : null,
+    };
+    if (existing != null) {
+      await _firestore.collection(_pointageCollection).doc(docId).update(updates);
+    } else {
+      final map = record.copyWith(
+        chefStatus: status,
+        markedByChefId: chefId,
+        absenceReason: isPresent ? null : absenceReason,
+        arrivalMarkedAt: isPresent ? (arrivalAt ?? DateTime.now()) : null,
+        departureStatus: isPresent ? DepartureStatus.finished : DepartureStatus.unset,
+        departureMarkedAt: isPresent ? (departureAt ?? DateTime.now()) : null,
+      ).toMap();
+      await _firestore.collection(_pointageCollection).doc(docId).set(map);
+    }
+  }
+
   /// تحديث تأكيد الساعات الإضافية (للشيفت الموالي) بدون لمس chefStatus الأصلي.
   Future<void> setOvertimeChefStatus(
     PointageRecord record,
@@ -253,6 +294,7 @@ class PointageRepository {
   }
 
   /// قفل تقرير السائق لليوم: تعيين submittedByDriverAt لجميع السجلات التي لها driverStatus
+  /// (دفعات WriteBatch لتقليل الطلبات على الشبكة الضعيفة).
   Future<void> submitDriverReport(DateTime date) async {
     final start = DateTime(date.year, date.month, date.day);
     final end = start.add(const Duration(days: 1));
@@ -262,13 +304,15 @@ class PointageRepository {
         .where('date', isLessThan: end.toIso8601String())
         .get();
     final now = DateTime.now().toIso8601String();
+    final refs = <DocumentReference>[];
     for (final doc in snap.docs) {
       final data = doc.data();
       final driverStatus = data['driverStatus'] as String?;
       if (driverStatus != null && driverStatus != 'unset') {
-        await doc.reference.update({'submittedByDriverAt': now});
+        refs.add(doc.reference);
       }
     }
+    await _commitBatchedFieldUpdates(refs, {'submittedByDriverAt': now});
   }
 
   /// قفل تقرير الشاف للفريق واليوم (استعلام بالتاريخ فقط ثم تصفية بالفريق لتجنب فهرس مركب)
@@ -282,10 +326,124 @@ class PointageRepository {
         .where('date', isLessThan: end.toIso8601String())
         .get();
     final now = DateTime.now().toIso8601String();
+    final refs = <DocumentReference>[];
     for (final doc in snap.docs) {
       final data = doc.data();
       if ((data['equipeId'] as String? ?? '') != equipeId) continue;
-      await doc.reference.update({'submittedByChefAt': now});
+      refs.add(doc.reference);
+    }
+    await _commitBatchedFieldUpdates(refs, {'submittedByChefAt': now});
+  }
+
+  static const int _maxBatchOps = 450;
+
+  Future<void> _commitBatchedFieldUpdates(
+    List<DocumentReference> refs,
+    Map<String, dynamic> updates,
+  ) async {
+    for (var i = 0; i < refs.length; i += _maxBatchOps) {
+      final batch = _firestore.batch();
+      final end = (i + _maxBatchOps < refs.length) ? i + _maxBatchOps : refs.length;
+      for (var j = i; j < end; j++) {
+        batch.update(refs[j], updates);
+      }
+      await batch.commit();
+    }
+  }
+
+  /// Avant [submitChefReport] : marquer tous les non-marqués comme absents en une ou quelques écritures batch.
+  Future<void> batchMarkUnmarkedAbsentBeforeChefSubmit({
+    required List<PointageRecord> regularTemplates,
+    required List<PointageRecord> overtimeRecords,
+    required String? chefId,
+    bool ignoreLock = false,
+  }) async {
+    if (regularTemplates.isEmpty && overtimeRecords.isEmpty) return;
+
+    final regularPrepared = await Future.wait(regularTemplates.map((record) async {
+      final docId = record.id.isNotEmpty ? record.id : _docId(record.employeId, record.date);
+      final existing = record.id.isNotEmpty
+          ? await _firestore.collection(_pointageCollection).doc(docId).get().then(
+              (d) => d.exists ? PointageRecord.fromMap({...d.data()!, 'id': d.id}) : null)
+          : await getByEmployeAndDate(record.employeId, record.date);
+      return (record: record, docId: docId, existing: existing);
+    }));
+
+    final overtimePrepared = await Future.wait(overtimeRecords.map((record) async {
+      final docId = record.id.isNotEmpty ? record.id : _docId(record.employeId, record.date);
+      final existing = record.id.isNotEmpty
+          ? await _firestore.collection(_pointageCollection).doc(docId).get().then(
+              (d) => d.exists ? PointageRecord.fromMap({...d.data()!, 'id': d.id}) : null)
+          : await getByEmployeAndDate(record.employeId, record.date);
+      return (record: record, docId: docId, existing: existing);
+    }));
+
+    final status = ChefPointageStatus.absent;
+    final ops = <({DocumentReference ref, bool isSet, Map<String, dynamic> data})>[];
+
+    for (final p in regularPrepared) {
+      if (p.existing != null && p.existing!.chefLocked && !ignoreLock) continue;
+      final ref = _firestore.collection(_pointageCollection).doc(p.docId);
+      if (p.existing != null) {
+        ops.add((
+          ref: ref,
+          isSet: false,
+          data: {
+            'chefStatus': status.name,
+            'markedByChefId': chefId,
+            'absenceReason': null,
+          },
+        ));
+      } else {
+        final map = p.record
+            .copyWith(
+              chefStatus: status,
+              markedByChefId: chefId,
+              absenceReason: null,
+            )
+            .toMap();
+        ops.add((ref: ref, isSet: true, data: map));
+      }
+    }
+
+    for (final p in overtimePrepared) {
+      if (p.existing != null && p.existing!.chefLocked && !ignoreLock) continue;
+      final ref = _firestore.collection(_pointageCollection).doc(p.docId);
+      if (p.existing != null) {
+        ops.add((
+          ref: ref,
+          isSet: false,
+          data: {
+            'overtimeChefStatus': status.name,
+            'overtimeMarkedByChefId': chefId,
+            'overtimeMinutes': 0,
+          },
+        ));
+      } else {
+        final map = p.record
+            .copyWith(
+              overtimeChefStatus: status,
+              overtimeMarkedByChefId: chefId,
+              overtimeArrivalMarkedAt: null,
+              overtimeMinutes: 0,
+            )
+            .toMap();
+        ops.add((ref: ref, isSet: true, data: map));
+      }
+    }
+
+    for (var i = 0; i < ops.length; i += _maxBatchOps) {
+      final batch = _firestore.batch();
+      final end = (i + _maxBatchOps < ops.length) ? i + _maxBatchOps : ops.length;
+      for (var j = i; j < end; j++) {
+        final op = ops[j];
+        if (op.isSet) {
+          batch.set(op.ref, op.data);
+        } else {
+          batch.update(op.ref, op.data);
+        }
+      }
+      await batch.commit();
     }
   }
 

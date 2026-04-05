@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/app_permissions.dart';
@@ -7,6 +9,7 @@ import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/widgets/async_busy.dart';
 import '../../shared/widgets/shared_widgets.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import '../../features/chef/screens/chef_home_screen.dart';
@@ -254,16 +257,34 @@ class _PointagePageState extends State<PointagePage> {
       DailyConfirmationRepository();
   final DailySnapshotRepository _snapshotRepo = DailySnapshotRepository();
 
+  bool _isProtectedHigherPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef de zone') ||
+        p.contains('chef d\'atelier') ||
+        p.contains('rh') ||
+        p.contains('admin') ||
+        p.contains('directeur');
+  }
+
+  bool _isChefAtelierPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier');
+  }
+
   // تأكيدات اليوم (real-time stream)
   List<DailyEquipeConfirmation> _dailyConfirmations = [];
   Stream<List<DailyEquipeConfirmation>>? _confirmationsStream;
   DateTime? _confirmationsStreamDate;
 
+  // تأكيدات الأمس — لتنبيه الأدمن
+  List<DailyEquipeConfirmation> _yesterdayConfirmations = [];
+  Stream<List<DailyEquipeConfirmation>>? _yesterdayConfirmationsStream;
+  DateTime? _yesterdayConfirmationsStreamDate;
+
   String? _selectedEquipeIdAdmin;
   String? _lastOvertimeListenEquipeId;
   DateTime _hsFilterDate = DateTime.now();
   String? _lastOvertimeListenDateKey;
-  DateTime? _reportViewDate;
   _AdminPointageView _adminContentView = _AdminPointageView.workers;
   _AdminDesignTab _adminTab = _AdminDesignTab.pointages;
 
@@ -280,6 +301,39 @@ class _PointagePageState extends State<PointagePage> {
     if (_confirmationsStreamDate?.isAtSameMomentAs(day) == true) return;
     _confirmationsStreamDate = day;
     _confirmationsStream = _confirmationRepo.watchConfirmationsForDate(day);
+  }
+
+  /// تحديث stream تأكيدات الأمس (للتنبيه)
+  void _ensureYesterdayConfirmationsStream(DateTime today) {
+    final yesterday = DateTime(today.year, today.month, today.day - 1);
+    if (_yesterdayConfirmationsStreamDate?.isAtSameMomentAs(yesterday) == true) return;
+    _yesterdayConfirmationsStreamDate = yesterday;
+    _yesterdayConfirmationsStream = _confirmationRepo.watchConfirmationsForDate(yesterday);
+  }
+
+  /// Jour affiché pour l’admin : [PointageProvider.selectedReportDate] ou aujourd’ui (flux « today »).
+  void _applyAdminViewDay(PointageProvider pointageProvider, DateTime day) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(day.year, day.month, day.day);
+    if (d == today) {
+      pointageProvider.selectReportDate(null);
+    } else {
+      pointageProvider.selectReportDate(d);
+    }
+  }
+
+  void _shiftAdminViewDay(PointageProvider pointageProvider, int deltaDays) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final selected = pointageProvider.selectedReportDate;
+    final current = selected != null
+        ? DateTime(selected.year, selected.month, selected.day)
+        : today;
+    final next = current.add(Duration(days: deltaDays));
+    if (next.isAfter(today)) return;
+    if (next.year < 2020) return;
+    _applyAdminViewDay(pointageProvider, next);
   }
 
   void _ensureHsDateListener(OvertimeProvider provider) {
@@ -647,9 +701,15 @@ class _PointagePageState extends State<PointagePage> {
     final mobile = isMobile(context);
     final auth = context.read<AuthProvider>();
     final now = DateTime.now();
-    final viewDate = _reportViewDate ?? now;
-    final isViewingToday = _reportViewDate == null ||
-        (_reportViewDate!.year == now.year && _reportViewDate!.month == now.month && _reportViewDate!.day == now.day);
+    final todayOnly = DateTime(now.year, now.month, now.day);
+    final selectedReport = pointageProvider.selectedReportDate;
+    final isViewingToday = selectedReport == null;
+    final logicalDay = selectedReport != null
+        ? DateTime(selectedReport.year, selectedReport.month, selectedReport.day)
+        : todayOnly;
+    /// Référence stable pour les fenêtres T/C (évite minuit sur un jour passé pour les shifts de nuit).
+    final shiftWindowRef =
+        isViewingToday ? now : DateTime(logicalDay.year, logicalDay.month, logicalDay.day, 12);
     final recordsForDate = isViewingToday ? pointageProvider.todayPointage : pointageProvider.pointageByDate;
     // Build a map employeId → list of all records (may be 2 for Renfort workers).
     final recordsByEmployeId = <String, List<PointageRecord>>{};
@@ -669,7 +729,7 @@ class _PointagePageState extends State<PointagePage> {
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      pointageProvider.ensureNonWorkingLoadedForDate(viewDate);
+      pointageProvider.ensureNonWorkingLoadedForDate(logicalDay);
     });
     final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
     final shiftsProvider = context.watch<ShiftsProvider>();
@@ -677,7 +737,7 @@ class _PointagePageState extends State<PointagePage> {
     if (shiftsProvider.hasConfig) {
       for (final eid in shiftsProvider.config!.equipeIds) {
         if (eid.isEmpty) continue;
-        if (shiftsProvider.getShiftForEquipe(eid, viewDate) == ShiftType.rest) {
+        if (shiftsProvider.getShiftForEquipe(eid, logicalDay) == ShiftType.rest) {
           effectiveNonWorkingIds.add(eid);
         }
       }
@@ -685,8 +745,12 @@ class _PointagePageState extends State<PointagePage> {
     bool isRoboEquipe(Equipe eq) {
       final name = eq.nom.trim().toLowerCase();
       if (name.contains('robo') || name.contains('repos') || name.contains('repo')) return true;
-      final shift = shiftsProvider.getShiftForEquipe(eq.id, viewDate);
-      return shift == ShiftType.rest;
+      // Only treat as "repos" based on shift if the equipe is actually registered in the shifts config.
+      if (shiftsProvider.hasConfig && (shiftsProvider.config?.equipeIds.contains(eq.id) ?? false)) {
+        final shift = shiftsProvider.getShiftForEquipe(eq.id, logicalDay);
+        return shift == ShiftType.rest;
+      }
+      return false;
     }
     final workingEquipes = equipes
         .where((e) => e.chefId.isNotEmpty && !effectiveNonWorkingIds.contains(e.id) && !isRoboEquipe(e))
@@ -738,12 +802,24 @@ class _PointagePageState extends State<PointagePage> {
         })
         .toList()
       ..sort((a, b) => a.nom.compareTo(b.nom));
-    final List<_TeamWorkers> allTeams = [
+    List<_TeamWorkers> allTeams = [
       if (horsEquipeWorkers.isNotEmpty)
         (equipeId: 'hors_equipe', equipeName: 'Hors équipe', chefName: 'Admin', workers: horsEquipeWorkers),
       ...teams,
       ...groupeTeams,
     ];
+
+    if (auth.isChefZoneAdmin) {
+      allTeams = allTeams
+          .map((t) => (
+                equipeId: t.equipeId,
+                equipeName: t.equipeName,
+                chefName: t.chefName,
+                workers: t.workers.where((w) => _isChefAtelierPoste(w.poste)).toList(),
+              ))
+          .where((t) => t.workers.isNotEmpty)
+          .toList();
+    }
 
     if (_selectedEquipeIdAdmin == null ||
         (allTeams.isNotEmpty && !allTeams.any((t) => t.equipeId == _selectedEquipeIdAdmin))) {
@@ -766,6 +842,43 @@ class _PointagePageState extends State<PointagePage> {
       final list = pointageProvider.pointageByDate;
       final l = list.where((p) => p.employeId == employeId).toList();
       return l.isEmpty ? null : l.first;
+    }
+
+    /// True = ready to be confirmed by admin:
+    /// - both driver + chef already submitted (locked)
+    /// - and for "present" cases: entry + exit are marked
+    bool isWorkerReadyForAdminConfirm(PointageRecord? rec) {
+      if (rec == null) return false;
+      if (!rec.driverLocked || !rec.chefLocked) return false;
+
+      // If one of the roles didn't set a driver/chef status (still "unset"),
+      // we block admin confirmation even if locks exist for any reason.
+      if (rec.driverStatus == DriverPointageStatus.unset || rec.chefStatus == ChefPointageStatus.unset) {
+        return false;
+      }
+
+      // Only enforce entry/exit for "present" confirmed by driver/chef statuses.
+      // adminFinalStatus (training/leave/present) is handled separately (often without entry/exit).
+      final isPresentByDriverOrChef = rec.driverStatus == DriverPointageStatus.present ||
+          rec.driverStatus == DriverPointageStatus.enVehicule ||
+          rec.chefStatus == ChefPointageStatus.present;
+
+      if (isPresentByDriverOrChef) {
+        if (rec.arrivalMarkedAt == null) return false;
+        if (rec.departureStatus != DepartureStatus.finished) return false;
+        if (rec.departureMarkedAt == null) return false;
+        if (rec.submittedByDriverAt == null || rec.submittedByChefAt == null) return false;
+
+        // Extra safeguard:
+        // Make sure the latest Entrée/Sortie marking happened BEFORE both submissions,
+        // so we don't confirm when one role submits without having (or without seeing) the exit.
+        if (rec.arrivalMarkedAt!.isAfter(rec.submittedByDriverAt!)) return false;
+        if (rec.arrivalMarkedAt!.isAfter(rec.submittedByChefAt!)) return false;
+        if (rec.departureMarkedAt!.isAfter(rec.submittedByDriverAt!)) return false;
+        if (rec.departureMarkedAt!.isAfter(rec.submittedByChefAt!)) return false;
+      }
+
+      return true;
     }
 
     final presentByChef = <String, List<Employe>>{};
@@ -871,7 +984,7 @@ class _PointagePageState extends State<PointagePage> {
       }
 
       final filePath = await PointageExportService.shareDailyReportPdf(
-        date: viewDate,
+        date: logicalDay,
         title: trOf(context, 'report_presence_title'),
         presentNames: presentNames,
         presentNoDepartureNames: presentNoDepartureNames,
@@ -921,8 +1034,84 @@ class _PointagePageState extends State<PointagePage> {
                   const Text('Pointage', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 2),
                   Text(
-                    '${isViewingToday ? recordsForDate.length : pointageProvider.pointageByDate.length} enregistrement(s)',
+                    '${recordsForDate.length} enregistrement(s)${isViewingToday ? '' : ' (jour sélectionné)'}',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 4,
+                    runSpacing: 6,
+                    children: [
+                      Text(
+                        'Date :',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[800], fontWeight: FontWeight.w600),
+                      ),
+                      IconButton(
+                        tooltip: 'Jour précédent',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        onPressed: () => _shiftAdminViewDay(pointageProvider, -1),
+                        icon: Icon(Icons.chevron_left, size: densePhone ? 22 : 24, color: Colors.blueGrey.shade800),
+                      ),
+                      InkWell(
+                        onTap: () async {
+                          final p = await showDatePicker(
+                            context: context,
+                            initialDate: logicalDay,
+                            firstDate: DateTime(2020),
+                            lastDate: todayOnly,
+                          );
+                          if (p != null) {
+                            _applyAdminViewDay(pointageProvider, DateTime(p.year, p.month, p.day));
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          child: Text(
+                            '${logicalDay.day.toString().padLeft(2, '0')}/${logicalDay.month.toString().padLeft(2, '0')}/${logicalDay.year}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: densePhone ? 13 : 14,
+                              color: Theme.of(context).primaryColor,
+                              decoration: TextDecoration.underline,
+                              decorationColor: Theme.of(context).primaryColor.withValues(alpha: 0.4),
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Jour suivant',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        onPressed: isViewingToday
+                            ? null
+                            : () => _shiftAdminViewDay(pointageProvider, 1),
+                        icon: Icon(Icons.chevron_right, size: densePhone ? 22 : 24, color: Colors.blueGrey.shade800),
+                      ),
+                      if (!isViewingToday)
+                        TextButton(
+                          onPressed: () => _applyAdminViewDay(pointageProvider, todayOnly),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Aujourd\'hui'),
+                        ),
+                      OutlinedButton(
+                        onPressed: () {
+                          final y = todayOnly.subtract(const Duration(days: 1));
+                          _applyAdminViewDay(pointageProvider, y);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: const Text('Hier'),
+                      ),
+                    ],
                   ),
                 ],
               );
@@ -962,6 +1151,42 @@ class _PointagePageState extends State<PointagePage> {
                     ),
                     icon: Icon(Icons.table_chart_outlined, size: iconSize),
                     label: Text('Exporter Excel', style: TextStyle(fontSize: labelSize)),
+                  ),
+                  // Raccourcis (sans supprimer le bouton existant)
+                  OutlinedButton.icon(
+                    onPressed: () => _showExcelExportDialog(
+                      context,
+                      teams,
+                      equipes,
+                      employes,
+                      pointageProvider,
+                      initialScope: 'groupes',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
+                    ),
+                    icon: Icon(Icons.groups_outlined, size: iconSize),
+                    label: Text('Excel Groupes', style: TextStyle(fontSize: labelSize)),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _showExcelExportDialog(
+                      context,
+                      teams,
+                      equipes,
+                      employes,
+                      pointageProvider,
+                      initialScope: 'all',
+                      forceSingleSheet: true,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
+                    ),
+                    icon: Icon(Icons.business_outlined, size: iconSize),
+                    label: Text('Excel Société', style: TextStyle(fontSize: labelSize)),
                   ),
                   if (_canViewValidatedExcel(auth))
                     OutlinedButton.icon(
@@ -1141,7 +1366,8 @@ class _PointagePageState extends State<PointagePage> {
                     getRecord: getRecord,
                     teams: allTeams,
                     nonWorkingIds: nonWorkingIdsEffective,
-                    viewDate: viewDate,
+                    viewDate: logicalDay,
+                    adminOverridePersistDate: isViewingToday ? null : logicalDay,
                     presentByChef: presentByChef,
                     absentByChef: absentByChef,
                     notInVehicleByChef: notInVehicleByChef,
@@ -1284,7 +1510,8 @@ class _PointagePageState extends State<PointagePage> {
                           getRecord: getRecord,
                           teams: allTeams,
                           nonWorkingIds: nonWorkingIdsEffective,
-                          viewDate: viewDate,
+                          viewDate: logicalDay,
+                          adminOverridePersistDate: isViewingToday ? null : logicalDay,
                           presentByChef: presentByChef,
                           absentByChef: absentByChef,
                           notInVehicleByChef: notInVehicleByChef,
@@ -1294,10 +1521,65 @@ class _PointagePageState extends State<PointagePage> {
                     ],
                   );
                 }
-                // تحديث stream التأكيدات لليوم الحالي
-                _ensureConfirmationsStream(viewDate);
+                // تحديث stream التأكيدات لليوم الحالي + الأمس (للتنبيه)
+                _ensureConfirmationsStream(logicalDay);
+                if (isViewingToday) _ensureYesterdayConfirmationsStream(logicalDay);
 
-                return Row(
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── بانر تنبيه الفرق غير المؤكدة ──
+                    if (isViewingToday)
+                      StreamBuilder<List<DailyEquipeConfirmation>>(
+                        stream: _yesterdayConfirmationsStream,
+                        builder: (context, snapY) {
+                          final yesterdayConf = snapY.data ?? _yesterdayConfirmations;
+                          if (snapY.hasData) _yesterdayConfirmations = snapY.data!;
+                          final yesterday = DateTime(logicalDay.year, logicalDay.month, logicalDay.day - 1);
+                          final workTeams = allTeams.where((t) => !nonWorkingIdsEffective.contains(t.equipeId)).toList();
+                          final yesterdayConfirmedIds = yesterdayConf.map((c) => c.equipeId).toSet();
+                          final notConfirmedYesterday = workTeams.where((t) => !yesterdayConfirmedIds.contains(t.equipeId)).toList();
+                          if (notConfirmedYesterday.isEmpty) return const SizedBox.shrink();
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.red.shade300),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Pointage non confirmé pour le ${yesterday.day.toString().padLeft(2, '0')}/${yesterday.month.toString().padLeft(2, '0')}/${yesterday.year} :',
+                                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.red.shade800),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        notConfirmedYesterday.map((t) => t.equipeName).join(', '),
+                                        style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    _applyAdminViewDay(pointageProvider, yesterday);
+                                  },
+                                  child: Text('Voir', style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.w700)),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    Expanded(child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Container(
@@ -1401,19 +1683,84 @@ class _PointagePageState extends State<PointagePage> {
                                       final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
                                       final shiftLabel = t.equipeId == 'hors_equipe'
                                           ? null
-                                          : shiftsProvider.getShiftForEquipe(t.equipeId, viewDate)?.shortLabel;
+                                          : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay)?.shortLabel;
                                       final isSelected = _selectedEquipeIdAdmin == t.equipeId;
                                       final isConfirmed = confirmedIds.contains(t.equipeId);
 
                                       // حساب الحاضرين/الغائبين لهذا الفريق
                                       final teamWorkers = t.workers;
+                                      final isGroupScope = t.equipeId == 'hors_equipe' || t.equipeId.startsWith('groupe:');
                                       int presentC = 0, absentC = 0;
                                       for (final w in teamWorkers) {
                                         final rec = getRecord(w.id);
-                                        if (rec?.isFinalPresent == true) {
-                                          presentC++;
+                                        if (isGroupScope) {
+                                          final admin = rec?.adminFinalStatus;
+                                          final isPresent = admin == AttendanceStatus.present ||
+                                              admin == AttendanceStatus.training ||
+                                              admin == AttendanceStatus.leave;
+                                          if (isPresent) {
+                                            presentC++;
+                                          } else {
+                                            absentC++;
+                                          }
                                         } else {
-                                          absentC++;
+                                          if (rec?.isFinalPresent == true) {
+                                            presentC++;
+                                          } else {
+                                            absentC++;
+                                          }
+                                        }
+                                      }
+
+                                      final canConfirm = teamWorkers.every((w) {
+                                        final rec = getRecord(w.id);
+                                        if (isGroupScope) {
+                                          return rec?.adminFinalStatus == AttendanceStatus.present ||
+                                              rec?.adminFinalStatus == AttendanceStatus.absent;
+                                        }
+                                        return isWorkerReadyForAdminConfirm(rec);
+                                      });
+
+                                      // ── Vérification fenêtre de confirmation ──
+                                      // Pour les équipes normales (non-group), le bouton Confirmer n'est
+                                      // actif qu'à partir de l'ouverture de la fenêtre de départ (−30 min
+                                      // avant fin de shift). Il reste actif jusqu'à la fin du lendemain
+                                      // (grace period = 1 jour complet) pour les oublis.
+                                      bool confirmWindowOpen = true;
+                                      String? confirmWindowHint;
+                                      if (!isGroupScope && !isViewingToday == false) {
+                                        // Pour un jour passé affiché via sélecteur: toujours permis.
+                                      }
+                                      if (!isGroupScope && isViewingToday) {
+                                        final cfgEquipe = equipes.where((e) => e.id == t.equipeId).toList();
+                                        final equipe = cfgEquipe.isNotEmpty ? cfgEquipe.first : null;
+                                        final shiftForEquipe = equipe == null ? null : shiftsProvider.getShiftForEquipe(equipe.id, logicalDay);
+                                        final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
+                                        // Fenêtre: depuis (fin shift − 30 min) jusqu'à (fin du lendemain 23:59).
+                                        final graceNextDay = Duration(
+                                          hours: (23 - (cfg.endHour)) + 24,
+                                          minutes: 59 - (cfg.endMinute),
+                                        );
+                                        confirmWindowOpen = cfg.canMarkDepartureNow(
+                                          shiftWindowRef,
+                                          graceAfter: graceNextDay,
+                                        );
+                                        if (!confirmWindowOpen) {
+                                          confirmWindowHint =
+                                              'Fenêtre de confirmation : à partir de ${cfg.departureWindowFormatted(shiftWindowRef).split(' – ').first}';
+                                        }
+                                      }
+
+                                      String? lockHint;
+                                      if (!canConfirm) {
+                                        if (isGroupScope) {
+                                          lockHint = 'Veuillez sélectionner Présent/Absent pour chaque personne.';
+                                        } else {
+                                          final cfgEquipe = equipes.where((e) => e.id == t.equipeId).toList();
+                                          final equipe = cfgEquipe.isNotEmpty ? cfgEquipe.first : null;
+                                          final shiftForEquipe = equipe == null ? null : shiftsProvider.getShiftForEquipe(equipe.id, logicalDay);
+                                          final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
+                                          lockHint = cfg.departureWindowFormatted(shiftWindowRef).replaceAll(' – ', ' - ');
                                         }
                                       }
 
@@ -1477,8 +1824,8 @@ class _PointagePageState extends State<PointagePage> {
                                                 child: isConfirmed
                                                     ? OutlinedButton.icon(
                                                         onPressed: () async {
-                                                          await _confirmationRepo.unconfirmEquipe(t.equipeId, viewDate);
-                                                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, viewDate);
+                                                          await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
+                                                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
                                                         },
                                                         style: OutlinedButton.styleFrom(
                                                           foregroundColor: Colors.green.shade700,
@@ -1492,6 +1839,101 @@ class _PointagePageState extends State<PointagePage> {
                                                       )
                                                     : FilledButton.icon(
                                                         onPressed: () async {
+                                                          // Vérifier la fenêtre de confirmation avant tout.
+                                                          if (!confirmWindowOpen) {
+                                                            if (context.mounted) {
+                                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                                SnackBar(
+                                                                  content: Text(confirmWindowHint ?? 'Fenêtre de confirmation non ouverte.'),
+                                                                  backgroundColor: Colors.blue.shade700,
+                                                                  behavior: SnackBarBehavior.fixed,
+                                                                  duration: const Duration(seconds: 4),
+                                                                ),
+                                                              );
+                                                            }
+                                                            return;
+                                                          }
+                                                          if (!canConfirm) {
+                                                            if (context.mounted) {
+                                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                                SnackBar(
+                                                                  content: Text(lockHint ?? 'Verrouillé'),
+                                                                  backgroundColor: Colors.orange,
+                                                                  behavior: SnackBarBehavior.fixed,
+                                                                ),
+                                                              );
+                                                            }
+                                                            return;
+                                                          }
+                                                          if (isGroupScope) {
+                                                            final go = await showDialog<bool>(
+                                                              context: context,
+                                                              barrierDismissible: false,
+                                                              builder: (dialogCtx) => AlertDialog(
+                                                                title: const Text('Confirmer le groupe'),
+                                                                content: Column(
+                                                                  mainAxisSize: MainAxisSize.min,
+                                                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                                                  children: [
+                                                                    Text(
+                                                                      t.equipeName,
+                                                                      style: const TextStyle(fontWeight: FontWeight.w700),
+                                                                    ),
+                                                                    const SizedBox(height: 12),
+                                                                    Row(
+                                                                      children: [
+                                                                        Icon(Icons.person, size: 20, color: Colors.green.shade700),
+                                                                        const SizedBox(width: 8),
+                                                                        Expanded(
+                                                                          child: Text(
+                                                                            'Présents : $presentC',
+                                                                            style: TextStyle(
+                                                                              fontSize: 16,
+                                                                              fontWeight: FontWeight.w700,
+                                                                              color: Colors.green.shade800,
+                                                                            ),
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                    const SizedBox(height: 8),
+                                                                    Row(
+                                                                      children: [
+                                                                        Icon(Icons.person_off, size: 20, color: Colors.red.shade700),
+                                                                        const SizedBox(width: 8),
+                                                                        Expanded(
+                                                                          child: Text(
+                                                                            'Absents : $absentC',
+                                                                            style: TextStyle(
+                                                                              fontSize: 16,
+                                                                              fontWeight: FontWeight.w700,
+                                                                              color: Colors.red.shade800,
+                                                                            ),
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                    const SizedBox(height: 8),
+                                                                    Text(
+                                                                      'Total : ${teamWorkers.length} personne(s)',
+                                                                      style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                                actions: [
+                                                                  TextButton(
+                                                                    onPressed: () => Navigator.pop(dialogCtx, false),
+                                                                    child: const Text('Annuler'),
+                                                                  ),
+                                                                  FilledButton(
+                                                                    onPressed: () => Navigator.pop(dialogCtx, true),
+                                                                    child: const Text('Valider la confirmation'),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            );
+                                                            if (go != true || !context.mounted) return;
+                                                          }
                                                           final auth = context.read<AuthProvider>();
                                                           final confirmedById = auth.currentUser?.id ?? '';
 
@@ -1500,22 +1942,36 @@ class _PointagePageState extends State<PointagePage> {
                                                             final rec = getRecord(w.id);
                                                             String status;
                                                             String? absenceReason;
-                                                            if (rec == null) {
-                                                              status = 'absent';
-                                                            } else if (rec.adminFinalStatus == AttendanceStatus.training) {
-                                                              status = 'formation';
-                                                            } else if (rec.adminFinalStatus == AttendanceStatus.leave ||
-                                                                rec.status == AttendanceStatus.leave) {
-                                                              status = 'leave';
-                                                            } else if (rec.isFinalPresent ||
-                                                                rec.chefStatus == ChefPointageStatus.present ||
-                                                                rec.driverStatus == DriverPointageStatus.present ||
-                                                                rec.driverStatus == DriverPointageStatus.enVehicule ||
-                                                                rec.status == AttendanceStatus.present) {
-                                                              status = 'present';
+
+                                                            // For group scope: only use admin chosen present/absent.
+                                                            if (isGroupScope) {
+                                                              final admin = rec?.adminFinalStatus;
+                                                              if (admin == AttendanceStatus.present ||
+                                                                  admin == AttendanceStatus.training ||
+                                                                  admin == AttendanceStatus.leave) {
+                                                                status = 'present';
+                                                              } else {
+                                                                status = 'absent';
+                                                                absenceReason = rec?.absenceReason;
+                                                              }
                                                             } else {
-                                                              status = 'absent';
-                                                              absenceReason = rec.absenceReason;
+                                                              if (rec == null) {
+                                                                status = 'absent';
+                                                              } else if (rec.adminFinalStatus == AttendanceStatus.training) {
+                                                                status = 'formation';
+                                                              } else if (rec.adminFinalStatus == AttendanceStatus.leave ||
+                                                                  rec.status == AttendanceStatus.leave) {
+                                                                status = 'leave';
+                                                              } else if (rec.isFinalPresent ||
+                                                                  rec.chefStatus == ChefPointageStatus.present ||
+                                                                  rec.driverStatus == DriverPointageStatus.present ||
+                                                                  rec.driverStatus == DriverPointageStatus.enVehicule ||
+                                                                  rec.status == AttendanceStatus.present) {
+                                                                status = 'present';
+                                                              } else {
+                                                                status = 'absent';
+                                                                absenceReason = rec.absenceReason;
+                                                              }
                                                             }
                                                             return (
                                                               employeId: w.id,
@@ -1530,7 +1986,7 @@ class _PointagePageState extends State<PointagePage> {
                                                           await _snapshotRepo.saveEquipeSnapshot(
                                                             equipeId: t.equipeId,
                                                             equipeName: t.equipeName,
-                                                            date: viewDate,
+                                                            date: logicalDay,
                                                             confirmedById: confirmedById,
                                                             employees: empSnapshots,
                                                           );
@@ -1539,19 +1995,32 @@ class _PointagePageState extends State<PointagePage> {
                                                             equipeName: t.equipeName,
                                                             confirmedById: confirmedById,
                                                             confirmedByName: auth.currentUser?.nom ?? 'Admin',
-                                                            date: viewDate,
+                                                            date: logicalDay,
                                                             presentCount: presentC,
                                                             absentCount: absentC,
                                                           );
                                                         },
                                                         style: FilledButton.styleFrom(
-                                                          backgroundColor: Colors.blue.shade600,
+                                                          backgroundColor: !confirmWindowOpen
+                                                              ? Colors.grey.shade400
+                                                              : Colors.blue.shade600,
                                                           padding: const EdgeInsets.symmetric(vertical: 4),
                                                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                                           visualDensity: VisualDensity.compact,
                                                         ),
-                                                        icon: const Icon(Icons.check, size: 14),
-                                                        label: const Text('Confirmer', style: TextStyle(fontSize: 11)),
+                                                        icon: Icon(
+                                                          !confirmWindowOpen ? Icons.schedule : Icons.check,
+                                                          size: 14,
+                                                        ),
+                                                        label: Text(
+                                                          !confirmWindowOpen
+                                                              ? (confirmWindowHint ?? 'Attendre ouverture')
+                                                              : (isGroupScope || canConfirm)
+                                                                  ? 'Confirmer'
+                                                                  : 'Confirmer • ${lockHint ?? ''}',
+                                                          style: const TextStyle(fontSize: 11),
+                                                          overflow: TextOverflow.ellipsis,
+                                                        ),
                                                       ),
                                               ),
                                             ),
@@ -1577,15 +2046,18 @@ class _PointagePageState extends State<PointagePage> {
                         getRecord: getRecord,
                         teams: allTeams,
                         nonWorkingIds: nonWorkingIdsEffective,
-                        viewDate: viewDate,
+                        viewDate: logicalDay,
+                        adminOverridePersistDate: isViewingToday ? null : logicalDay,
                         presentByChef: presentByChef,
                         absentByChef: absentByChef,
                         notInVehicleByChef: notInVehicleByChef,
                         notWorkingByChef: notWorkingByChef,
                       ),
                     ),
-                  ],
-                );
+                    ],
+                  )),
+                ],
+              );
               },
             ),
           ),
@@ -1602,6 +2074,9 @@ class _PointagePageState extends State<PointagePage> {
     List<Equipe> equipes,
     List<Employe> employes,
     PointageProvider pointageProvider,
+    {String? initialScope,
+    String? initialEquipeId,
+    bool forceSingleSheet = false,}
   ) async {
     final now = DateTime.now();
     DateTime start = DateTime(now.year, now.month, 1);
@@ -1620,6 +2095,8 @@ class _PointagePageState extends State<PointagePage> {
           initialStart: start,
           initialEnd: end,
           equipeOptions: teamOptions,
+          initialScope: initialScope,
+          initialEquipeId: initialEquipeId,
         );
       },
     );
@@ -1673,6 +2150,31 @@ class _PointagePageState extends State<PointagePage> {
         ));
       }
     }
+
+    // Ajouter aussi les employés des "Groupes" (indépendants) pour permettre l'export Excel.
+    // IMPORTANT: le paramètre `teams` peut ne pas inclure les groupes selon l'appelant,
+    // donc on lit la configuration des groupes directement depuis le provider.
+    final groupesProv = context.read<GroupesProvider>();
+    final groupes = groupesProv.groupes;
+    for (final g in groupes) {
+      final groupeEquipeId = 'groupe:${g.id}';
+      final label = 'Groupe: ${g.nom} — Responsable';
+      for (final id in g.membreIds) {
+        if (!seen.add(id)) continue;
+        final empList = employes.where((e) => e.id == id).toList();
+        if (empList.isEmpty) continue;
+        final w = empList.first;
+        if (w.statut != EmployeStatut.enService) continue;
+        employees.add((
+          id: w.id,
+          cin: w.cin,
+          nom: w.nom,
+          equipeName: label,
+          equipeId: groupeEquipeId,
+          salaireNet: w.salaireBase,
+        ));
+      }
+    }
     List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> filteredEmployees = employees;
     switch (picked.scope) {
       case 'groupes':
@@ -1698,22 +2200,25 @@ class _PointagePageState extends State<PointagePage> {
     final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
     final shiftsProvider = context.read<ShiftsProvider>();
     final isRestDay = shiftsProvider.hasConfig
-        ? (DateTime date, String equipeId) =>
-            shiftsProvider.getShiftForEquipe(equipeId, date) == ShiftType.rest
+        ? (DateTime date, String equipeId) {
+            // Groupes / Hors équipe: not part of shifts rotation, never treat as "repos".
+            if (equipeId.startsWith('groupe:') || equipeId == 'hors_equipe') return false;
+            return shiftsProvider.getShiftForEquipe(equipeId, date) == ShiftType.rest;
+          }
         : null;
     // جلب overtime_assignments للنطاق الزمني
     final overtimeProvider = context.read<OvertimeProvider>();
     final overtimeAssignments = await overtimeProvider.getForDateRange(start, end);
 
-    // ── المسار الأساسي: snapshots المؤكدة ──────────────────────────────────
-    // نحاول أولاً جلب snapshots المخزنة (أكثر دقة وموثوقية من إعادة جلب السجلات).
+    // ── المسار الأساسي: snapshots المؤكدة فقط ───────────────────────────
+    // Excel يُبنى حصرياً من البيانات المؤكدة (snapshots).
+    // إذا لم تكن جميع أيام النطاق مؤكدة للفرق المعنية، يُحذَّر المستخدم ويمكنه إلغاء التصدير.
     final snapshots = await _snapshotRepo.getSnapshotsForRange(start, end);
 
-    // نحسب عدد الأيام في النطاق وعدد التأكيدات لكل موظف
     final totalRangeDays = end.difference(start).inDays + 1;
     final filteredEmpIds = filteredEmployees.map((e) => e.id).toSet();
 
-    // عدد الأيام التي لها snapshots لكل موظف ضمن الفلتر
+    // أيام مؤكدة لكل موظف
     final snapshotDaysByEmp = <String, Set<String>>{};
     for (final s in snapshots) {
       if (!filteredEmpIds.contains(s.employeId)) continue;
@@ -1721,78 +2226,98 @@ class _PointagePageState extends State<PointagePage> {
       snapshotDaysByEmp.putIfAbsent(s.employeId, () => <String>{}).add(dk);
     }
 
-    // إذا كانت كل الأيام مؤكدة لأغلب الموظفين (≥80% من الموظفين لهم snapshots لكل الأيام)
-    // نستخدم مسار snapshots مباشرةً، وإلا نستخدم المسار القديم (جلب records)
-    final fullyConfirmedCount = filteredEmployees
-        .where((e) => (snapshotDaysByEmp[e.id]?.length ?? 0) >= totalRangeDays)
-        .length;
-    final useSnapshotPath = snapshots.isNotEmpty &&
-        (filteredEmployees.isEmpty ||
-            fullyConfirmedCount >= (filteredEmployees.length * 0.8).ceil());
-
-    List<PointageExportRow> rows;
-
-    if (useSnapshotPath) {
-      // ── مسار snapshots (دقيق وسريع) ──────────────────────────────────
-      rows = PointageExportService.computeExcelRowsFromSnapshots(
-        startDate: start,
-        endDate: end,
-        employees: filteredEmployees,
-        snapshots: snapshots.where((s) => filteredEmpIds.contains(s.employeId)).toList(),
-        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-        isRestDay: isRestDay,
-        overtimeAssignments: overtimeAssignments,
-      );
-    } else {
-      // ── مسار records (fallback للأيام غير المؤكدة) ──────────────────
-      final records = await pointageProvider.getPointageInDateRange(
-        start,
-        end,
-        knownEmployeIds: filteredEmpIds,
-      );
-
+    // حساب عدد الأيام غير المؤكدة
+    final unconfirmedDaysSet = <String>{};
+    for (var i = 0; i < totalRangeDays; i++) {
+      final d = start.add(Duration(days: i));
+      final dk = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      // يوم غير مؤكد إذا لم يكن لدى أي موظف snapshot له
+      final hasAnySnapshot = snapshots.any((s) {
+        final sdk = '${s.date.year}-${s.date.month.toString().padLeft(2, '0')}-${s.date.day.toString().padLeft(2, '0')}';
+        return sdk == dk && filteredEmpIds.contains(s.employeId);
+      });
+      // يوم اليوم يُعذر (قد لا يكون التأكيد تم بعد)
       final today = DateTime.now();
-      final todayDay = DateTime(today.year, today.month, today.day);
-      final startDay = DateTime(start.year, start.month, start.day);
-      final endDay = DateTime(end.year, end.month, end.day);
-      final isTodayOnly = startDay == todayDay && endDay == todayDay;
-      final unconfirmedCount = isTodayOnly
-          ? _countUnconfirmedPresenceInRange(
-              start: start,
-              end: end,
-              records: records,
-              employeeIds: filteredEmpIds,
-            )
-          : 0;
-      var requireConfirmedEntryExit = false;
-      if (isTodayOnly && unconfirmedCount > 0) {
-        final decision = await _showAdminExcelValidationDialog(context, unconfirmedCount: unconfirmedCount);
-        if (decision == null || !mounted) return;
-        if (!decision) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Export annulé: veuillez confirmer entrées/sorties avant génération Excel.'),
-              behavior: SnackBarBehavior.fixed,
-            ),
-          );
-          return;
-        }
-        requireConfirmedEntryExit = decision;
-      }
-
-      rows = PointageExportService.computeExcelRows(
-        startDate: start,
-        endDate: end,
-        employees: filteredEmployees,
-        records: records,
-        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-        isRestDay: isRestDay,
-        requireConfirmedEntryExit: isTodayOnly && requireConfirmedEntryExit,
-        overtimeAssignments: overtimeAssignments,
-      );
+      final isToday = d.year == today.year && d.month == today.month && d.day == today.day;
+      if (!hasAnySnapshot && !isToday) unconfirmedDaysSet.add(dk);
     }
 
-    // للمتغيرات المستخدمة لاحقاً في logExport
+    if (unconfirmedDaysSet.isNotEmpty && mounted) {
+      // تحويل أيام غير مؤكدة إلى قائمة مقروءة
+      final unconfirmedList = unconfirmedDaysSet.toList()..sort();
+      final sample = unconfirmedList.take(5).map((dk) {
+        final p = dk.split('-');
+        return '${p[2]}/${p[1]}/${p[0]}';
+      }).join(', ');
+      final extra = unconfirmedList.length > 5 ? ' …+${unconfirmedList.length - 5} autre(s)' : '';
+
+      final proceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 22),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('Pointage non confirmé')),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${unconfirmedDaysSet.length} jour(s) dans la période sélectionnée n\'ont pas été confirmés par l\'administrateur :',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Text(
+                  '$sample$extra',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.orange.shade900, fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Les jours non confirmés ne seront PAS inclus dans l\'Excel.\nVoulez-vous exporter uniquement les jours confirmés ?',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.file_download, size: 16),
+              label: const Text('Exporter confirmés seulement'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
+
+    // دائماً نستخدم مسار snapshots — يضمن أن Excel يعكس فقط البيانات المؤكدة
+    List<PointageExportRow> rows;
+    rows = PointageExportService.computeExcelRowsFromSnapshots(
+      startDate: start,
+      endDate: end,
+      employees: filteredEmployees,
+      snapshots: snapshots.where((s) => filteredEmpIds.contains(s.employeId)).toList(),
+      reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+      isRestDay: isRestDay,
+      overtimeAssignments: overtimeAssignments,
+    );
+
     final exportNow = DateTime.now();
     final exportTodayDay = DateTime(exportNow.year, exportNow.month, exportNow.day);
     final exportStartDay = DateTime(start.year, start.month, start.day);
@@ -1803,10 +2328,13 @@ class _PointagePageState extends State<PointagePage> {
       endDate: end,
       rows: rows,
       reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+      singleSheet: forceSingleSheet,
+      singleSheetName: 'Société',
+      includeEquipeColumnInSingleSheet: true,
     );
     final auth = context.read<AuthProvider>();
-    // يُعتبر التصدير "مُتحقَّقاً" إما عبر مسار snapshots أو إذا كان اليوم الحالي فقط
-    final validatedExport = useSnapshotPath || isTodayOnlyForLog;
+    // التصدير دائماً مبني على snapshots مؤكدة
+    final validatedExport = snapshots.isNotEmpty || isTodayOnlyForLog;
     await _excelValidationRepo.logExport(
       createdById: auth.currentUser?.id ?? '',
       createdByName: auth.currentUser?.nom ?? '',
@@ -1980,11 +2508,11 @@ class _PointagePageState extends State<PointagePage> {
                       }),
                     ),
                     const SizedBox(height: 10),
-                    const Text('2) Employé', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const Text('2) Collaborateur', style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<Employe>(
                       value: employee,
-                      decoration: const InputDecoration(labelText: 'Employé', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Collaborateur', border: OutlineInputBorder()),
                       items: members.map((e) => DropdownMenuItem(value: e, child: Text(e.nom))).toList(),
                       onChanged: (v) => setD(() => employee = v),
                     ),
@@ -2150,7 +2678,8 @@ class _PointagePageState extends State<PointagePage> {
     PointageProvider pointageProvider,
     PointageRecord? Function(String) getRecord, {
     required List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> allTeams,
-    required DateTime viewDate,
+    /// `null` = journée courante (flux today) ; sinon enregistrement sur ce jour-là.
+    required DateTime? adminOverridePersistDate,
   }) {
     if (team == null) {
       return Center(child: Text(tr(context, 'select_chef'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
@@ -2188,6 +2717,7 @@ class _PointagePageState extends State<PointagePage> {
             final isPresent = record?.isFinalPresent ?? false;
             final isAlreadyFormation = record?.adminFinalStatus == AttendanceStatus.training;
             final isOnLeave = record?.adminFinalStatus == AttendanceStatus.leave;
+            final isGroupScope = team.equipeId == 'hors_equipe' || team.equipeId.startsWith('groupe:');
             final trainingStartAt = record?.trainingStartAt;
             final trainingEndAt = record?.trainingEndAt;
             final formationRangeLabel = (trainingStartAt != null && trainingEndAt != null)
@@ -2217,17 +2747,19 @@ class _PointagePageState extends State<PointagePage> {
                                 spacing: 6,
                                 runSpacing: 4,
                                 children: [
-                                  _DriverChefBadge(
-                                    label: 'T',
-                                    value: record?.driverStatus,
-                                    isDriver: true,
-                                  ),
-                                  _DriverChefBadge(
-                                    label: 'C',
-                                    value: record?.chefStatus,
-                                    isDriver: false,
-                                  ),
-                                  _ReconciledChip(status: reconciled),
+                                  if (!isGroupScope) ...[
+                                    _DriverChefBadge(
+                                      label: 'T',
+                                      value: record?.driverStatus,
+                                      isDriver: true,
+                                    ),
+                                    _DriverChefBadge(
+                                      label: 'C',
+                                      value: record?.chefStatus,
+                                      isDriver: false,
+                                    ),
+                                    _ReconciledChip(status: reconciled),
+                                  ],
                                 ],
                               ),
                             ],
@@ -2256,7 +2788,7 @@ class _PointagePageState extends State<PointagePage> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                            if (isAlreadyFormation && formationRangeLabel != null) ...[
+                            if (!isGroupScope && isAlreadyFormation && formationRangeLabel != null) ...[
                               const SizedBox(height: 2),
                               Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2281,7 +2813,7 @@ class _PointagePageState extends State<PointagePage> {
                                 ],
                               ),
                             ],
-                            if (isOnLeave) ...[
+                            if (!isGroupScope && isOnLeave) ...[
                               const SizedBox(height: 2),
                               Text(
                                 'Congé approuvé',
@@ -2297,7 +2829,7 @@ class _PointagePageState extends State<PointagePage> {
                       ],
                     ),
                     SizedBox(height: mobile ? 8 : 6),
-                    if (!isAlreadyFormation && !isOnLeave)
+                    if (isGroupScope || (!isAlreadyFormation && !isOnLeave))
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
@@ -2315,7 +2847,7 @@ class _PointagePageState extends State<PointagePage> {
                                     equipeName: team.equipeName,
                                     chefName: team.chefName,
                                     status: AttendanceStatus.present,
-                                    viewDate: _reportViewDate,
+                                    viewDate: adminOverridePersistDate,
                                   );
                                 }
                               },
@@ -2343,7 +2875,7 @@ class _PointagePageState extends State<PointagePage> {
                                     chefName: team.chefName,
                                     status: AttendanceStatus.absent,
                                     absenceReason: reasonId,
-                                    viewDate: _reportViewDate,
+                                    viewDate: adminOverridePersistDate,
                                   );
                                 }
                                 if (mounted) setState(() {});
@@ -2358,7 +2890,7 @@ class _PointagePageState extends State<PointagePage> {
                           ],
                         ),
                       ),
-                    if (isAlreadyFormation || isOnLeave)
+                    if (!isGroupScope && (isAlreadyFormation || isOnLeave))
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Padding(
@@ -2677,6 +3209,7 @@ class _PointagePageState extends State<PointagePage> {
     required Map<String, List<Employe>> absentByChef,
     required Map<String, List<Employe>> notInVehicleByChef,
     required Map<String, List<Employe>> notWorkingByChef,
+    required DateTime? adminOverridePersistDate,
   }) {
     switch (_adminContentView) {
       case _AdminPointageView.workers:
@@ -2688,7 +3221,7 @@ class _PointagePageState extends State<PointagePage> {
           pointageProvider,
           getRecord,
           allTeams: teams,
-          viewDate: viewDate,
+          adminOverridePersistDate: adminOverridePersistDate,
         );
       case _AdminPointageView.report:
         return Column(
@@ -2809,7 +3342,6 @@ class _PointagePageState extends State<PointagePage> {
                 ? configs.map((c) {
                     return ListTile(
                       title: Text(c.label),
-                      subtitle: Text(c.deductFromSalary ? 'Déduit du salaire' : 'Non déduit'),
                       onTap: () => Navigator.pop(ctx, c.id),
                     );
                   }).toList()
@@ -2864,7 +3396,17 @@ class _PointagePageState extends State<PointagePage> {
       ..sort((a, b) => a.nom.compareTo(b.nom));
     workers.sort((a, b) => a.nom.compareTo(b.nom));
     // Afficher tous les travailleurs ; ceux en formation/congé sont en badge sans choix présent/absent
-    final workersDisplay = workers;
+    final workersDisplay = workers.where((w) => !_isProtectedHigherPoste(w.poste)).toList();
+    Employe? chefPosteFromLink;
+    final chefEmpId = auth.currentUser?.chefEmployeId;
+    if (chefEmpId != null && chefEmpId.isNotEmpty) {
+      final hit = employes.where((e) => e.id == chefEmpId).toList();
+      if (hit.isNotEmpty) chefPosteFromLink = hit.first;
+    }
+    final bypassPointageHours = pointageProvider.ignoreTimeWindowsForTest ||
+        auth.canBypassPointageTimeWindows(linkedChefPoste: chefPosteFromLink?.poste);
+    final chefReportLockedForAll = workersDisplay.isNotEmpty &&
+        workersDisplay.every((w) => pointageProvider.isChefLockedForEmployee(w.id));
     final overtimeWorkers = workersDisplay.where((w) => overtimeWorkerIds.contains(w.id)).toList();
     final regularWorkers = workersDisplay.where((w) => !overtimeWorkerIds.contains(w.id)).toList();
     final workersInTraining = workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
@@ -2910,66 +3452,164 @@ class _PointagePageState extends State<PointagePage> {
       final today = DateTime.now();
       final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
       final pointageConfig = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, today, shiftForEquipe);
-      try {
-        // Ensure all workers have a locked-in status before locking the report.
-        // Unmarked workers are treated as absent.
-        // Skip workers on approved leave or in training (already handled by admin).
-        // For overtime workers, check overtimeChefStatus; for regular workers, check chefStatus.
-        for (final w in workersDisplay) {
-          final isOvertimeWorker = overtimeWorkerIds.contains(w.id);
-          final r = pointageProvider.getRecordForEmployee(w.id);
-          // Skip leave/training — their status is set by admin, not chef
-          if (r?.adminFinalStatus == AttendanceStatus.leave ||
-              r?.adminFinalStatus == AttendanceStatus.training) continue;
-          final isUnmarked = isOvertimeWorker
-              ? (r?.overtimeChefStatus ?? ChefPointageStatus.unset) == ChefPointageStatus.unset
-              : (r == null || r.chefStatus == ChefPointageStatus.unset);
-          if (isUnmarked) {
-            if (isOvertimeWorker && r != null) {
-              await pointageProvider.markOvertimeChefAttendance(
-                record: r,
-                overtimeChefStatus: ChefPointageStatus.absent,
-                chefId: auth.currentUser?.id,
-                configOverride: pointageConfig,
-              );
-            } else {
-              await pointageProvider.markChefAttendance(
-                employeId: w.id,
-                employeNom: w.nom,
-                employeCin: w.cin,
-                equipeId: equipeId,
-                equipeName: equipeName,
-                chefName: auth.currentUser?.nom ?? '',
-                chefStatus: ChefPointageStatus.absent,
-                chefId: auth.currentUser?.id,
-                absenceReason: null,
-                configOverride: pointageConfig,
-              );
-            }
-          }
-        }
-        final ok = await pointageProvider.submitChefReport(equipeId, configOverride: pointageConfig);
-        if (!ok && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.fixed,
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.send_rounded, color: Colors.blue.shade700, size: 22),
+              const SizedBox(width: 10),
+              Expanded(child: Text(tr(ctx, 'pointage_confirm_send_title'))),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                equipeName.isNotEmpty ? equipeName : tr(ctx, 'pointage_confirm_send_message'),
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.green.shade600, size: 28),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$presentCount',
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.green.shade700),
+                          ),
+                          Text('Présents', style: TextStyle(fontSize: 12, color: Colors.green.shade700)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(Icons.cancel, color: Colors.red.shade600, size: 28),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$absentCount',
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.red.shade700),
+                          ),
+                          Text('Absents', style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade100),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        tr(ctx, 'pointage_confirm_send_message'),
+                        style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
             ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.send_rounded, size: 16),
+              label: Text(tr(ctx, 'report_send')),
+            ),
+          ],
+        ),
+      );
+      if (!context.mounted || confirmed != true) return;
+
+      final lockIds = workersDisplay.map((w) => w.id).toSet();
+      pointageProvider.applyOptimisticChefReportLock(lockIds);
+      if (!context.mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(trOf(context, 'pointage_report_locked_pending_sync')),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.fixed,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+
+      unawaited(() async {
+        try {
+          await pointageProvider.batchMarkUnmarkedAbsentBeforeChefSubmit(
+            workersDisplay: workersDisplay,
+            overtimeWorkerIds: overtimeWorkerIds,
+            equipeId: equipeId,
+            equipeName: equipeName,
+            chefName: auth.currentUser?.nom ?? '',
+            chefId: auth.currentUser?.id,
+            configOverride: pointageConfig,
+            bypassTimeWindows: bypassPointageHours,
           );
-          return;
-        }
-        await pointageProvider.submitDailyReport(
-          equipeId: equipeId,
-          equipeName: equipeName,
-          chefId: auth.currentUser?.id ?? '',
-          chefName: auth.currentUser?.nom ?? '',
-          totalEmployees: workersDisplay.length,
-          presentCount: presentCount,
-          absentCount: absentCount,
-          notInVehicleCount: 0,
-        );
-        if (context.mounted) {
+          final ok = await pointageProvider.submitChefReport(
+            equipeId,
+            configOverride: pointageConfig,
+            bypassTimeWindows: bypassPointageHours,
+          );
+          if (!context.mounted) return;
+          if (!ok) {
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+                backgroundColor: Colors.orange,
+                behavior: SnackBarBehavior.fixed,
+              ),
+            );
+            return;
+          }
+          await pointageProvider.submitDailyReport(
+            equipeId: equipeId,
+            equipeName: equipeName,
+            chefId: auth.currentUser?.id ?? '',
+            chefName: auth.currentUser?.nom ?? '',
+            totalEmployees: workersDisplay.length,
+            presentCount: presentCount,
+            absentCount: absentCount,
+            notInVehicleCount: 0,
+          );
+          if (!context.mounted) return;
           final sortieOk = workersDisplay.where((w) {
             final r = pointageProvider.getRecordForEmployee(w.id);
             return (r?.isFinalPresent ?? false) && r?.departureStatus == DepartureStatus.finished;
@@ -2978,17 +3618,16 @@ class _PointagePageState extends State<PointagePage> {
             final r = pointageProvider.getRecordForEmployee(w.id);
             return (r?.isFinalPresent ?? false) && r?.departureStatus != DepartureStatus.finished;
           }).length;
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(
               content: Text('$reportSentMsgChef — Sortie OK: $sortieOk | Non confirmée: $sortieNotConfirmed'),
               backgroundColor: Colors.green,
               behavior: SnackBarBehavior.fixed,
             ),
           );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+        } catch (e) {
+          if (!context.mounted) return;
+          messenger.showSnackBar(
             SnackBar(
               content: Text('Erreur: ${e.toString()}'),
               backgroundColor: Colors.red,
@@ -2996,17 +3635,17 @@ class _PointagePageState extends State<PointagePage> {
             ),
           );
         }
-      }
+      }());
     }
 
     final padding = pagePadding(context);
     final today = DateTime(now.year, now.month, now.day);
     final shiftForChef = chefEquipe != null ? shiftsProvider.getShiftForEquipe(chefEquipe.id, today) : null;
     final config = getConfigForEquipeAndDate(chefEquipe, today, shiftForChef);
-    final hoursStatus = getPointageHoursStatus(now, config);
-    final ignoreTime = pointageProvider.ignoreTimeWindowsForTest;
-    final isWithinArrival = ignoreTime || config.canMarkArrivalNow(now);
-    final isWithinDeparture = ignoreTime || config.canMarkDepartureNow(now);
+    final hoursStatus =
+        bypassPointageHours ? PointageHoursStatus.open : getPointageHoursStatus(now, config);
+    final isWithinArrival = bypassPointageHours || config.canMarkArrivalNow(now);
+    final isWithinDeparture = bypassPointageHours || config.canMarkDepartureNow(now);
     final mobile = isMobile(context);
 
     final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
@@ -3115,152 +3754,182 @@ class _PointagePageState extends State<PointagePage> {
           );
       final canMarkArrival = !locked && isWithinArrival;
       final canMarkDeparture = isWithinDeparture;
-      AttendanceState getOvertimeState(String id) {
-        final r = pointageProvider.getRecordForEmployee(id);
-        final s = r?.overtimeChefStatus ?? ChefPointageStatus.unset;
-        if (s == ChefPointageStatus.present) return AttendanceState.present;
-        if (s == ChefPointageStatus.absent) return AttendanceState.absent;
-        return AttendanceState.unmarked;
-      }
+      final chefChips = _wrapIfDisabled(
+        disabled: !canMarkArrival,
+        child: ChefStatusChips(
+          current: getState(e.id),
+          onSelect: canMarkArrival ? (s) async {
+            String? absenceReason;
+            if (s == AttendanceState.absent) {
+              final reasonId = await _showAbsenceReasonDialog(context);
+              if (reasonId == null || !context.mounted) return;
+              absenceReason = reasonId;
+            }
+            bool ok;
+            if (isOvertimeWorker && record != null) {
+              ok = await pointageProvider.markOvertimeChefAttendance(
+                record: record,
+                overtimeChefStatus: _stateToChefStatus(s),
+                chefId: auth.currentUser?.id,
+                configOverride: config,
+                bypassTimeWindows: bypassPointageHours,
+              );
+            } else {
+              ok = await pointageProvider.markChefAttendance(
+                employeId: e.id,
+                employeNom: e.nom,
+                employeCin: e.cin,
+                equipeId: auth.equipeId ?? '',
+                equipeName: equipeName,
+                chefName: auth.currentUser?.nom ?? '',
+                chefStatus: _stateToChefStatus(s),
+                chefId: auth.currentUser?.id,
+                absenceReason: absenceReason,
+                configOverride: config,
+                bypassTimeWindows: bypassPointageHours,
+              );
+            }
+            if (!ok && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+              );
+            }
+          } : (_) {},
+          presentLabel: tr(context, 'present'),
+          absentLabel: tr(context, 'absent'),
+        ),
+      );
+      final departureChips = canMarkDeparture && getState(e.id) == AttendanceState.present
+          ? _DepartureChips(
+              record: recordOrPlaceholder,
+              config: config,
+              onStillWorking: (int? workedMinutesBeforeStop, String? incompleteShiftReason) async {
+                final ok = await pointageProvider.setDepartureStatus(
+                  record: recordOrPlaceholder,
+                  status: DepartureStatus.stillWorking,
+                  workedMinutesBeforeStop: workedMinutesBeforeStop,
+                  incompleteShiftReason: incompleteShiftReason,
+                  configOverride: config,
+                  bypassTimeWindows: bypassPointageHours,
+                );
+                if (!ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                  );
+                }
+              },
+              onFinished: (int? overtimeMinutes) async {
+                final ok = await pointageProvider.setDepartureStatus(
+                  record: recordOrPlaceholder,
+                  status: DepartureStatus.finished,
+                  overtimeMinutes: overtimeMinutes,
+                  configOverride: config,
+                  bypassTimeWindows: bypassPointageHours,
+                );
+                if (!ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                  );
+                }
+              },
+              stillLabel: 'N\'a pas terminé',
+              finishedLabel: tr(context, 'departure_finished'),
+              overtimeLabel: tr(context, 'overtime_minutes'),
+              overtimeHint: tr(context, 'overtime_minutes_hint'),
+              finishWithoutOvertimeDialog: true,
+            )
+          : null;
+
+      final nameBlock = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
+          if (isOvertimeWorker)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.purple.shade50,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  tr(context, 'overtime_extra_shift'),
+                  style: TextStyle(fontSize: mobile ? 11 : 10, color: Colors.purple.shade700),
+                ),
+              ),
+            ),
+          if (recordOrPlaceholder.departureStatus != DepartureStatus.unset && recordOrPlaceholder.overtimeMinutes != null && recordOrPlaceholder.overtimeMinutes! > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '${tr(context, 'pointage_analysis_overtime_h')}: ${(recordOrPlaceholder.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+            ),
+        ],
+      );
+
       return Card(
         margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: mobile ? 14 : 12, vertical: mobile ? 14 : 10),
-          child: Row(
-            children: [
-              SmartAvatar(
-                imageUrl: e.photoUrl,
-                fallbackText: e.nom,
-                radius: mobile ? 22 : 18,
-              ),
-              SizedBox(width: mobile ? 14 : 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(e.nom, style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 15 : null)),
-                    if (isOvertimeWorker)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 3),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.purple.shade50,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            tr(context, 'overtime_extra_shift'),
-                            style: TextStyle(fontSize: mobile ? 11 : 10, color: Colors.purple.shade700),
-                          ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SmartAvatar(
+                          imageUrl: e.photoUrl,
+                          fallbackText: e.nom,
+                          radius: mobile ? 22 : 18,
                         ),
-                      ),
-                    if (recordOrPlaceholder.departureStatus != DepartureStatus.unset && recordOrPlaceholder.overtimeMinutes != null && recordOrPlaceholder.overtimeMinutes! > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(recordOrPlaceholder.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
-                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                        ),
-                      ),
+                        SizedBox(width: mobile ? 14 : 12),
+                        Expanded(child: nameBlock),
+                        if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        chefChips,
+                        if (departureChips != null) departureChips,
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    SmartAvatar(
+                      imageUrl: e.photoUrl,
+                      fallbackText: e.nom,
+                      radius: mobile ? 22 : 18,
+                    ),
+                    SizedBox(width: mobile ? 14 : 12),
+                    Expanded(child: nameBlock),
+                    if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
+                    const SizedBox(width: 8),
+                    chefChips,
+                    if (departureChips != null) departureChips,
                   ],
                 ),
-              ),
-              if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
-              const SizedBox(width: 8),
-              _wrapIfDisabled(
-                disabled: !canMarkArrival,
-                child: ChefStatusChips(
-                  current: getState(e.id),
-                  onSelect: canMarkArrival ? (s) async {
-                    String? absenceReason;
-                    if (s == AttendanceState.absent) {
-                      final reasonId = await _showAbsenceReasonDialog(context);
-                      if (reasonId == null || !context.mounted) return;
-                      absenceReason = reasonId;
-                    }
-                    bool ok;
-                    if (isOvertimeWorker && record != null) {
-                      // Overtime workers: mark using overtimeChefStatus, not the original chefStatus.
-                      ok = await pointageProvider.markOvertimeChefAttendance(
-                        record: record,
-                        overtimeChefStatus: _stateToChefStatus(s),
-                        chefId: auth.currentUser?.id,
-                        configOverride: config,
-                      );
-                    } else {
-                      ok = await pointageProvider.markChefAttendance(
-                        employeId: e.id,
-                        employeNom: e.nom,
-                        employeCin: e.cin,
-                        equipeId: auth.equipeId ?? '',
-                        equipeName: equipeName,
-                        chefName: auth.currentUser?.nom ?? '',
-                        chefStatus: _stateToChefStatus(s),
-                        chefId: auth.currentUser?.id,
-                        absenceReason: absenceReason,
-                        configOverride: config,
-                      );
-                    }
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                      );
-                    }
-                  } : (_) {},
-                  presentLabel: tr(context, 'present'),
-                  absentLabel: tr(context, 'absent'),
-                ),
-              ),
-              if (canMarkDeparture)
-                _DepartureChips(
-                  record: recordOrPlaceholder,
-                  config: config,
-                  onStillWorking: (int? workedMinutesBeforeStop, String? incompleteShiftReason) async {
-                    final ok = await pointageProvider.setDepartureStatus(
-                      record: recordOrPlaceholder,
-                      status: DepartureStatus.stillWorking,
-                      workedMinutesBeforeStop: workedMinutesBeforeStop,
-                      incompleteShiftReason: incompleteShiftReason,
-                      configOverride: config,
-                    );
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                      );
-                    }
-                  },
-                  onFinished: (int? overtimeMinutes) async {
-                    final ok = await pointageProvider.setDepartureStatus(
-                      record: recordOrPlaceholder,
-                      status: DepartureStatus.finished,
-                      overtimeMinutes: overtimeMinutes,
-                      configOverride: config,
-                    );
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                      );
-                    }
-                  },
-                  stillLabel: 'N\'a pas terminé',
-                  finishedLabel: tr(context, 'departure_finished'),
-                  overtimeLabel: tr(context, 'overtime_minutes'),
-                  overtimeHint: tr(context, 'overtime_minutes_hint'),
-                  finishWithoutOvertimeDialog: true,
-                ),
-            ],
-          ),
         ),
       );
     }
 
     if (mobile && workersDisplay.isNotEmpty) {
-      return Padding(
-        padding: EdgeInsets.all(padding),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      return SingleChildScrollView(
+        child: Padding(
+          padding: EdgeInsets.all(padding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Row(
               children: [
                 Icon(Icons.access_time, color: Colors.grey[700], size: 26),
@@ -3280,51 +3949,9 @@ class _PointagePageState extends State<PointagePage> {
             ),
             const SizedBox(height: 10),
             _PointageHoursBanner(context: context, status: hoursStatus, config: config),
-            if (auth.equipeId != null && auth.equipeId!.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Material(
-                color: Colors.orange.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    children: [
-                      Icon(Icons.work_off, size: 20, color: Colors.orange[800]),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          tr(context, 'pointage_team_not_working'),
-                          style: TextStyle(fontSize: 13, color: Colors.orange[900]),
-                        ),
-                      ),
-                      Switch(
-                        value: pointageProvider.isEquipeNonWorking(auth.equipeId!),
-                        onChanged: (value) async {
-                          await pointageProvider.setEquipeNonWorkingForDate(DateTime.now(), auth.equipeId!, value);
-                          if (context.mounted) setState(() {});
-                        },
-                        activeColor: Colors.orange,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            if (chefEquipe != null) ...[
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: () => _ChefPointageHoursDialog.show(context, chefEquipe),
-                icon: const Icon(Icons.schedule, size: 18),
-                label: Text(tr(context, 'pointage_chef_hours_btn')),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  alignment: Alignment.centerLeft,
-                ),
-              ),
-            ],
             const SizedBox(height: 14),
             Text(
-              '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
+              '${tr(context, 'workers_of')} ${auth.currentUser?.nom ?? ''}',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             if (workersInTraining.isNotEmpty) ...[
@@ -3404,6 +4031,7 @@ class _PointagePageState extends State<PointagePage> {
                             overtimeChefStatus: ChefPointageStatus.present,
                             chefId: auth.currentUser?.id,
                             configOverride: cfg,
+                            bypassTimeWindows: bypassPointageHours,
                           );
                         } else {
                           await pointageProvider.markChefAttendance(
@@ -3417,6 +4045,7 @@ class _PointagePageState extends State<PointagePage> {
                             chefId: auth.currentUser?.id,
                             absenceReason: null,
                             configOverride: cfg,
+                            bypassTimeWindows: bypassPointageHours,
                           );
                         }
                       }
@@ -3457,6 +4086,7 @@ class _PointagePageState extends State<PointagePage> {
                           status: DepartureStatus.finished,
                           overtimeMinutes: 0,
                           configOverride: cfg,
+                          bypassTimeWindows: bypassPointageHours,
                         );
                       }
                       if (context.mounted) {
@@ -3474,30 +4104,30 @@ class _PointagePageState extends State<PointagePage> {
               ],
             ),
             const SizedBox(height: 10),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 8),
-                children: [
-                  ...regularWorkers.map((e) => buildWorkerCard(e)),
-                  if (overtimeWorkers.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.purple.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.purple.shade100),
-                      ),
-                      child: Text(
-                        'Personnes Heures Sup. (section séparée)',
-                        style: TextStyle(color: Colors.purple.shade800, fontWeight: FontWeight.w700),
-                      ),
+            ListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 8),
+              children: [
+                ...regularWorkers.map((e) => buildWorkerCard(e)),
+                if (overtimeWorkers.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.purple.shade100),
                     ),
-                    const SizedBox(height: 6),
-                    ...overtimeWorkers.map((e) => buildWorkerCard(e)),
-                  ],
+                    child: Text(
+                      'Personnes Heures Sup. (section séparée)',
+                      style: TextStyle(color: Colors.purple.shade800, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ...overtimeWorkers.map((e) => buildWorkerCard(e)),
                 ],
-              ),
+              ],
             ),
             SizedBox(height: 12),
             OutlinedButton.icon(
@@ -3547,15 +4177,18 @@ class _PointagePageState extends State<PointagePage> {
             SizedBox(
               height: 48,
               width: double.infinity,
-              child: PrimaryButton(
-                label: tr(context, 'send_report_btn'),
-                onTap: isWithinDeparture ? sendReport : null,
-              ),
+              child: chefReportLockedForAll
+                  ? _ReportSentBanner(presentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length, absentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length)
+                  : PrimaryButton(
+                      label: tr(context, 'send_report_btn'),
+                      onTap: sendReport,
+                    ),
             ),
             const SizedBox(height: 16),
           ],
         ),
-      );
+      ),
+    );
     }
 
     return SingleChildScrollView(
@@ -3580,76 +4213,9 @@ class _PointagePageState extends State<PointagePage> {
           ),
           const SizedBox(height: 12),
           _PointageHoursBanner(context: context, status: hoursStatus, config: config),
-          const SizedBox(height: 10),
-          Material(
-            color: Colors.blueGrey.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(10),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(Icons.science_outlined, size: 20, color: Colors.blueGrey[700]),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Test créneaux (± 8h)',
-                      style: TextStyle(fontSize: 13, color: Colors.blueGrey[800]),
-                    ),
-                  ),
-                  Switch(
-                    value: pointageProvider.ignoreTimeWindowsForTest,
-                    onChanged: (v) => pointageProvider.setIgnoreTimeWindowsForTest(v),
-                    activeColor: Colors.blueGrey,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (auth.equipeId != null && auth.equipeId!.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Material(
-              color: Colors.orange.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.work_off, size: 20, color: Colors.orange[800]),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        tr(context, 'pointage_team_not_working'),
-                        style: TextStyle(fontSize: 13, color: Colors.orange[900]),
-                      ),
-                    ),
-                    Switch(
-                      value: pointageProvider.isEquipeNonWorking(auth.equipeId!),
-                      onChanged: (value) async {
-                        await pointageProvider.setEquipeNonWorkingForDate(DateTime.now(), auth.equipeId!, value);
-                        if (context.mounted) setState(() {});
-                      },
-                      activeColor: Colors.orange,
-                    ),
-                  ],
-                ),
-                ),
-              ),
-            ],
-          if (chefEquipe != null) ...[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => _ChefPointageHoursDialog.show(context, chefEquipe),
-              icon: const Icon(Icons.schedule, size: 18),
-              label: Text(tr(context, 'pointage_chef_hours_btn')),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                alignment: Alignment.centerLeft,
-              ),
-            ),
-          ],
           const SizedBox(height: 20),
           Text(
-            '${tr(context, 'workers_of')} $equipeNameForTitle (${auth.currentUser?.nom ?? ''})',
+            '${tr(context, 'workers_of')} ${auth.currentUser?.nom ?? ''}',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           if (workersInTraining.isNotEmpty) ...[
@@ -3774,10 +4340,12 @@ class _PointagePageState extends State<PointagePage> {
           SizedBox(
             height: mobile ? 48 : 52,
             width: double.infinity,
-            child: PrimaryButton(
-              label: tr(context, 'send_report_btn'),
-              onTap: isWithinDeparture ? sendReport : null,
-            ),
+            child: chefReportLockedForAll
+                ? _ReportSentBanner(presentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length, absentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length)
+                : PrimaryButton(
+                    label: tr(context, 'send_report_btn'),
+                    onTap: sendReport,
+                  ),
           ),
           SizedBox(height: mobile ? 16 : 24),
         ],
@@ -3788,6 +4356,55 @@ class _PointagePageState extends State<PointagePage> {
   static Widget _wrapIfDisabled({required bool disabled, required Widget child}) {
     if (!disabled) return child;
     return Opacity(opacity: 0.6, child: IgnorePointer(child: child));
+  }
+}
+
+/// Bannière affichée à la place du bouton "Envoyer rapport" une fois le rapport verrouillé/envoyé.
+class _ReportSentBanner extends StatelessWidget {
+  final int presentCount;
+  final int absentCount;
+  const _ReportSentBanner({required this.presentCount, required this.absentCount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.green.shade600,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.check_circle, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            'Rapport envoyé ✓',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+          ),
+          const SizedBox(width: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle_outline, size: 14, color: Colors.greenAccent.shade100),
+                const SizedBox(width: 4),
+                Text('$presentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                const SizedBox(width: 8),
+                Icon(Icons.cancel_outlined, size: 14, color: Colors.red.shade200),
+                const SizedBox(width: 4),
+                Text('$absentCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -3919,118 +4536,6 @@ class _DepartureChips extends StatelessWidget {
           },
         ),
       ],
-    );
-  }
-}
-
-/// حوار يسمح للشاف بتحديد أوقات عمل فريقه (فتح/إقفال البوانتاج).
-class _ChefPointageHoursDialog extends StatelessWidget {
-  final Equipe equipe;
-
-  const _ChefPointageHoursDialog({required this.equipe});
-
-  static Future<void> show(BuildContext context, Equipe eq) {
-    return showDialog(
-      context: context,
-      builder: (_) => _ChefPointageHoursDialog(equipe: eq),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    bool useCustomHours = equipe.pointageStartHour != null && equipe.pointageEndHour != null;
-    int startHour = equipe.pointageStartHour ?? 6;
-    int startMinute = equipe.pointageStartMinute ?? 0;
-    int endHour = equipe.pointageEndHour ?? 10;
-    int endMinute = equipe.pointageEndMinute ?? 0;
-    return StatefulBuilder(
-      builder: (context, setState) {
-        return AlertDialog(
-          title: Text(tr(context, 'pointage_chef_hours_title')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CheckboxListTile(
-                  value: useCustomHours,
-                  onChanged: (v) => setState(() => useCustomHours = v ?? false),
-                  title: Text(tr(context, 'pointage_chef_hours_custom'), style: const TextStyle(fontSize: 13)),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                ),
-                if (useCustomHours) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      SizedBox(width: 80, child: Text(tr(context, 'pointage_chef_hours_open'), style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: startHour.clamp(0, 23),
-                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
-                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
-                          onChanged: (v) => setState(() => startHour = v ?? 6),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: [0, 15, 30, 45].contains(startMinute) ? startMinute : 0,
-                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
-                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
-                          onChanged: (v) => setState(() => startMinute = v ?? 0),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      SizedBox(width: 80, child: Text(tr(context, 'pointage_chef_hours_close'), style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: endHour.clamp(0, 23),
-                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
-                          items: List.generate(24, (i) => DropdownMenuItem(value: i, child: Text('${i.toString().padLeft(2, '0')}h', overflow: TextOverflow.ellipsis))),
-                          onChanged: (v) => setState(() => endHour = v ?? 10),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: DropdownButtonFormField<int>(
-                          value: [0, 15, 30, 45].contains(endMinute) ? endMinute : 0,
-                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
-                          items: [0, 15, 30, 45].map((m) => DropdownMenuItem(value: m, child: Text('${m.toString().padLeft(2, '0')}', overflow: TextOverflow.ellipsis))).toList(),
-                          onChanged: (v) => setState(() => endMinute = v ?? 0),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: Text(tr(context, 'cancel'))),
-            ElevatedButton(
-              onPressed: () async {
-                final updated = equipe.copyWith(
-                  pointageStartHour: useCustomHours ? startHour : null,
-                  pointageStartMinute: useCustomHours ? startMinute : null,
-                  pointageEndHour: useCustomHours ? endHour : null,
-                  pointageEndMinute: useCustomHours ? endMinute : null,
-                );
-                await context.read<EmployeesProvider>().updateEquipe(updated);
-                if (context.mounted) Navigator.pop(context);
-              },
-              child: const Text('Enregistrer'),
-            ),
-          ],
-        );
-      },
     );
   }
 }
@@ -4378,7 +4883,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Résumé — ${allWorkers.length} employé(s)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: primary)),
+            Text('Résumé — ${allWorkers.length} collaborateur(s)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: primary)),
             const SizedBox(height: 10),
             Wrap(
               spacing: 14,
@@ -4440,7 +4945,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
 
     // ─── Contenu principal ──────────────────────────────────────────────────
     final notRecorded = '—';
-    final personLabel = 'Employé';
+    final personLabel = 'Collaborateur';
     final workedLabel = 'Heures travaillées';
     final overtimeLabel = 'Heures sup.';
     final totalLabel = 'Total';
@@ -4793,7 +5298,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Planifiez une formation pour un ou plusieurs employés.',
+            'Planifiez une formation pour un ou plusieurs collaborateurs.',
             style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600]),
           ),
           const SizedBox(height: 20),
@@ -4883,7 +5388,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
                   const SizedBox(height: 16),
 
                   // Liste des employés
-                  Text('Employés', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 13 : 14)),
+                  Text('Collaborateurs', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 13 : 14)),
                   const SizedBox(height: 6),
                   if (_loadingFormation)
                     const Padding(
@@ -4893,7 +5398,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
                   else if (workers.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text('Aucun employé dans cette équipe.', style: TextStyle(color: Colors.grey[600])),
+                      child: Text('Aucun collaborateur dans cette équipe.', style: TextStyle(color: Colors.grey[600])),
                     )
                   else
                     Container(
@@ -4966,7 +5471,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
             ),
           ),
 
-          // ─── Employés actuellement en formation ──────────────────────────
+          // ─── Collaborateurs actuellement en formation ──────────────────────────
           if (_alreadyInFormationIds.isNotEmpty) ...[
             const SizedBox(height: 24),
             Row(
@@ -5042,11 +5547,15 @@ class _ExcelDateRangeDialog extends StatefulWidget {
   final DateTime initialStart;
   final DateTime initialEnd;
   final List<({String id, String label})> equipeOptions;
+  final String? initialScope;
+  final String? initialEquipeId;
 
   const _ExcelDateRangeDialog({
     required this.initialStart,
     required this.initialEnd,
     required this.equipeOptions,
+    this.initialScope,
+    this.initialEquipeId,
   });
 
   @override
@@ -5064,6 +5573,9 @@ class _ExcelDateRangeDialogState extends State<_ExcelDateRangeDialog> {
     super.initState();
     _start = widget.initialStart;
     _end = widget.initialEnd;
+    final s = (widget.initialScope ?? '').trim();
+    if (s.isNotEmpty) _scope = s;
+    _selectedEquipeId = widget.initialEquipeId;
   }
 
   @override

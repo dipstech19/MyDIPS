@@ -111,7 +111,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                 Icon(Icons.person_add, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
                 SizedBox(width: mobile ? 8 : 12),
                 Expanded(
-                  child: Text('Nouvel Employé',
+                  child: Text('Nouveau Collaborateur',
                       style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
                       overflow: TextOverflow.ellipsis),
                 ),

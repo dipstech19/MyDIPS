@@ -2,6 +2,31 @@ import 'package:flutter/material.dart';
 
 enum ShiftType { morning, evening, night, rest }
 
+/// Représente un jour de travail doublé (×2) — jour férié travaillé ou jour exceptionnel.
+class DoubleDay {
+  final DateTime date;
+  final String? label; // e.g. "Fête du travail", "Aïd", etc.
+
+  DoubleDay({required this.date, this.label});
+
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toMap() => {
+        'date': dateKey,
+        'label': label ?? '',
+      };
+
+  static DoubleDay fromMap(Map<String, dynamic> map) {
+    final raw = map['date'] as String? ?? '';
+    final parts = raw.split('-');
+    final dt = parts.length == 3
+        ? DateTime(int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 1, int.tryParse(parts[2]) ?? 1)
+        : DateTime.now();
+    return DoubleDay(date: DateTime(dt.year, dt.month, dt.day), label: map['label'] as String?);
+  }
+}
+
 extension ShiftTypeExt on ShiftType {
   String get timeRange {
     switch (this) {

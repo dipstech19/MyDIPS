@@ -75,7 +75,7 @@ class _EquipesTabState extends State<EquipesTab> {
             children: [
               Icon(Icons.group_add, color: Color(0xFF1565C0)),
               SizedBox(width: 10),
-              Text('Affecter employés sans équipe'),
+              Text('Affecter des collaborateurs sans équipe'),
             ],
           ),
           content: SizedBox(
@@ -761,7 +761,7 @@ class _EquipesTabState extends State<EquipesTab> {
                   value: selectedId,
                   isExpanded: true,
                   decoration: InputDecoration(
-                    labelText: 'Choisir un employé',
+                    labelText: 'Choisir un collaborateur',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                   items: disponibles
@@ -775,7 +775,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 if (disponibles.isEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),
-                    child: Text('Aucun employé disponible pour ce poste.', style: TextStyle(color: Colors.grey[700])),
+                    child: Text('Aucun collaborateur disponible pour ce poste.', style: TextStyle(color: Colors.grey[700])),
                   ),
               ],
             ),

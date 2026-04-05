@@ -821,11 +821,11 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
 
               if (_step >= 1) ...[
                 _StepLabel(
-                    number: 2, label: 'Choisir l\'employé', active: true),
+                    number: 2, label: 'Choisir le collaborateur', active: true),
                 if (_membersOfOrigin.isEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: Text('Aucun employé dans cette équipe.',
+                    child: Text('Aucun collaborateur dans cette équipe.',
                         style: TextStyle(
                             fontSize: 13,
                             color: Colors.orange.shade700)),
@@ -833,7 +833,7 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
                 else
                   DropdownButtonFormField<Employe>(
                     value: _selectedEmployee,
-                    hint: const Text('Choisir l\'employé'),
+                    hint: const Text('Choisir le collaborateur'),
                     items: _membersOfOrigin
                         .map((e) => DropdownMenuItem(
                             value: e, child: Text(e.nom)))
@@ -925,7 +925,7 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Shift actuel de l\'employé : ${origShift.shortLabel} (${origShift.timeRange})\n'
+                            'Shift actuel du collaborateur : ${origShift.shortLabel} (${origShift.timeRange})\n'
                             'Même jour : uniquement les shifts démarrant après la fin de son shift.',
                             style: TextStyle(
                                 fontSize: 12,
@@ -963,7 +963,7 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
                           _shiftStart(targetShift, _targetDate);
                       if (targetStart.isBefore(origShiftEnd)) {
                         disabledReason =
-                            'Le shift commence avant la fin du shift de l\'employé';
+                            'Le shift commence avant la fin du shift du collaborateur';
                       }
                     }
                   }
