@@ -1824,8 +1824,20 @@ class _PointagePageState extends State<PointagePage> {
                                                 child: isConfirmed
                                                     ? OutlinedButton.icon(
                                                         onPressed: () async {
-                                                          await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
-                                                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
+                                                          try {
+                                                            await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
+                                                            await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
+                                                          } catch (e) {
+                                                            if (context.mounted) {
+                                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                                SnackBar(
+                                                                  content: Text('Erreur lors de l\'annulation: ${e.toString()}'),
+                                                                  backgroundColor: Colors.red,
+                                                                  behavior: SnackBarBehavior.fixed,
+                                                                ),
+                                                              );
+                                                            }
+                                                          }
                                                         },
                                                         style: OutlinedButton.styleFrom(
                                                           foregroundColor: Colors.green.shade700,
@@ -1983,22 +1995,34 @@ class _PointagePageState extends State<PointagePage> {
                                                             );
                                                           }).toList();
 
-                                                          await _snapshotRepo.saveEquipeSnapshot(
-                                                            equipeId: t.equipeId,
-                                                            equipeName: t.equipeName,
-                                                            date: logicalDay,
-                                                            confirmedById: confirmedById,
-                                                            employees: empSnapshots,
-                                                          );
-                                                          await _confirmationRepo.confirmEquipe(
-                                                            equipeId: t.equipeId,
-                                                            equipeName: t.equipeName,
-                                                            confirmedById: confirmedById,
-                                                            confirmedByName: auth.currentUser?.nom ?? 'Admin',
-                                                            date: logicalDay,
-                                                            presentCount: presentC,
-                                                            absentCount: absentC,
-                                                          );
+                                                          try {
+                                                            await _snapshotRepo.saveEquipeSnapshot(
+                                                              equipeId: t.equipeId,
+                                                              equipeName: t.equipeName,
+                                                              date: logicalDay,
+                                                              confirmedById: confirmedById,
+                                                              employees: empSnapshots,
+                                                            );
+                                                            await _confirmationRepo.confirmEquipe(
+                                                              equipeId: t.equipeId,
+                                                              equipeName: t.equipeName,
+                                                              confirmedById: confirmedById,
+                                                              confirmedByName: auth.currentUser?.nom ?? 'Admin',
+                                                              date: logicalDay,
+                                                              presentCount: presentC,
+                                                              absentCount: absentC,
+                                                            );
+                                                          } catch (e) {
+                                                            if (context.mounted) {
+                                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                                SnackBar(
+                                                                  content: Text('Erreur lors de la confirmation: ${e.toString()}'),
+                                                                  backgroundColor: Colors.red,
+                                                                  behavior: SnackBarBehavior.fixed,
+                                                                ),
+                                                              );
+                                                            }
+                                                          }
                                                         },
                                                         style: FilledButton.styleFrom(
                                                           backgroundColor: !confirmWindowOpen
@@ -3590,6 +3614,7 @@ class _PointagePageState extends State<PointagePage> {
           );
           if (!context.mounted) return;
           if (!ok) {
+            pointageProvider.rollbackOptimisticChefReportLock();
             messenger.showSnackBar(
               SnackBar(
                 content: Text(trOf(context, 'pointage_hours_cannot_mark')),
@@ -3626,6 +3651,7 @@ class _PointagePageState extends State<PointagePage> {
             ),
           );
         } catch (e) {
+          pointageProvider.rollbackOptimisticChefReportLock();
           if (!context.mounted) return;
           messenger.showSnackBar(
             SnackBar(

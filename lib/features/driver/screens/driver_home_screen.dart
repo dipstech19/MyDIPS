@@ -23,16 +23,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
   AttendanceState _getState(String equipeId, String employeId) =>
       _attendance[_key(equipeId, employeId)] ?? AttendanceState.unmarked;
 
-  void _sendReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(tr(context, 'report_sent')),
-        backgroundColor: AppColors.green,
-        behavior: SnackBarBehavior.fixed,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final locale = context.watch<LocaleProvider>();
@@ -148,10 +138,25 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            height: 52,
-            width: double.infinity,
-            child: PrimaryButton(label: tr(context, 'send_report_btn'), onTap: _sendReport),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    tr(context, 'use_pointage_tab'),
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

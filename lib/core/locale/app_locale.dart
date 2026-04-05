@@ -63,6 +63,7 @@ class AppTranslations {
     'send_report_btn': 'Envoyer le rapport',
     'report_sent': 'Rapport envoyé',
     'report_sent_to': 'Rapport envoyé à',
+    'use_pointage_tab': 'Vue lecture seule. Utilisez l\'onglet Pointage pour enregistrer la présence.',
     'pointage_confirm_send_title': 'Confirmer l\'envoi',
     'pointage_confirm_send_message':
         'Après confirmation, le pointage sera verrouillé sur cet appareil immédiatement (même si la connexion est lente). Vous ne pourrez plus modifier ni renvoyer.',
@@ -248,6 +249,7 @@ class AppTranslations {
     'send_report_btn': 'إرسال التقرير',
     'report_sent': 'تم إرسال التقرير',
     'report_sent_to': 'تم إرسال التقرير إلى',
+    'use_pointage_tab': 'عرض للقراءة فقط. استخدم تبويب البوانتاج لتسجيل الحضور.',
     'pointage_confirm_send_title': 'تأكيد الإرسال',
     'pointage_confirm_send_message':
         'بعد التأكيد، يُقفل التسجيل على هذا الجهاز فوراً حتى مع ضعف الإنترنت. لن يمكنك التعديل أو الإرسال مرة أخرى.',

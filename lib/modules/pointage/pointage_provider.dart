@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import '../employees/models/employe_model.dart';
@@ -7,7 +7,7 @@ import 'data/pointage_repository.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
 
-/// نافذة تسجيل الشاف: الدخول (−30 د → بداية + 2h) أو الخروج (−30 د → نهاية + 2h) — لإرسال التقرير يُكمّل الغياب في نافذة الخروج.
+/// Ù†Ø§ÙØ°Ø© ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø´Ø§Ù: Ø§Ù„Ø¯Ø®ÙˆÙ„ (âˆ’30 Ø¯ â†’ Ø¨Ø¯Ø§ÙŠØ© + 2h) Ø£Ùˆ Ø§Ù„Ø®Ø±ÙˆØ¬ (âˆ’30 Ø¯ â†’ Ù†Ù‡Ø§ÙŠØ© + 2h) â€” Ù„Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„ØªÙ‚Ø±ÙŠØ± ÙŠÙÙƒÙ…Ù‘Ù„ Ø§Ù„ØºÙŠØ§Ø¨ ÙÙŠ Ù†Ø§ÙØ°Ø© Ø§Ù„Ø®Ø±ÙˆØ¬.
 bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
   return config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace) ||
       config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace);
@@ -27,7 +27,7 @@ class PointageProvider extends ChangeNotifier {
   bool _loading = true;
   String? _error;
 
-  /// Verrouillage immédiat après confirmation d’envoi (réseau lent) — révoqué quand Firestore confirme.
+  /// Verrouillage immÃ©diat aprÃ¨s confirmation dâ€™envoi (rÃ©seau lent) â€” rÃ©voquÃ© quand Firestore confirme.
   bool _optimisticDriverReportLocked = false;
   final Set<String> _optimisticChefLockedEmployeIds = <String>{};
 
@@ -44,7 +44,7 @@ class PointageProvider extends ChangeNotifier {
 
   bool get optimisticDriverReportLocked => _optimisticDriverReportLocked;
 
-  /// Au moins un document du jour porte déjà un envoi chauffeur (batch global).
+  /// Au moins un document du jour porte dÃ©jÃ  un envoi chauffeur (batch global).
   bool get hasDriverReportBeenSubmittedGlobally =>
       _todayPointage.any((p) => p.submittedByDriverAt != null);
 
@@ -81,7 +81,8 @@ class PointageProvider extends ChangeNotifier {
 
     final repo = _repo!;
 
-    _subPointage = repo.watchTodayPointage().listen(
+    final logicalToday = getPointageDateForConfig(PointageHoursConfig.instance, DateTime.now());
+    _subPointage = repo.watchTodayPointage(logicalDate: logicalToday).listen(
       (list) {
         _todayPointage = list;
         _reconcileOptimisticLocksWithRemote(list);
@@ -130,19 +131,26 @@ class PointageProvider extends ChangeNotifier {
     }
   }
 
-  /// Après confirmation utilisateur : bloque tout de suite l’UI chauffeur (même si la sync tarde).
+  /// AprÃ¨s confirmation utilisateur : bloque tout de suite lâ€™UI chauffeur (mÃªme si la sync tarde).
   void applyOptimisticDriverReportLock() {
     if (_optimisticDriverReportLocked) return;
     _optimisticDriverReportLocked = true;
     notifyListeners();
   }
 
-  /// Après confirmation chef : bloque les fiches des IDs listés jusqu’à réception Firestore.
+  /// AprÃ¨s confirmation chef : bloque les fiches des IDs listÃ©s jusquâ€™Ã  rÃ©ception Firestore.
   void applyOptimisticChefReportLock(Set<String> employeIds) {
     _optimisticChefLockedEmployeIds
       ..clear()
       ..addAll(employeIds);
     notifyListeners();
+  }
+
+  void rollbackOptimisticChefReportLock() {
+    if (_optimisticChefLockedEmployeIds.isNotEmpty) {
+      _optimisticChefLockedEmployeIds.clear();
+      notifyListeners();
+    }
   }
 
   Duration get _timeGrace => _ignoreTimeWindowsForTest ? const Duration(hours: 8) : Duration.zero;
@@ -176,17 +184,20 @@ class PointageProvider extends ChangeNotifier {
     return config.canMarkOvertimeRelatedNow(now, graceBefore: g, graceAfter: g);
   }
 
-  /// Écrit seulement sur Firestore (fenêtre horaire vérifiée ici). Utiliser après verrou optimiste.
+  /// Ã‰crit seulement sur Firestore (fenÃªtre horaire vÃ©rifiÃ©e ici). Utiliser aprÃ¨s verrou optimiste.
+  /// [equipeId] obligatoire pour n'affecter que les enregistrements de la bonne Ã©quipe.
   Future<bool> submitDriverReportToFirestore({
+    required String equipeId,
     PointageHoursConfig? configOverride,
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable || _repo == null) return false;
+    if (equipeId.isEmpty) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
     if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
-    await _repo!.submitDriverReport(pointageDate);
+    await _repo!.submitDriverReport(pointageDate, equipeId: equipeId);
     return true;
   }
 
@@ -226,7 +237,7 @@ class PointageProvider extends ChangeNotifier {
     }
   }
 
-  /// Pour l'admin: charger la liste des équipes « ne travaillent pas » pour la date affichée (ex. aujourd'hui si pas de date choisie).
+  /// Pour l'admin: charger la liste des Ã©quipes Â« ne travaillent pas Â» pour la date affichÃ©e (ex. aujourd'hui si pas de date choisie).
   Future<void> ensureNonWorkingLoadedForDate(DateTime date) async {
     final d = DateTime(date.year, date.month, date.day);
     if (_lastNonWorkingDate == d) return;
@@ -263,19 +274,19 @@ class PointageProvider extends ChangeNotifier {
     return nonRenfort.isNotEmpty ? nonRenfort.first : list.first;
   }
 
-  /// جلب سجلات يوم معيّن (للسائق عندما الفريق في وردية ليلية قبل 07:00).
+  /// Ø¬Ù„Ø¨ Ø³Ø¬Ù„Ø§Øª ÙŠÙˆÙ… Ù…Ø¹ÙŠÙ‘Ù† (Ù„Ù„Ø³Ø§Ø¦Ù‚ Ø¹Ù†Ø¯Ù…Ø§ Ø§Ù„ÙØ±ÙŠÙ‚ ÙÙŠ ÙˆØ±Ø¯ÙŠØ© Ù„ÙŠÙ„ÙŠØ© Ù‚Ø¨Ù„ 07:00).
   Future<List<PointageRecord>> getPointageRecordsForDate(DateTime date) async {
     if (!_firebaseAvailable || _repo == null) return [];
     return _repo!.getPointageForDate(date);
   }
 
-  /// جلب كل سجلات البوانتاج لنطاق تاريخ (من start إلى end شامل) — للإحصائيات متعددة الأيام.
+  /// Ø¬Ù„Ø¨ ÙƒÙ„ Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬ Ù„Ù†Ø·Ø§Ù‚ ØªØ§Ø±ÙŠØ® (Ù…Ù† start Ø¥Ù„Ù‰ end Ø´Ø§Ù…Ù„) â€” Ù„Ù„Ø¥Ø­ØµØ§Ø¦ÙŠØ§Øª Ù…ØªØ¹Ø¯Ø¯Ø© Ø§Ù„Ø£ÙŠØ§Ù….
   Future<List<PointageRecord>> getPointageForDateRange(DateTime start, DateTime end) async {
     if (!_firebaseAvailable || _repo == null) return [];
     return _repo!.getPointageForDateRange(start, end);
   }
 
-  /// سجل نقطاج لموظف في تاريخ معيّن (للتحقق من «في تكويني» في الحوار)
+  /// Ø³Ø¬Ù„ Ù†Ù‚Ø·Ø§Ø¬ Ù„Ù…ÙˆØ¸Ù ÙÙŠ ØªØ§Ø±ÙŠØ® Ù…Ø¹ÙŠÙ‘Ù† (Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Â«ÙÙŠ ØªÙƒÙˆÙŠÙ†ÙŠÂ» ÙÙŠ Ø§Ù„Ø­ÙˆØ§Ø±)
   Future<PointageRecord?> getRecordForEmployeeForDate(String employeId, DateTime date) async {
     if (!_firebaseAvailable || _repo == null) return null;
     final day = DateTime(date.year, date.month, date.day);
@@ -285,7 +296,7 @@ class PointageProvider extends ChangeNotifier {
     return _repo!.getByEmployeAndDate(employeId, day);
   }
 
-  /// للحصول على الحالة المعروضة حسب الدور (للتوافق مع الواجهة الحالية)
+  /// Ù„Ù„Ø­ØµÙˆÙ„ Ø¹Ù„Ù‰ Ø§Ù„Ø­Ø§Ù„Ø© Ø§Ù„Ù…Ø¹Ø±ÙˆØ¶Ø© Ø­Ø³Ø¨ Ø§Ù„Ø¯ÙˆØ± (Ù„Ù„ØªÙˆØ§ÙÙ‚ Ù…Ø¹ Ø§Ù„ÙˆØ§Ø¬Ù‡Ø© Ø§Ù„Ø­Ø§Ù„ÙŠØ©)
   AttendanceStatus getStatusForEmployee(String employeId) {
     final record = getRecordForEmployee(employeId);
     if (record == null) return AttendanceStatus.absent;
@@ -324,13 +335,13 @@ class PointageProvider extends ChangeNotifier {
     return AttendanceStatus.unmarked;
   }
 
-  /// حالة السائق للموظف (حاضر | غائب | في المركبة)
+  /// Ø­Ø§Ù„Ø© Ø§Ù„Ø³Ø§Ø¦Ù‚ Ù„Ù„Ù…ÙˆØ¸Ù (Ø­Ø§Ø¶Ø± | ØºØ§Ø¦Ø¨ | ÙÙŠ Ø§Ù„Ù…Ø±ÙƒØ¨Ø©)
   DriverPointageStatus getDriverStatusForEmployee(String employeId) {
     final r = getRecordForEmployee(employeId);
     return r?.driverStatus ?? DriverPointageStatus.unset;
   }
 
-  /// حالة الشاف للموظف (حاضر | غائب)
+  /// Ø­Ø§Ù„Ø© Ø§Ù„Ø´Ø§Ù Ù„Ù„Ù…ÙˆØ¸Ù (Ø­Ø§Ø¶Ø± | ØºØ§Ø¦Ø¨)
   ChefPointageStatus getChefStatusForEmployee(String employeId) {
     final r = getRecordForEmployee(employeId);
     return r?.chefStatus ?? ChefPointageStatus.unset;
@@ -351,16 +362,16 @@ class PointageProvider extends ChangeNotifier {
     return getRecordForEmployee(employeId)?.chefLocked ?? false;
   }
 
-  /// عدد أيام الحضور المؤكدة لموظف بين تاريخين (من نقطاج).
+  /// Ø¹Ø¯Ø¯ Ø£ÙŠØ§Ù… Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„Ù…Ø¤ÙƒØ¯Ø© Ù„Ù…ÙˆØ¸Ù Ø¨ÙŠÙ† ØªØ§Ø±ÙŠØ®ÙŠÙ† (Ù…Ù† Ù†Ù‚Ø·Ø§Ø¬).
   Future<int> getPresentDaysCountForEmployee(String employeId, DateTime start, DateTime end) async {
     if (!_firebaseAvailable || _repo == null) return 0;
     final list = await _repo!.getPointageForEmployeeRange(employeId, start, end);
     return list.where((r) => r.isFinalPresent).length;
   }
 
-  /// جميع سجلات الحضور في نطاق تواريخ (لتصدير Excel).
-  /// [knownEmployeIds] — تمرير معرفات الموظفين المراد تصديرهم لضمان جلب
-  /// سجلاتهم حتى لو لم تظهر في الاستعلام الأولي.
+  /// Ø¬Ù…ÙŠØ¹ Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ø­Ø¶ÙˆØ± ÙÙŠ Ù†Ø·Ø§Ù‚ ØªÙˆØ§Ø±ÙŠØ® (Ù„ØªØµØ¯ÙŠØ± Excel).
+  /// [knownEmployeIds] â€” ØªÙ…Ø±ÙŠØ± Ù…Ø¹Ø±ÙØ§Øª Ø§Ù„Ù…ÙˆØ¸ÙÙŠÙ† Ø§Ù„Ù…Ø±Ø§Ø¯ ØªØµØ¯ÙŠØ±Ù‡Ù… Ù„Ø¶Ù…Ø§Ù† Ø¬Ù„Ø¨
+  /// Ø³Ø¬Ù„Ø§ØªÙ‡Ù… Ø­ØªÙ‰ Ù„Ùˆ Ù„Ù… ØªØ¸Ù‡Ø± ÙÙŠ Ø§Ù„Ø§Ø³ØªØ¹Ù„Ø§Ù… Ø§Ù„Ø£ÙˆÙ„ÙŠ.
   Future<List<PointageRecord>> getPointageInDateRange(
     DateTime start,
     DateTime end, {
@@ -380,8 +391,12 @@ class PointageProvider extends ChangeNotifier {
     required AttendanceStatus status,
     String? markedById,
     String? markedByName,
+    PointageHoursConfig? configOverride,
   }) async {
     if (!_firebaseAvailable) return;
+    final now = DateTime.now();
+    final config = configOverride ?? PointageHoursConfig.instance;
+    final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
       employeId: employeId,
@@ -391,16 +406,16 @@ class PointageProvider extends ChangeNotifier {
       equipeName: equipeName,
       chefName: chefName,
       status: status,
-      date: DateTime.now(),
-      createdAt: DateTime.now(),
+      date: pointageDate,
+      createdAt: now,
       markedById: markedById,
       markedByName: markedByName,
     );
     await _repo!.markAttendance(record);
   }
 
-  /// يُرجع true إذا تم التسجيل، false إذا كان خارج وقت البوانتاج.
-  /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
+  /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„ØªØ³Ø¬ÙŠÙ„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ ÙˆÙ‚Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬.
+  /// [configOverride] Ø¥Ù† ÙˆÙØ¬Ø¯ ÙŠÙØ³ØªØ®Ø¯Ù… Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„ÙˆÙ‚ØªØ› ÙˆØ¥Ù„Ø§ Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯ Ø§Ù„Ø¹Ø§Ù….
   Future<bool> markDriverAttendance({
     required String employeId,
     required String employeNom,
@@ -440,8 +455,8 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// يُرجع true إذا تم التسجيل، false إذا كان خارج وقت البوانتاج.
-  /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
+  /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„ØªØ³Ø¬ÙŠÙ„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ ÙˆÙ‚Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬.
+  /// [configOverride] Ø¥Ù† ÙˆÙØ¬Ø¯ ÙŠÙØ³ØªØ®Ø¯Ù… Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„ÙˆÙ‚ØªØ› ÙˆØ¥Ù„Ø§ Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯ Ø§Ù„Ø¹Ø§Ù….
   Future<bool> markChefAttendance({
     required String employeId,
     required String employeNom,
@@ -484,8 +499,8 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Distribution: pointage يدوي على تاريخ محدد (عادةً الأمس)
-  /// بدون تقييد بنافذة الوقت.
+  /// Distribution: pointage ÙŠØ¯ÙˆÙŠ Ø¹Ù„Ù‰ ØªØ§Ø±ÙŠØ® Ù…Ø­Ø¯Ø¯ (Ø¹Ø§Ø¯Ø©Ù‹ Ø§Ù„Ø£Ù…Ø³)
+  /// Ø¨Ø¯ÙˆÙ† ØªÙ‚ÙŠÙŠØ¯ Ø¨Ù†Ø§ÙØ°Ø© Ø§Ù„ÙˆÙ‚Øª.
   Future<bool> markDistributionAttendanceForDate({
     required String employeId,
     required String employeNom,
@@ -527,8 +542,8 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// تسجيل حضور عامل renfort (محوَّل مؤقتاً) باستخدام سجله المستقل في الفريق الثاني.
-  /// يستخدم record.id للكتابة على الـ docId الصحيح وليس السجل الأصلي.
+  /// ØªØ³Ø¬ÙŠÙ„ Ø­Ø¶ÙˆØ± Ø¹Ø§Ù…Ù„ renfort (Ù…Ø­ÙˆÙŽÙ‘Ù„ Ù…Ø¤Ù‚ØªØ§Ù‹) Ø¨Ø§Ø³ØªØ®Ø¯Ø§Ù… Ø³Ø¬Ù„Ù‡ Ø§Ù„Ù…Ø³ØªÙ‚Ù„ ÙÙŠ Ø§Ù„ÙØ±ÙŠÙ‚ Ø§Ù„Ø«Ø§Ù†ÙŠ.
+  /// ÙŠØ³ØªØ®Ø¯Ù… record.id Ù„Ù„ÙƒØªØ§Ø¨Ø© Ø¹Ù„Ù‰ Ø§Ù„Ù€ docId Ø§Ù„ØµØ­ÙŠØ­ ÙˆÙ„ÙŠØ³ Ø§Ù„Ø³Ø¬Ù„ Ø§Ù„Ø£ØµÙ„ÙŠ.
   Future<bool> markRenfortChefAttendance({
     required PointageRecord renfortRecord,
     required ChefPointageStatus chefStatus,
@@ -551,7 +566,7 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// تأكيد الساعات الإضافية (للشيفت الموالي) على نفس record (نفس date/docId).
+  /// ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø³Ø§Ø¹Ø§Øª Ø§Ù„Ø¥Ø¶Ø§ÙÙŠØ© (Ù„Ù„Ø´ÙŠÙØª Ø§Ù„Ù…ÙˆØ§Ù„ÙŠ) Ø¹Ù„Ù‰ Ù†ÙØ³ record (Ù†ÙØ³ date/docId).
   Future<bool> markOvertimeChefAttendance({
     required PointageRecord record,
     required ChefPointageStatus overtimeChefStatus,
@@ -572,20 +587,22 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// يُرجع true إذا تم الإرسال، false إذا كان خارج وقت البوانتاج.
-  /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
+  /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„Ø¥Ø±Ø³Ø§Ù„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ ÙˆÙ‚Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬.
+  /// [equipeId] Ù…Ø·Ù„ÙˆØ¨ Ù„ØªÙ‚ÙŠÙŠØ¯ Ø§Ù„Ù‚ÙÙ„ Ø¨Ø§Ù„ÙØ±Ù‚Ø© Ø§Ù„ØµØ­ÙŠØ­Ø©.
   Future<bool> submitDriverReport({
+    required String equipeId,
     PointageHoursConfig? configOverride,
     bool bypassTimeWindows = false,
   }) async {
     return submitDriverReportToFirestore(
+      equipeId: equipeId,
       configOverride: configOverride,
       bypassTimeWindows: bypassTimeWindows,
     );
   }
 
-  /// يُرجع true إذا تم الإرسال، false إذا كان خارج وقت البوانتاج.
-  /// [configOverride] إن وُجد يُستخدم للتحقق من الوقت؛ وإلا الإعداد العام.
+  /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„Ø¥Ø±Ø³Ø§Ù„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ ÙˆÙ‚Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬.
+  /// [configOverride] Ø¥Ù† ÙˆÙØ¬Ø¯ ÙŠÙØ³ØªØ®Ø¯Ù… Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„ÙˆÙ‚ØªØ› ÙˆØ¥Ù„Ø§ Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯ Ø§Ù„Ø¹Ø§Ù….
   Future<bool> submitChefReport(
     String equipeId, {
     PointageHoursConfig? configOverride,
@@ -600,14 +617,14 @@ class PointageProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Distribution: تأكيد تقرير الشاف لتاريخ محدد بدون نافذة توقيت.
+  /// Distribution: ØªØ£ÙƒÙŠØ¯ ØªÙ‚Ø±ÙŠØ± Ø§Ù„Ø´Ø§Ù Ù„ØªØ§Ø±ÙŠØ® Ù…Ø­Ø¯Ø¯ Ø¨Ø¯ÙˆÙ† Ù†Ø§ÙØ°Ø© ØªÙˆÙ‚ÙŠØª.
   Future<void> submitChefReportForDateManual(String equipeId, DateTime date) async {
     if (!_firebaseAvailable || _repo == null || equipeId.isEmpty) return;
     final day = DateTime(date.year, date.month, date.day);
     await _repo!.submitChefReport(equipeId, day);
   }
 
-  /// Avant envoi du rapport chef : compléter les non-marqués en « absent » (Firestore batch, moins de requêtes).
+  /// Avant envoi du rapport chef : complÃ©ter les non-marquÃ©s en Â« absent Â» (Firestore batch, moins de requÃªtes).
   Future<void> batchMarkUnmarkedAbsentBeforeChefSubmit({
     required List<Employe> workersDisplay,
     required Set<String> overtimeWorkerIds,
@@ -621,7 +638,8 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable || _repo == null) return;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
+    // Utilise la mÃªme fenÃªtre que submitChefReport (departure) pour cohÃ©rence.
+    if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
     final pointageDate = getPointageDateForConfig(config, now);
 
     final regularTemplates = <PointageRecord>[];
@@ -667,8 +685,8 @@ class PointageProvider extends ChangeNotifier {
     );
   }
 
-  /// تسجيل حالة الخروج: لا يزال يعمل | انتهى (مع اختياري ساعات إضافية).
-  /// يُرجع true إذا تم التسجيل، false إذا كان خارج نافذة الخروج.
+  /// ØªØ³Ø¬ÙŠÙ„ Ø­Ø§Ù„Ø© Ø§Ù„Ø®Ø±ÙˆØ¬: Ù„Ø§ ÙŠØ²Ø§Ù„ ÙŠØ¹Ù…Ù„ | Ø§Ù†ØªÙ‡Ù‰ (Ù…Ø¹ Ø§Ø®ØªÙŠØ§Ø±ÙŠ Ø³Ø§Ø¹Ø§Øª Ø¥Ø¶Ø§ÙÙŠØ©).
+  /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„ØªØ³Ø¬ÙŠÙ„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ Ù†Ø§ÙØ°Ø© Ø§Ù„Ø®Ø±ÙˆØ¬.
   Future<bool> setDepartureStatus({
     required PointageRecord record,
     required DepartureStatus status,
@@ -693,7 +711,7 @@ class PointageProvider extends ChangeNotifier {
         if (!isPresentInTarget) {
           resolvedOvertime = 0;
         } else if (record.workedMinutesBeforeStop != null && record.workedMinutesBeforeStop! > 0) {
-          // If the worker previously didn't complete the shift (N'a pas terminé) and provided worked minutes,
+          // If the worker previously didn't complete the shift (N'a pas terminÃ©) and provided worked minutes,
           // convert those worked minutes directly to overtime minutes in the target team.
           resolvedOvertime = record.workedMinutesBeforeStop;
         } else if (record.overtimeChefStatus == ChefPointageStatus.present) {
@@ -744,7 +762,7 @@ class PointageProvider extends ChangeNotifier {
     );
   }
 
-  /// تعيين الحضور النهائي من الأدمن (يُنشئ سجلاً إن لم يكن موجوداً). يدعم أي تاريخ [viewDate].
+  /// ØªØ¹ÙŠÙŠÙ† Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠ Ù…Ù† Ø§Ù„Ø£Ø¯Ù…Ù† (ÙŠÙÙ†Ø´Ø¦ Ø³Ø¬Ù„Ø§Ù‹ Ø¥Ù† Ù„Ù… ÙŠÙƒÙ† Ù…ÙˆØ¬ÙˆØ¯Ø§Ù‹). ÙŠØ¯Ø¹Ù… Ø£ÙŠ ØªØ§Ø±ÙŠØ® [viewDate].
   Future<void> setAdminOverrideForEmployee({
     required String employeId,
     required String employeNom,
@@ -803,9 +821,9 @@ class PointageProvider extends ChangeNotifier {
     }
   }
 
-  /// Affectation temporaire d'un employé vers une autre équipe pour une journée (renfort).
-  /// Crée un sجل SÉPARÉ (docId différent) pour le fريق cible afin que les pointages
-  /// des deux équipes soient totalement indépendants.
+  /// Affectation temporaire d'un employÃ© vers une autre Ã©quipe pour une journÃ©e (renfort).
+  /// CrÃ©e un sØ¬Ù„ SÃ‰PARÃ‰ (docId diffÃ©rent) pour le fØ±ÙŠÙ‚ cible afin que les pointages
+  /// des deux Ã©quipes soient totalement indÃ©pendants.
   Future<void> assignEmployeeTemp({
     required String employeId,
     required String employeNom,
@@ -867,7 +885,7 @@ class PointageProvider extends ChangeNotifier {
     await _repo!.submitReport(report);
   }
 
-  /// Réinitialise les données pointage (pointages + rapports) sur une plage.
+  /// RÃ©initialise les donnÃ©es pointage (pointages + rapports) sur une plage.
   Future<void> clearPointageAndReportsInDateRange(DateTime start, DateTime end) async {
     if (!_firebaseAvailable || _repo == null) return;
     await _repo!.clearPointageAndReportsInDateRange(start, end);
@@ -876,8 +894,8 @@ class PointageProvider extends ChangeNotifier {
     }
   }
 
-  /// تنظيف كل السجلات الملوثة من النظام القديم (tempAssigned في السجل الأصلي).
-  /// يُستخدم مرة واحدة لإصلاح البيانات الموجودة في Firestore.
+  /// ØªÙ†Ø¸ÙŠÙ ÙƒÙ„ Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù…Ù„ÙˆØ«Ø© Ù…Ù† Ø§Ù„Ù†Ø¸Ø§Ù… Ø§Ù„Ù‚Ø¯ÙŠÙ… (tempAssigned ÙÙŠ Ø§Ù„Ø³Ø¬Ù„ Ø§Ù„Ø£ØµÙ„ÙŠ).
+  /// ÙŠÙØ³ØªØ®Ø¯Ù… Ù…Ø±Ø© ÙˆØ§Ø­Ø¯Ø© Ù„Ø¥ØµÙ„Ø§Ø­ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© ÙÙŠ Firestore.
   Future<void> fixLegacyRenfortRecords() async {
     if (!_firebaseAvailable || _repo == null) return;
     final now = DateTime.now();
@@ -908,3 +926,4 @@ class PointageProvider extends ChangeNotifier {
     super.dispose();
   }
 }
+

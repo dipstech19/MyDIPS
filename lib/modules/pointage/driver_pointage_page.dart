@@ -94,7 +94,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     }
   }
 
-  Future<void> _sendReport(PointageHoursConfig? pointageConfig) async {
+  Future<void> _sendReport(PointageHoursConfig? pointageConfig, {required String equipeId}) async {
     final pointageProvider = context.read<PointageProvider>();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -128,7 +128,10 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 
     unawaited(() async {
       try {
-        final ok = await pointageProvider.submitDriverReportToFirestore(configOverride: pointageConfig);
+        final ok = await pointageProvider.submitDriverReportToFirestore(
+          equipeId: equipeId,
+          configOverride: pointageConfig,
+        );
         if (!mounted) return;
         if (ok) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -382,7 +385,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                           canSendReport &&
                           !pointageProvider.optimisticDriverReportLocked &&
                           !pointageProvider.hasDriverReportBeenSubmittedGlobally)
-                      ? () => _sendReport(config)
+                      ? () => _sendReport(config, equipeId: _selectedEquipeId ?? '')
                       : () {
                           if (!canSendReport && context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(

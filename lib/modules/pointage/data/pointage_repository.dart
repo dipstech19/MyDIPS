@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../models/pointage_model.dart';
 
 class PointageRepository {
@@ -21,8 +22,10 @@ class PointageRepository {
   String _dayStart(String dateKey) => '${dateKey}T00:00:00.000';
   String _dayEnd(String dateKey) => '${dateKey}T23:59:59.999';
 
-  Stream<List<PointageRecord>> watchTodayPointage() {
-    final today = _dateKey(DateTime.now());
+  /// [logicalDate] هو تاريخ البوانتاج المنطقي (قد يكون اليوم أو اليوم السابق لشيفت ليلي).
+  /// إذا لم يُمرَّر يُستخدم تاريخ اليوم الفعلي.
+  Stream<List<PointageRecord>> watchTodayPointage({DateTime? logicalDate}) {
+    final today = _dateKey(logicalDate ?? DateTime.now());
     return _firestore
         .collection(_pointageCollection)
         .where('date', isGreaterThanOrEqualTo: _dayStart(today))
@@ -293,9 +296,11 @@ class PointageRepository {
     }
   }
 
-  /// قفل تقرير السائق لليوم: تعيين submittedByDriverAt لجميع السجلات التي لها driverStatus
-  /// (دفعات WriteBatch لتقليل الطلبات على الشبكة الضعيفة).
-  Future<void> submitDriverReport(DateTime date) async {
+  /// قفل تقرير السائق لفرقته واليوم: تعيين submittedByDriverAt للسجلات التي لها driverStatus
+  /// المُصنَّفة تحت [equipeId] فقط (دفعات WriteBatch لتقليل الطلبات على الشبكة الضعيفة).
+  /// [equipeId] مطلوب لتقييد القفل بالفرقة الصحيحة وعدم المساس بفرق أخرى.
+  Future<void> submitDriverReport(DateTime date, {required String equipeId}) async {
+    assert(equipeId.isNotEmpty, 'equipeId must not be empty for driver report submit');
     final start = DateTime(date.year, date.month, date.day);
     final end = start.add(const Duration(days: 1));
     final snap = await _firestore
@@ -307,6 +312,7 @@ class PointageRepository {
     final refs = <DocumentReference>[];
     for (final doc in snap.docs) {
       final data = doc.data();
+      if ((data['equipeId'] as String? ?? '') != equipeId) continue;
       final driverStatus = data['driverStatus'] as String?;
       if (driverStatus != null && driverStatus != 'unset') {
         refs.add(doc.reference);
@@ -712,6 +718,7 @@ class PointageRepository {
         }
       }
       const getChunk = 20;
+      final fetchErrors = <String>[];
       for (int i = 0; i < allRefs.length; i += getChunk) {
         final chunk = allRefs.skip(i).take(getChunk).toList();
         try {
@@ -723,7 +730,12 @@ class PointageRepository {
               byId[ds.id] = PointageRecord.fromMap({...map, 'id': ds.id});
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          fetchErrors.add(e.toString());
+        }
+      }
+      if (fetchErrors.isNotEmpty) {
+        throw Exception('Erreur lors de la récupération des pointages (${fetchErrors.length} chunk(s) échoué(s)): ${fetchErrors.first}');
       }
     }
 
@@ -740,7 +752,10 @@ class PointageRepository {
         for (final d in snap.docs) {
           byId.putIfAbsent(d.id, () => PointageRecord.fromMap({...d.data(), 'id': d.id}));
         }
-      } catch (_) {}
+      } catch (e) {
+        // Query auxiliaire échouée — on continue sans interrompre (Renfort non-critique).
+        debugPrint('[PointageRepository] runQuery error: $e');
+      }
     }
 
     await runQuery(startLocal.toIso8601String(), endLocal.toIso8601String());
@@ -780,7 +795,9 @@ class PointageRepository {
               byId.putIfAbsent(ds.id, () => PointageRecord.fromMap({...map, 'id': ds.id}));
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('[PointageRepository] étape 3 fetch error: $e');
+        }
       }
     }
 
