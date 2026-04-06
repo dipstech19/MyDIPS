@@ -704,9 +704,18 @@ class _PointagePageState extends State<PointagePage> {
     final todayOnly = DateTime(now.year, now.month, now.day);
     final selectedReport = pointageProvider.selectedReportDate;
     final isViewingToday = selectedReport == null;
-    final logicalDay = selectedReport != null
-        ? DateTime(selectedReport.year, selectedReport.month, selectedReport.day)
-        : todayOnly;
+    // Aligner avec le flux Firestore (watchTodayPointage) : pour les shifts de nuit,
+    // le « jour pointage » peut être le jour civil précédent — sinon la fin de shift et le repos sont calculés sur le mauvais jour.
+    final DateTime logicalDay;
+    if (isViewingToday) {
+      logicalDay = getPointageDateForConfig(PointageHoursConfig.instance, now);
+    } else {
+      // isViewingToday == false ⇒ selectedReport != null
+      logicalDay = DateTime(selectedReport.year, selectedReport.month, selectedReport.day);
+    }
+    final isPastCalendarDay = logicalDay.isBefore(todayOnly);
+    /// Journée civile déjà terminée : le directeur peut clôturer l’équipe même sans entrée/sortie complètes (historique / oublis).
+    final allowIncompleteConfirmPastDay = auth.isDirecteur && isPastCalendarDay;
     /// Référence stable pour les fenêtres T/C (évite minuit sur un jour passé pour les shifts de nuit).
     final shiftWindowRef =
         isViewingToday ? now : DateTime(logicalDay.year, logicalDay.month, logicalDay.day, 12);
@@ -769,6 +778,7 @@ class _PointagePageState extends State<PointagePage> {
         g, employes, recordByEmployeId,
         renfortByEmployeId: renfortByEmployeId,
       );
+      if (workers.isEmpty) continue;
       groupeTeams.add((
         equipeId: 'groupe:${g.id}',
         equipeName: 'Groupe: ${g.nom}',
@@ -847,15 +857,17 @@ class _PointagePageState extends State<PointagePage> {
     /// True = ready to be confirmed by admin:
     /// - both driver + chef already submitted (locked)
     /// - and for "present" cases: entry + exit are marked
+    bool departureOkForAdmin(PointageRecord rec) {
+      return rec.departureStatus == DepartureStatus.finished ||
+          rec.departureStatus == DepartureStatus.stillWorking;
+    }
+
     bool isWorkerReadyForAdminConfirm(PointageRecord? rec) {
       if (rec == null) return false;
-      if (!rec.driverLocked || !rec.chefLocked) return false;
-
-      // If one of the roles didn't set a driver/chef status (still "unset"),
-      // we block admin confirmation even if locks exist for any reason.
-      if (rec.driverStatus == DriverPointageStatus.unset || rec.chefStatus == ChefPointageStatus.unset) {
-        return false;
-      }
+      if (rec.chefStatus == ChefPointageStatus.unset) return false;
+      final driverParticipated = rec.driverStatus != DriverPointageStatus.unset;
+      if (driverParticipated && !rec.driverLocked) return false;
+      if (!rec.chefLocked) return false;
 
       // Only enforce entry/exit for "present" confirmed by driver/chef statuses.
       // adminFinalStatus (training/leave/present) is handled separately (often without entry/exit).
@@ -865,17 +877,13 @@ class _PointagePageState extends State<PointagePage> {
 
       if (isPresentByDriverOrChef) {
         if (rec.arrivalMarkedAt == null) return false;
-        if (rec.departureStatus != DepartureStatus.finished) return false;
+        if (!departureOkForAdmin(rec)) return false;
         if (rec.departureMarkedAt == null) return false;
-        if (rec.submittedByDriverAt == null || rec.submittedByChefAt == null) return false;
+        if (rec.submittedByChefAt == null) return false;
+        if (driverParticipated && rec.submittedByDriverAt == null) return false;
 
-        // Extra safeguard:
-        // Make sure the latest Entrée/Sortie marking happened BEFORE both submissions,
-        // so we don't confirm when one role submits without having (or without seeing) the exit.
-        if (rec.arrivalMarkedAt!.isAfter(rec.submittedByDriverAt!)) return false;
-        if (rec.arrivalMarkedAt!.isAfter(rec.submittedByChefAt!)) return false;
-        if (rec.departureMarkedAt!.isAfter(rec.submittedByDriverAt!)) return false;
-        if (rec.departureMarkedAt!.isAfter(rec.submittedByChefAt!)) return false;
+        // Cohérence: entrée avant sortie (évite les données incohérentes).
+        if (rec.departureMarkedAt!.isBefore(rec.arrivalMarkedAt!)) return false;
       }
 
       return true;
@@ -1691,6 +1699,7 @@ class _PointagePageState extends State<PointagePage> {
                                       final teamWorkers = t.workers;
                                       final isGroupScope = t.equipeId == 'hors_equipe' || t.equipeId.startsWith('groupe:');
                                       int presentC = 0, absentC = 0;
+                                      int sortieOkC = 0;
                                       for (final w in teamWorkers) {
                                         final rec = getRecord(w.id);
                                         if (isGroupScope) {
@@ -1706,6 +1715,11 @@ class _PointagePageState extends State<PointagePage> {
                                         } else {
                                           if (rec?.isFinalPresent == true) {
                                             presentC++;
+                                            if (rec != null &&
+                                                (rec.departureStatus == DepartureStatus.finished ||
+                                                    rec.departureStatus == DepartureStatus.stillWorking)) {
+                                              sortieOkC++;
+                                            }
                                           } else {
                                             absentC++;
                                           }
@@ -1715,9 +1729,12 @@ class _PointagePageState extends State<PointagePage> {
                                       final canConfirm = teamWorkers.every((w) {
                                         final rec = getRecord(w.id);
                                         if (isGroupScope) {
-                                          return rec?.adminFinalStatus == AttendanceStatus.present ||
+                                          final ok = rec?.adminFinalStatus == AttendanceStatus.present ||
                                               rec?.adminFinalStatus == AttendanceStatus.absent;
+                                          if (ok) return true;
+                                          return allowIncompleteConfirmPastDay;
                                         }
+                                        if (allowIncompleteConfirmPastDay) return true;
                                         return isWorkerReadyForAdminConfirm(rec);
                                       });
 
@@ -1743,7 +1760,9 @@ class _PointagePageState extends State<PointagePage> {
                                         if (isGroupScope) {
                                           lockHint = 'Veuillez sélectionner Présent/Absent pour chaque personne.';
                                         } else {
-                                          lockHint = tr(context, 'pointage_admin_pointage_incomplete');
+                                          lockHint = presentC > 0
+                                              ? '${tr(context, 'pointage_admin_pointage_incomplete_short')} ($sortieOkC/$presentC sorties)'
+                                              : tr(context, 'pointage_admin_pointage_incomplete');
                                         }
                                       }
 
@@ -1795,6 +1814,21 @@ class _PointagePageState extends State<PointagePage> {
                                                         ),
                                                         child: Text('$absentC', style: TextStyle(fontSize: 11, color: Colors.red.shade700, fontWeight: FontWeight.w600)),
                                                       ),
+                                                      if (!isGroupScope) ...[
+                                                        const SizedBox(width: 3),
+                                                        Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                          decoration: BoxDecoration(
+                                                            color: Colors.teal.shade50,
+                                                            borderRadius: BorderRadius.circular(10),
+                                                            border: Border.all(color: Colors.teal.shade200),
+                                                          ),
+                                                          child: Text(
+                                                            '$sortieOkC',
+                                                            style: TextStyle(fontSize: 11, color: Colors.teal.shade800, fontWeight: FontWeight.w600),
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ],
                                                   ),
                                           ),
@@ -2788,7 +2822,7 @@ class _PointagePageState extends State<PointagePage> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Entrée: ${record?.arrivalMarkedAt != null ? 'OK' : '--'} | Sortie: ${record?.departureStatus == DepartureStatus.finished ? 'OK' : '--'}',
+                              'Entrée: ${record?.arrivalMarkedAt != null ? 'OK' : '--'} | Sortie: ${record != null && (record.departureStatus == DepartureStatus.finished || record.departureStatus == DepartureStatus.stillWorking) ? 'OK' : '--'}',
                               style: TextStyle(
                                 fontSize: mobile ? 10 : 9,
                                 color: Colors.blueGrey.shade700,
