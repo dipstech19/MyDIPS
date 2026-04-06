@@ -1721,33 +1721,20 @@ class _PointagePageState extends State<PointagePage> {
                                         return isWorkerReadyForAdminConfirm(rec);
                                       });
 
-                                      // ── Vérification fenêtre de confirmation ──
-                                      // Pour les équipes normales (non-group), le bouton Confirmer n'est
-                                      // actif qu'à partir de l'ouverture de la fenêtre de départ (−30 min
-                                      // avant fin de shift). Il reste actif jusqu'à la fin du lendemain
-                                      // (grace period = 1 jour complet) pour les oublis.
+                                      // ── Fenêtre de confirmation admin ──
+                                      // Équipes normales : pas avant la **fin du shift** (pas la fenêtre départ −30 min).
+                                      // Jour passé (sélecteur de date) : toujours confirmable (après coup).
                                       bool confirmWindowOpen = true;
                                       String? confirmWindowHint;
-                                      if (!isGroupScope && !isViewingToday == false) {
-                                        // Pour un jour passé affiché via sélecteur: toujours permis.
-                                      }
                                       if (!isGroupScope && isViewingToday) {
                                         final cfgEquipe = equipes.where((e) => e.id == t.equipeId).toList();
                                         final equipe = cfgEquipe.isNotEmpty ? cfgEquipe.first : null;
                                         final shiftForEquipe = equipe == null ? null : shiftsProvider.getShiftForEquipe(equipe.id, logicalDay);
                                         final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
-                                        // Fenêtre: depuis (fin shift − 30 min) jusqu'à (fin du lendemain 23:59).
-                                        final graceNextDay = Duration(
-                                          hours: (23 - (cfg.endHour)) + 24,
-                                          minutes: 59 - (cfg.endMinute),
-                                        );
-                                        confirmWindowOpen = cfg.canMarkDepartureNow(
-                                          shiftWindowRef,
-                                          graceAfter: graceNextDay,
-                                        );
+                                        confirmWindowOpen = cfg.canAdminConfirmAfterShiftEnd(now, logicalDay);
                                         if (!confirmWindowOpen) {
-                                          confirmWindowHint =
-                                              'Fenêtre de confirmation : à partir de ${cfg.departureWindowFormatted(shiftWindowRef).split(' – ').first}';
+                                          confirmWindowHint = tr(context, 'pointage_admin_confirm_after_shift')
+                                              .replaceFirst('%s', cfg.shiftEndFormattedOn(logicalDay));
                                         }
                                       }
 
@@ -1756,11 +1743,7 @@ class _PointagePageState extends State<PointagePage> {
                                         if (isGroupScope) {
                                           lockHint = 'Veuillez sélectionner Présent/Absent pour chaque personne.';
                                         } else {
-                                          final cfgEquipe = equipes.where((e) => e.id == t.equipeId).toList();
-                                          final equipe = cfgEquipe.isNotEmpty ? cfgEquipe.first : null;
-                                          final shiftForEquipe = equipe == null ? null : shiftsProvider.getShiftForEquipe(equipe.id, logicalDay);
-                                          final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
-                                          lockHint = cfg.departureWindowFormatted(shiftWindowRef).replaceAll(' – ', ' - ');
+                                          lockHint = tr(context, 'pointage_admin_pointage_incomplete');
                                         }
                                       }
 

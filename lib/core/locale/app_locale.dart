@@ -71,6 +71,8 @@ class AppTranslations {
     'pointage_chef_card_shift_early': 'Avant fin de shift',
     'pointage_chef_absents_note': 'Absents : %s',
     'pointage_chef_not_finished_title': 'N\'a pas terminé',
+    'pointage_admin_confirm_after_shift': 'Disponible après fin de shift (%s)',
+    'pointage_admin_pointage_incomplete': 'Pointage incomplet — finaliser présence et sortie',
     'pointage_report_locked_pending_sync':
         'Envoi enregistré. Synchronisation avec le serveur en cours…',
     'no_teams': 'Aucune équipe',
@@ -261,6 +263,8 @@ class AppTranslations {
     'pointage_chef_card_shift_early': 'قبل نهاية الشفت',
     'pointage_chef_absents_note': 'غائبون : %s',
     'pointage_chef_not_finished_title': 'لم ينهِ العمل',
+    'pointage_admin_confirm_after_shift': 'متاح بعد انتهاء الشفت (%s)',
+    'pointage_admin_pointage_incomplete': 'البوانتاج غير مكتمل — أكمل الحضور والخروج',
     'pointage_report_locked_pending_sync':
         'تم تسجيل الإرسال. جاري المزامنة مع الخادم…',
     'no_teams': 'لا توجد فرق',

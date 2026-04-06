@@ -68,6 +68,30 @@ class PointageHoursConfig {
         graceBefore: graceBefore + kPointageWindowOpenBefore, graceAfter: graceAfter);
   }
 
+  /// Instant de fin de shift pour un [logicalDay] affiché (admin / rapports).
+  DateTime shiftEndMomentOn(DateTime logicalDay) {
+    if (isRestDay) {
+      return DateTime(logicalDay.year, logicalDay.month, logicalDay.day);
+    }
+    return _shiftEndDateTime(this, logicalDay);
+  }
+
+  /// Confirmation admin (Directeur / Chef d'atelier) : **uniquement après** la fin du shift
+  /// pour le jour [logicalDay] — pas pendant la fenêtre « départ » (−30 min) réservée au pointage.
+  /// Après cette heure, la confirmation reste possible sans limite supérieure (réglage côté appel pour le « jour J »).
+  bool canAdminConfirmAfterShiftEnd(DateTime now, DateTime logicalDay) {
+    if (isRestDay) return false;
+    final end = shiftEndMomentOn(logicalDay);
+    return !now.isBefore(end);
+  }
+
+  /// Libellé court pour l'heure de fin de shift (ex. pour message admin).
+  String shiftEndFormattedOn(DateTime logicalDay) {
+    if (isRestDay) return '—';
+    final end = shiftEndMomentOn(logicalDay);
+    return _fmt(end);
+  }
+
   /// إرسال التقرير (شاف / سائق): نفس [نافذة تأكيد الخروج] — من نهاية الشيفت حتى نهاية الشيفت + ساعتان، ثم يُقفل.
   bool canSubmitReportNow(DateTime now,
       {Duration graceBefore = Duration.zero,
