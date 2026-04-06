@@ -219,6 +219,7 @@ class Mouvement {
   final String? fournisseurNom;  // NOUVEAU (dénormalisé pour affichage)
   final String? modulaireId;     // MODULAIRE (Base de vie)
   final String? modulaireNom;    // dénormalisé
+  final double? prixUnitaire;    // P.U en MAD (optionnel, entrées uniquement)
 
   const Mouvement({
     required this.id,
@@ -239,6 +240,7 @@ class Mouvement {
     this.fournisseurNom,
     this.modulaireId,
     this.modulaireNom,
+    this.prixUnitaire,
   });
 
   int get totalQte =>
@@ -262,6 +264,7 @@ class Mouvement {
     'fournisseurNom': fournisseurNom,
     'modulaireId': modulaireId,
     'modulaireNom': modulaireNom,
+    'prixUnitaire': prixUnitaire,
   };
 
   factory Mouvement.fromFirestore(DocumentSnapshot doc) {
@@ -289,6 +292,7 @@ class Mouvement {
       fournisseurNom: d['fournisseurNom'] as String?,
       modulaireId: d['modulaireId'] as String?,
       modulaireNom: d['modulaireNom'] as String?,
+      prixUnitaire: (d['prixUnitaire'] as num?)?.toDouble(),
     );
   }
 }
@@ -2144,6 +2148,7 @@ class _MouvFormState extends State<_MouvForm> {
 
   late DateTime _mvtDate;
   final _dateCtrl = TextEditingController(); // NOUVEAU : date manuelle
+  final _puCtrl = TextEditingController();   // P.U en MAD (optionnel)
 
   bool get _isEditing => widget.mouvement != null;
   bool get _isSortie => widget.type == 'sortie';
@@ -2204,6 +2209,7 @@ class _MouvFormState extends State<_MouvForm> {
       _selFournisseurId = m.fournisseurId;
       _selMag = m.magasin.isNotEmpty ? m.magasin : 'Base de vie';
       _selModulaireId = m.modulaireId;
+      if (m.prixUnitaire != null) _puCtrl.text = m.prixUnitaire!.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), '');
 
       if (_isSortie) { _newCatMode = false; _newProdMode = false; }
 
@@ -2243,7 +2249,7 @@ class _MouvFormState extends State<_MouvForm> {
   void dispose() {
     _newCatCtrl.dispose(); _newNomCtrl.dispose(); _newRefCtrl.dispose();
     _mvtNomCtrl.dispose(); _mvtRefCtrl.dispose(); _qteC.dispose();
-    _prodSearchC.dispose(); _preneurC.dispose(); _dateCtrl.dispose();
+    _prodSearchC.dispose(); _preneurC.dispose(); _dateCtrl.dispose(); _puCtrl.dispose();
     _newModulaireCtrl.dispose();
     for (final c in _varCtrl.values) c.dispose();
     super.dispose();
@@ -2382,6 +2388,7 @@ class _MouvFormState extends State<_MouvForm> {
         fournisseurNom: fouNom,
         modulaireId: modulaireId,
         modulaireNom: modulaireNom,
+        prixUnitaire: !_isSortie && _puCtrl.text.trim().isNotEmpty ? double.tryParse(_puCtrl.text.trim().replaceAll(',', '.')) : null,
       );
 
       if (_isEditing) {
@@ -2804,6 +2811,47 @@ class _MouvFormState extends State<_MouvForm> {
             const SizedBox(height: 20),
           ],
 
+          if (!_isSortie && (_selProd != null || _newProdMode)) ...[
+            Builder(builder: (ctx) {
+              final secNum = _selMag == 'Base de vie' ? '8' : '7';
+              return _SectionHdr('$secNum. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
+            }),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: kGreenLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kGreen.withValues(alpha: 0.2))),
+              child: Row(children: [
+                Icon(Icons.info_outline_rounded, size: 12, color: kGreen.withValues(alpha: 0.7)),
+                const SizedBox(width: 6),
+                const Flexible(child: Text('Optionnel — saisir le prix unitaire en MAD.', style: TextStyle(fontSize: 10, color: kGreen))),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 220),
+              child: TextField(
+                controller: _puCtrl,
+                style: const TextStyle(fontSize: 12, color: kText),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'Ex: 150.00',
+                  hintStyle: const TextStyle(fontSize: 12, color: kBorderMd),
+                  prefixIcon: const Icon(Icons.payments_outlined, size: 18, color: kMuted),
+                  suffixText: 'MAD',
+                  suffixStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kMuted),
+                  filled: true, fillColor: kSurface,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kGreen, width: 2)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
           if (_isSortie && (_selProd != null || _newProdMode)) ...[
             _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
             const SizedBox(height: 10),
@@ -3051,6 +3099,7 @@ class _DetailsOperationDialog extends StatelessWidget {
           if (m.preneurNom != null) _DetCard(Icons.person_outline_rounded, '👤 Prélevé par', m.preneurNom!),
           if (isE && m.fournisseurNom != null) _DetCard(Icons.business_rounded, '🏭 Fournisseur', m.fournisseurNom!),
           if (m.modulaireNom != null) _DetCard(Icons.home_work_rounded, '📦 Modulaire', m.modulaireNom!),
+          if (isE && m.prixUnitaire != null) _DetCard(Icons.payments_outlined, '💰 P.U', '${m.prixUnitaire!.toStringAsFixed(2)} MAD'),
         ]),
         const SizedBox(height: 14),
         Container(
