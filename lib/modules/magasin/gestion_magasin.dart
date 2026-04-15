@@ -2288,10 +2288,9 @@ class _MouvFormState extends State<_MouvForm> {
     final catOk = _newCatMode ? _newCatCtrl.text.trim().isNotEmpty : _selCat != null;
     final prodOk = _newProdMode ? (_newNomCtrl.text.trim().isNotEmpty && _newRefCtrl.text.trim().isNotEmpty) : _selProd != null;
     final qteOk = _hasVar ? _selVar.isNotEmpty : (int.tryParse(_qteC.text) ?? 0) > 0;
-    final prenOk = !_isSortie || _preneurC.text.trim().isNotEmpty;
     // Pour une entrée, le fournisseur est obligatoire
     final fouOk = _isSortie || _selFournisseurId != null;
-    return catOk && prodOk && qteOk && prenOk && fouOk && !_hasStockError;
+    return catOk && prodOk && qteOk && fouOk && !_hasStockError;
   }
 
   Future<void> _save() async {
@@ -2855,7 +2854,7 @@ class _MouvFormState extends State<_MouvForm> {
           if (_isSortie && (_selProd != null || _newProdMode)) ...[
             _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
             const SizedBox(height: 10),
-            _StyledTF(ctrl: _preneurC, hint: 'Cliquez pour choisir…', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
+            _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
           ],
         ],
       ]),
