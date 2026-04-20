@@ -18,7 +18,7 @@ import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
-import '../modules/pointage/validated_excels_page.dart';
+import '../modules/Rapports_factures/rapports_factures_page.dart';
 import '../modules/overtime/overtime_page.dart';
 import '../modules/overtime/overtime_provider.dart';
 import '../modules/groupes/groupe_pointage_page.dart';
@@ -696,7 +696,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       case 'stock':
         return GestionMagasinPage();
       case 'reports':
-        return const ValidatedExcelsPage();
+        return const RapportsFacturesPage();
       case 'settings':
         return const ParametresPage();
       case 'demandes':
