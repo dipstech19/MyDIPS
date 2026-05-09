@@ -3,11 +3,14 @@
 //  Connecté à Firestore via LogistiqueService
 //  Tous les modèles sont importés depuis vehicule_model.dart
 // ─────────────────────────────────────────────────────────────────────────────
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../core/utils/responsive.dart';   // ← même chemin que les autres modules
-import 'vehicule_model.dart';                // ← même dossier, pas de changement
-import 'logistique_service.dart';            // ← même dossier, pas de changement
+import 'package:excel/excel.dart' as xl;
+import 'package:intl/intl.dart';
+import '../../core/utils/responsive.dart';
+import 'vehicule_model.dart';
+import 'logistique_service.dart';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const _cBlue       = Color(0xFF1565C0);
@@ -681,6 +684,206 @@ class _FicheTab extends StatefulWidget {
 class _FicheTabState extends State<_FicheTab> {
   bool _editing = false;
 
+  Future<void> _exportExcel(BuildContext ctx, Vehicule v) async {
+    try {
+      final book = xl.Excel.createExcel();
+
+      // ── Styles ──────────────────────────────────────────────────────────────
+      xl.CellStyle headerStyle() => xl.CellStyle(
+            bold: true,
+            fontColorHex: xl.ExcelColor.fromHexString('#FFFFFF'),
+            backgroundColorHex: xl.ExcelColor.fromHexString('#1565C0'),
+            horizontalAlign: xl.HorizontalAlign.Center,
+            verticalAlign: xl.VerticalAlign.Center,
+          );
+
+      xl.CellStyle titleStyle() => xl.CellStyle(
+            bold: true,
+            fontColorHex: xl.ExcelColor.fromHexString('#0D47A1'),
+          );
+
+      xl.CellStyle totalStyle(String hex) => xl.CellStyle(
+            bold: true,
+            backgroundColorHex: xl.ExcelColor.fromHexString(hex),
+          );
+
+      xl.CellStyle dataStyle(bool alt) => xl.CellStyle(
+            backgroundColorHex:
+                xl.ExcelColor.fromHexString(alt ? '#F0F4FA' : '#FFFFFF'),
+          );
+
+      void cell(xl.Sheet s, int row, int col, dynamic value,
+          {xl.CellStyle? style}) {
+        xl.CellValue cv;
+        if (value is double) {
+          cv = xl.DoubleCellValue(value);
+        } else if (value is int) {
+          cv = xl.IntCellValue(value);
+        } else {
+          cv = xl.TextCellValue(value.toString());
+        }
+        s.updateCell(
+          xl.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row),
+          cv,
+          cellStyle: style,
+        );
+      }
+
+      // ── Feuille 1 : Vidanges ─────────────────────────────────────────────
+      final sv = book['Vidanges'];
+      final defaultSheet = book.getDefaultSheet();
+      if (defaultSheet != null && defaultSheet != 'Vidanges') {
+        book.delete(defaultSheet);
+      }
+
+      cell(sv, 0, 0,
+          'Historique Vidanges — ${v.matricule}  (${v.marque} ${v.modele})',
+          style: titleStyle());
+
+      final hdrsV = [
+        'Date', 'Kilométrage (km)', 'Prochaine Vidange (km)',
+        'Filtre Huile', 'Filtre Air', 'Filtre Gasoil', 'Montant (MAD)',
+      ];
+      for (var c = 0; c < hdrsV.length; c++) {
+        cell(sv, 2, c, hdrsV[c], style: headerStyle());
+      }
+      sv.setColumnWidth(0, 14); sv.setColumnWidth(1, 20);
+      sv.setColumnWidth(2, 22); sv.setColumnWidth(3, 14);
+      sv.setColumnWidth(4, 14); sv.setColumnWidth(5, 16);
+      sv.setColumnWidth(6, 16);
+
+      for (var i = 0; i < v.vidanges.length; i++) {
+        final vid = v.vidanges[i];
+        final s = dataStyle(i.isOdd);
+        cell(sv, i + 3, 0, _fmtDate(vid.date), style: s);
+        cell(sv, i + 3, 1, vid.kilometrage, style: s);
+        cell(sv, i + 3, 2, vid.prochaineVidange, style: s);
+        cell(sv, i + 3, 3, vid.filtreHuile ? 'Oui' : 'Non', style: s);
+        cell(sv, i + 3, 4, vid.filtreAir ? 'Oui' : 'Non', style: s);
+        cell(sv, i + 3, 5, vid.filtreGasoil ? 'Oui' : 'Non', style: s);
+        cell(sv, i + 3, 6, vid.montant, style: s);
+      }
+      if (v.vidanges.isNotEmpty) {
+        final tr = v.vidanges.length + 3;
+        final ts = totalStyle('#E3F2FD');
+        cell(sv, tr, 0, 'TOTAL', style: ts);
+        cell(sv, tr, 6,
+            v.vidanges.fold(0.0, (sum, e) => sum + e.montant), style: ts);
+      }
+
+      // ── Feuille 2 : Gasoil ───────────────────────────────────────────────
+      final sg = book['Gasoil'];
+
+      cell(sg, 0, 0,
+          'Historique Gasoil — ${v.matricule}  (${v.marque} ${v.modele})',
+          style: titleStyle());
+
+      final hdrsG = [
+        'Date', 'Kilométrage (km)', 'Litres',
+        'Prix/Litre (MAD)', 'Montant (MAD)',
+        'Km parcourus', 'Jours depuis plein précédent',
+      ];
+      for (var c = 0; c < hdrsG.length; c++) {
+        cell(sg, 2, c, hdrsG[c], style: headerStyle());
+      }
+      sg.setColumnWidth(0, 14); sg.setColumnWidth(1, 20);
+      sg.setColumnWidth(2, 10); sg.setColumnWidth(3, 20);
+      sg.setColumnWidth(4, 18); sg.setColumnWidth(5, 16);
+      sg.setColumnWidth(6, 28);
+
+      final pleins = v.pleins; // trié du plus récent (0) au plus ancien
+      for (var i = 0; i < pleins.length; i++) {
+        final p = pleins[i];
+        final s = dataStyle(i.isOdd);
+        // km et jours : nouveau plein (i) vs ancien plein (i+1)
+        double? km;
+        int? jours;
+        if (i < pleins.length - 1) {
+          final older = pleins[i + 1];
+          final dist = p.kilometrage - older.kilometrage;
+          if (dist > 0) km = dist;
+          jours = p.date.difference(older.date).inDays.abs();
+        }
+        cell(sg, i + 3, 0, _fmtDate(p.date), style: s);
+        cell(sg, i + 3, 1, p.kilometrage, style: s);
+        cell(sg, i + 3, 2, p.litres, style: s);
+        cell(sg, i + 3, 3, p.prixParLitre, style: s);
+        cell(sg, i + 3, 4, p.montant, style: s);
+        cell(sg, i + 3, 5, km != null ? '${km.toStringAsFixed(0)} km' : '—',
+            style: s);
+        cell(sg, i + 3, 6,
+            jours != null ? '$jours jours' : 'Premier plein', style: s);
+      }
+      if (pleins.isNotEmpty) {
+        final tr = pleins.length + 3;
+        final ts = totalStyle('#FEF3C7');
+        cell(sg, tr, 0, 'TOTAL', style: ts);
+        cell(sg, tr, 2,
+            pleins.fold(0.0, (sum, e) => sum + e.litres), style: ts);
+        cell(sg, tr, 4,
+            pleins.fold(0.0, (sum, e) => sum + e.montant), style: ts);
+      }
+
+      // ── Feuille 3 : Réparations ──────────────────────────────────────────
+      final sr = book['Réparations'];
+
+      cell(sr, 0, 0,
+          'Historique Réparations — ${v.matricule}  (${v.marque} ${v.modele})',
+          style: titleStyle());
+
+      final hdrsR = [
+        'Date', 'Description', 'Pièces Changées', 'Montant (MAD)',
+      ];
+      for (var c = 0; c < hdrsR.length; c++) {
+        cell(sr, 2, c, hdrsR[c], style: headerStyle());
+      }
+      sr.setColumnWidth(0, 14); sr.setColumnWidth(1, 40);
+      sr.setColumnWidth(2, 50); sr.setColumnWidth(3, 18);
+
+      for (var i = 0; i < v.reparations.length; i++) {
+        final r = v.reparations[i];
+        final s = dataStyle(i.isOdd);
+        cell(sr, i + 3, 0, _fmtDate(r.date), style: s);
+        cell(sr, i + 3, 1,
+            r.description.isEmpty ? '—' : r.description, style: s);
+        cell(sr, i + 3, 2,
+            r.piecesChangees.isEmpty ? '—' : r.piecesChangees.join(', '),
+            style: s);
+        cell(sr, i + 3, 3, r.montant, style: s);
+      }
+      if (v.reparations.isNotEmpty) {
+        final tr = v.reparations.length + 3;
+        final ts = totalStyle('#FFEDD5');
+        cell(sr, tr, 0, 'TOTAL', style: ts);
+        cell(sr, tr, 3,
+            v.reparations.fold(0.0, (sum, e) => sum + e.montant), style: ts);
+      }
+
+      // ── Sauvegarde ───────────────────────────────────────────────────────
+      final home = Platform.environment['USERPROFILE'] ??
+          Platform.environment['HOME'] ?? '';
+      final sep = Platform.pathSeparator;
+      final dossier = '${home}${sep}Desktop${sep}Rapports Logistique';
+      final dir = Directory(dossier);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+
+      final dateStr = DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now());
+      final fileName =
+          'Etat_${v.marque.replaceAll(' ', '_')}_${v.modele.replaceAll(' ', '_')}_$dateStr.xlsx';
+      final file = File('$dossier$sep$fileName');
+
+      final bytes = book.encode();
+      if (bytes != null) {
+        await file.writeAsBytes(bytes);
+        if (ctx.mounted) {
+          _showToast(ctx, '✓  Exporté → Desktop/Rapports Logistique/$fileName');
+        }
+      }
+    } catch (e) {
+      if (ctx.mounted) _showToast(ctx, '⚠  Erreur export : $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = pagePadding(context);
@@ -707,6 +910,13 @@ class _FicheTabState extends State<_FicheTab> {
       padding: EdgeInsets.all(p),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          _OutlineBtn(
+            icon: Icons.table_chart_outlined,
+            label: 'Exporter Excel',
+            color: _cSuccess,
+            onTap: () => _exportExcel(context, widget.vehicule),
+          ),
+          const SizedBox(width: 8),
           _OutlineBtn(icon: Icons.edit_rounded, label: 'Modifier', color: _cOrange,
               onTap: () => setState(() => _editing = true)),
           const SizedBox(width: 8),
@@ -940,17 +1150,25 @@ class _GasoilTabState extends State<_GasoilTab> {
 
   List<Map<String, dynamic>> _withConso() {
     final pl = widget.pleins;
+    // pl[0] = plein le plus récent, pl[last] = le plus ancien
+    // Le plein le plus récent (index 0) n'a pas encore de stats (en attente du prochain plein).
+    // Pour chaque plein à index e.key > 0, on compare avec le plein plus récent (e.key - 1) :
+    //   km    = nouveau.kilometrage - ancien.kilometrage
+    //   jours = nouveau.date - ancien.date
     return pl.asMap().entries.map((e) {
-      double? c100, cMAD;
+      double? c100, cMAD, km;
+      int? jours;
       if (e.key > 0) {
-        final newer = pl[e.key - 1];
-        final dist  = newer.kilometrage - pl[e.key].kilometrage;
+        final nouveau = pl[e.key - 1];
+        final dist = nouveau.kilometrage - pl[e.key].kilometrage;
         if (dist > 0) {
-          c100 = (newer.litres  / dist) * 100;
-          cMAD = (newer.montant / dist) * 100;
+          c100 = (nouveau.litres  / dist) * 100;
+          cMAD = (nouveau.montant / dist) * 100;
+          km   = dist;
         }
+        jours = nouveau.date.difference(pl[e.key].date).inDays.abs();
       }
-      return {'plein': e.value, 'c100': c100, 'cMAD': cMAD};
+      return {'plein': e.value, 'c100': c100, 'cMAD': cMAD, 'km': km, 'jours': jours};
     }).toList();
   }
 
@@ -983,20 +1201,22 @@ class _GasoilTabState extends State<_GasoilTab> {
                   plein: r['plein'] as PleinGasoil,
                   conso100km: r['c100'] as double?,
                   consoMAD: r['cMAD'] as double?,
+                  kmEntrePleins: r['km'] as double?,
+                  joursEntrePleins: r['jours'] as int?,
                   onEdit: () => _openForm(v: r['plein']),
                   onDelete: () async {
                     final ok = await _confirmDlg(context, title: 'Supprimer ce plein', msg: 'Cette action est irréversible.', danger: true);
                     if (ok == true) _delete(r['plein']);
                   },
-                  onDetail: () => _showGasoilDetail(context, r['plein'], r['c100'], r['cMAD']),
+                  onDetail: () => _showGasoilDetail(context, r['plein'], r['c100'], r['cMAD'], r['km'], r['jours']),
                 )).toList()),
       ]),
     );
   }
 
-  void _showGasoilDetail(BuildContext ctx, PleinGasoil p, double? c100, double? cMAD) {
+  void _showGasoilDetail(BuildContext ctx, PleinGasoil p, double? c100, double? cMAD, double? km, int? jours) {
     showModalBottomSheet(context: ctx, isScrollControlled: true, backgroundColor: Colors.transparent,
-        builder: (_) => _GasoilDetailSheet(plein: p, conso100km: c100, consoMAD: cMAD));
+        builder: (_) => _GasoilDetailSheet(plein: p, conso100km: c100, consoMAD: cMAD, kmEntrePleins: km, joursEntrePleins: jours));
   }
 }
 
@@ -1839,29 +2059,55 @@ class _GasoilFormState extends State<_GasoilForm> {
 
 class _GasoilCard extends StatelessWidget {
   final PleinGasoil plein;
-  final double? conso100km, consoMAD;
+  final double? conso100km, consoMAD, kmEntrePleins;
+  final int? joursEntrePleins;
   final VoidCallback onEdit, onDelete, onDetail;
-  const _GasoilCard({required this.plein, this.conso100km, this.consoMAD, required this.onEdit, required this.onDelete, required this.onDetail});
+  const _GasoilCard({
+    required this.plein,
+    this.conso100km,
+    this.consoMAD,
+    this.kmEntrePleins,
+    this.joursEntrePleins,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onDetail,
+  });
+
   @override
   Widget build(BuildContext context) {
+    final hasStats = kmEntrePleins != null || joursEntrePleins != null;
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(color: _cCard, borderRadius: BorderRadius.circular(16), border: Border.all(color: _cBorder),
-          boxShadow: [BoxShadow(color: _cBlue.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 3))]),
-      child: Padding(padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Container(width: 42, height: 42,
-                decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFFD97706), Color(0xFFFBBF24)], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.local_gas_station_rounded, color: Colors.white, size: 19)),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: _cCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cBorder),
+        boxShadow: [BoxShadow(color: _cBlue.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 4))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        // ── En-tête principal ──────────────────────────────────────────────
+        Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFFD97706), Color(0xFFFBBF24)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                borderRadius: BorderRadius.circular(13),
+                boxShadow: [BoxShadow(color: const Color(0xFFD97706).withOpacity(0.25), blurRadius: 8, offset: const Offset(0, 3))],
+              ),
+              child: const Icon(Icons.local_gas_station_rounded, color: Colors.white, size: 20),
+            ),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
               Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                Text(_fmtDate(plein.date), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: _cText)),
+                Text(_fmtDate(plein.date), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: _cText)),
                 _Tag(label: '${_fmtKm(plein.kilometrage)} km', color: _cWarningBg, textColor: _cWarning),
               ]),
               const SizedBox(height: 4),
-              Text('${plein.litres.toStringAsFixed(1)} L  ·  ${plein.prixParLitre.toStringAsFixed(2)} MAD/L  ·  ${plein.montant.toStringAsFixed(2)} MAD', style: const TextStyle(fontSize: 11.5, color: _cSub)),
+              Text(
+                '${plein.litres.toStringAsFixed(1)} L  ·  ${plein.prixParLitre.toStringAsFixed(2)} MAD/L  ·  ${plein.montant.toStringAsFixed(2)} MAD',
+                style: const TextStyle(fontSize: 11.5, color: _cSub),
+              ),
               if (conso100km != null) ...[
                 const SizedBox(height: 5),
                 Wrap(spacing: 6, runSpacing: 4, children: [
@@ -1871,24 +2117,73 @@ class _GasoilCard extends StatelessWidget {
               ],
             ])),
           ]),
+        ),
+
+        // ── Métriques km / jours entre pleins ─────────────────────────────
+        if (hasStats) ...[
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: _cBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _cBorder),
+              ),
+              child: Row(children: [
+                if (kmEntrePleins != null) ...[
+                  Container(
+                    width: 28, height: 28,
+                    decoration: BoxDecoration(color: _cBlueFaint, borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.route_outlined, size: 14, color: _cBlue),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                    Text('${_fmtKm(kmEntrePleins!)} km', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _cBlue)),
+                    const Text('parcourus', style: TextStyle(fontSize: 10, color: _cSub)),
+                  ]),
+                ],
+                if (kmEntrePleins != null && joursEntrePleins != null)
+                  Container(margin: const EdgeInsets.symmetric(horizontal: 12), width: 1, height: 28, color: _cBorder),
+                if (joursEntrePleins != null) ...[
+                  Container(
+                    width: 28, height: 28,
+                    decoration: BoxDecoration(color: _cSuccessBg, borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.calendar_month_outlined, size: 14, color: _cSuccess),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                    Text('$joursEntrePleins jours', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _cSuccess)),
+                    const Text('entre pleins', style: TextStyle(fontSize: 10, color: _cSub)),
+                  ]),
+                ],
+              ]),
+            ),
+          ),
+        ],
+
+        // ── Actions ────────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
             _ActionBtn(icon: Icons.visibility_outlined, color: _cBlue, tooltip: 'Détails', onTap: onDetail),
             const SizedBox(width: 6),
             _ActionBtn(icon: Icons.edit_outlined, color: _cOrange, tooltip: 'Modifier', onTap: onEdit),
             const SizedBox(width: 6),
             _ActionBtn(icon: Icons.delete_outline_rounded, color: _cDanger, tooltip: 'Supprimer', onTap: onDelete),
           ]),
-        ]),
-      ),
+        ),
+      ]),
     );
   }
 }
 
 class _GasoilDetailSheet extends StatelessWidget {
   final PleinGasoil plein;
-  final double? conso100km, consoMAD;
-  const _GasoilDetailSheet({required this.plein, this.conso100km, this.consoMAD});
+  final double? conso100km, consoMAD, kmEntrePleins;
+  final int? joursEntrePleins;
+  const _GasoilDetailSheet({required this.plein, this.conso100km, this.consoMAD, this.kmEntrePleins, this.joursEntrePleins});
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1915,17 +2210,40 @@ class _GasoilDetailSheet extends StatelessWidget {
             _SheetRow(icon: Icons.water_drop_outlined, label: 'Litres', value: '${plein.litres.toStringAsFixed(1)} L'),
             _SheetRow(icon: Icons.sell_outlined, label: 'Prix / litre', value: '${plein.prixParLitre.toStringAsFixed(2)} MAD'),
             _SheetRow(icon: Icons.payments_outlined, label: 'Montant total', value: '${plein.montant.toStringAsFixed(2)} MAD', highlight: true),
-            if (conso100km != null) ...[
+            if (conso100km != null || kmEntrePleins != null || joursEntrePleins != null) ...[
               const Divider(height: 20, color: _cBorder),
-              Row(children: [
-                Expanded(child: _ConsoBox(label: 'Consommation', value: '${conso100km!.toStringAsFixed(1)}', unit: 'L / 100 km', color: _cBlueFaint, textColor: _cBlue)),
-                const SizedBox(width: 10),
-                Expanded(child: _ConsoBox(label: 'Coût carburant', value: '${consoMAD!.toStringAsFixed(1)}', unit: 'MAD / 100 km', color: _cWarningBg, textColor: _cWarning)),
-              ]),
+              if (kmEntrePleins != null || joursEntrePleins != null) ...[
+                Row(children: [
+                  if (kmEntrePleins != null)
+                    Expanded(child: _ConsoBox(
+                      label: 'Distance parcourue',
+                      value: _fmtKm(kmEntrePleins!),
+                      unit: 'km entre pleins',
+                      color: _cBlueFaint,
+                      textColor: _cBlue,
+                    )),
+                  if (kmEntrePleins != null && joursEntrePleins != null) const SizedBox(width: 10),
+                  if (joursEntrePleins != null)
+                    Expanded(child: _ConsoBox(
+                      label: 'Intervalle',
+                      value: '$joursEntrePleins',
+                      unit: 'jours entre pleins',
+                      color: _cSuccessBg,
+                      textColor: _cSuccess,
+                    )),
+                ]),
+                const SizedBox(height: 10),
+              ],
+              if (conso100km != null)
+                Row(children: [
+                  Expanded(child: _ConsoBox(label: 'Consommation', value: conso100km!.toStringAsFixed(1), unit: 'L / 100 km', color: _cWarningBg, textColor: _cWarning)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _ConsoBox(label: 'Coût carburant', value: consoMAD!.toStringAsFixed(1), unit: 'MAD / 100 km', color: _cOrangeBg, textColor: _cOrange)),
+                ]),
             ] else
               Container(padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(color: _cBg, borderRadius: BorderRadius.circular(10)),
-                  child: const Row(children: [Icon(Icons.info_outline_rounded, color: _cSub, size: 14), SizedBox(width: 8), Flexible(child: Text('Consommation disponible à partir du 2ème plein', style: TextStyle(fontSize: 12, color: _cSub)))])),
+                  child: const Row(children: [Icon(Icons.info_outline_rounded, color: _cSub, size: 14), SizedBox(width: 8), Flexible(child: Text('Statistiques disponibles à partir du 2ème plein', style: TextStyle(fontSize: 12, color: _cSub)))])),
           ]),
         ),
       ]),
