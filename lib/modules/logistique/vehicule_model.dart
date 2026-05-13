@@ -215,6 +215,7 @@ class Vehicule {
   final String marque;
   final String modele;
   final double kilometrage;
+  final String siteId;
 
   // Dates juridiques
   final DateTime? expirationCarteGrise;
@@ -235,6 +236,7 @@ class Vehicule {
     required this.marque,
     required this.modele,
     required this.kilometrage,
+    this.siteId = 'jadida',
     this.expirationCarteGrise,
     this.expirationAssurance,
     this.expirationVisite,
@@ -255,6 +257,7 @@ class Vehicule {
         'marque': marque,
         'modele': modele,
         'kilometrage': kilometrage,
+        'siteId': siteId,
         'expirationCarteGrise':
             expirationCarteGrise != null ? Timestamp.fromDate(expirationCarteGrise!) : null,
         'expirationAssurance':
@@ -280,6 +283,7 @@ class Vehicule {
       marque: d['marque'] as String? ?? '',
       modele: d['modele'] as String? ?? '',
       kilometrage: (d['kilometrage'] as num?)?.toDouble() ?? 0,
+      siteId: d['siteId'] as String? ?? 'jadida',
       expirationCarteGrise: (d['expirationCarteGrise'] as Timestamp?)?.toDate(),
       expirationAssurance: (d['expirationAssurance'] as Timestamp?)?.toDate(),
       expirationVisite: (d['expirationVisite'] as Timestamp?)?.toDate(),
@@ -297,6 +301,7 @@ class Vehicule {
     String? marque,
     String? modele,
     double? kilometrage,
+    String? siteId,
     DateTime? expirationCarteGrise,
     DateTime? expirationAssurance,
     DateTime? expirationVisite,
@@ -313,6 +318,7 @@ class Vehicule {
         marque: marque ?? this.marque,
         modele: modele ?? this.modele,
         kilometrage: kilometrage ?? this.kilometrage,
+        siteId: siteId ?? this.siteId,
         expirationCarteGrise: expirationCarteGrise ?? this.expirationCarteGrise,
         expirationAssurance: expirationAssurance ?? this.expirationAssurance,
         expirationVisite: expirationVisite ?? this.expirationVisite,

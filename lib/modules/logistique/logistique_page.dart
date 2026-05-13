@@ -8,6 +8,10 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' as xl;
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../../core/auth/auth_provider.dart';
+import '../../core/site/site_model.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import 'vehicule_model.dart';
 import 'logistique_service.dart';
@@ -59,6 +63,8 @@ class _LogistiquePageState extends State<LogistiquePage> {
   Widget build(BuildContext context) {
     final p = pagePadding(context);
     final mobile = isMobile(context);
+    final auth = context.watch<AuthProvider>();
+    final site = context.watch<SiteProvider>();
 
     return Scaffold(
       backgroundColor: _cBg,
@@ -160,7 +166,12 @@ class _LogistiquePageState extends State<LogistiquePage> {
               return Center(child: _ErrorState(message: snapshot.error.toString()));
             }
 
-            final vehicules = snapshot.data ?? [];
+            final vehicules = SiteId.filterBySite(
+              snapshot.data ?? [],
+              auth.currentUser?.allowedSiteIds,
+              auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+              (v) => v.siteId,
+            );
 
             return SingleChildScrollView(
               padding: EdgeInsets.all(p),
@@ -454,6 +465,7 @@ class _VehiculeFormState extends State<_VehiculeForm> {
   late final TextEditingController _matricule, _marque, _modele, _km;
   DateTime? _exCG, _exAss, _exVis, _exAT, _dateTaxe, _exBadge;
   bool _loading = false;
+  late String _siteId;
 
   @override
   void initState() {
@@ -466,6 +478,7 @@ class _VehiculeFormState extends State<_VehiculeForm> {
     _exCG = e?.expirationCarteGrise; _exAss = e?.expirationAssurance;
     _exVis = e?.expirationVisite;    _exAT  = e?.expirationAutorisationTransport;
     _dateTaxe = e?.dateTaxe;         _exBadge = e?.expirationBadge;
+    _siteId = e?.siteId ?? SiteId.jadida;
   }
 
   @override
@@ -482,6 +495,7 @@ class _VehiculeFormState extends State<_VehiculeForm> {
       matricule: _matricule.text.trim(), marque: _marque.text.trim(),
       modele: _modele.text.trim(),
       kilometrage: double.tryParse(_km.text.replaceAll(' ', '')) ?? 0,
+      siteId: _siteId,
       expirationCarteGrise: _exCG, expirationAssurance: _exAss,
       expirationVisite: _exVis, expirationAutorisationTransport: _exAT,
       dateTaxe: _dateTaxe, expirationBadge: _exBadge,
@@ -516,6 +530,45 @@ class _VehiculeFormState extends State<_VehiculeForm> {
         const SizedBox(height: 10),
         _Field(ctrl: _km, label: 'Kilométrage actuel (km)',
             icon: Icons.speed_outlined, type: TextInputType.number, req: true),
+        const SizedBox(height: 10),
+        // ── Site (compact, aligné à gauche) ─────────────────────────────────
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: mobile ? double.infinity : 200,
+            child: InputDecorator(
+              decoration: InputDecoration(
+                labelText: 'Site',
+                labelStyle: const TextStyle(fontSize: 12.5, color: _cSub),
+                prefixIcon: const Icon(Icons.location_on_outlined, size: 16, color: _cBlue),
+                filled: true,
+                fillColor: _cBg,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: _cBorder, width: 1.2),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: _cBlue, width: 1.8),
+                ),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _siteId,
+                  isDense: true,
+                  isExpanded: true,
+                  style: const TextStyle(fontSize: 13, color: _cText),
+                  items: [
+                    DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
+                    DropdownMenuItem(value: SiteId.safi,   child: Text(SiteId.labelFr(SiteId.safi))),
+                  ],
+                  onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
+                ),
+              ),
+            ),
+          ),
+        ),
         const SizedBox(height: 20),
         const _SecLabel(label: 'DOCUMENTS & EXPIRATIONS'),
         const SizedBox(height: 12),
