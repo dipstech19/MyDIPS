@@ -6,10 +6,21 @@
 //  + Filtre par fournisseur dans l'historique
 // =============================================================================
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import 'package:excel/excel.dart' hide Border;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import '../../core/auth/auth_provider.dart';
+import '../../core/site/site_model.dart';
+import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
@@ -17,6 +28,9 @@ import '../employees/models/employe_model.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 //  SECTION 1 — MODÈLES
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Normalise les anciens siteId ('default' ou null) vers 'jadida'.
+String _normSite(String? v) => (v == null || v == 'default') ? SiteId.jadida : v;
 
 class LigneMouvement {
   final String unite;
@@ -125,7 +139,7 @@ class Produit {
     this.groupeUniteLabel,
     required this.quantiteStock,
     required this.variantes,
-    this.siteId = 'default',
+    this.siteId = 'jadida',
     this.fournisseurId,
     this.modulaireId,
     this.modulaireNom,
@@ -133,8 +147,16 @@ class Produit {
 
   int get total =>
       aVariantes ? variantes.fold(0, (s, v) => s + v.quantite) : quantiteStock;
-  bool get rupture => total == 0;
-  bool get bas => !rupture && total <= 5;
+
+  // Rupture : au moins une taille (ou le produit sans taille) à 0
+  bool get rupture => aVariantes
+      ? variantes.any((v) => v.quantite == 0)
+      : quantiteStock == 0;
+
+  // Bas : au moins une taille (ou le produit sans taille) entre 1 et 2 inclus
+  bool get bas => aVariantes
+      ? variantes.any((v) => v.quantite > 0 && v.quantite <= 2)
+      : (quantiteStock > 0 && quantiteStock <= 2);
 
   Map<String, dynamic> toFirestore() => {
     'nom': nom,
@@ -168,7 +190,7 @@ class Produit {
           ?.map((v) => VarianteProduit.fromMap(v as Map<String, dynamic>))
           .toList() ??
           [],
-      siteId: d['siteId'] as String? ?? 'default',
+      siteId: _normSite(d['siteId'] as String?),
       fournisseurId: d['fournisseurId'] as String?,
       modulaireId: d['modulaireId'] as String?,
       modulaireNom: d['modulaireNom'] as String?,
@@ -235,7 +257,7 @@ class Mouvement {
     required this.lignes,
     required this.date,
     this.preneurNom,
-    this.siteId = 'default',
+    this.siteId = 'jadida',
     this.fournisseurId,
     this.fournisseurNom,
     this.modulaireId,
@@ -287,7 +309,7 @@ class Mouvement {
           [],
       date: (d['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
       preneurNom: d['preneurNom'] as String?,
-      siteId: d['siteId'] as String? ?? 'default',
+      siteId: _normSite(d['siteId'] as String?),
       fournisseurId: d['fournisseurId'] as String?,
       fournisseurNom: d['fournisseurNom'] as String?,
       modulaireId: d['modulaireId'] as String?,
@@ -687,9 +709,177 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     super.dispose();
   }
 
+  void _showStockAlert(BuildContext ctx, List<Produit> produits, String titre, Color color, Color colorLt, {required bool isRupture}) {
+    showDialog(
+      context: ctx,
+      builder: (_) => _StockAlertDialog(produits: produits, titre: titre, color: color, colorLt: colorLt, isRupture: isRupture),
+    );
+  }
+
+  Future<void> _exportExcel(
+    BuildContext ctx,
+    List<Produit> produits,
+    List<Mouvement> entrees,
+    List<Mouvement> sorties,
+  ) async {
+    try {
+      final wb = Excel.createExcel();
+      final fmt = DateFormat('dd/MM/yyyy');
+
+      final hStyle = CellStyle(
+        bold: true,
+        backgroundColorHex: ExcelColor.fromHexString('#1D4ED8'),
+        fontColorHex: ExcelColor.fromHexString('#FFFFFF'),
+      );
+
+      void writeHeader(Sheet sheet, List<String> cols) {
+        for (var c = 0; c < cols.length; c++) {
+          final cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: c, rowIndex: 0));
+          cell.value = TextCellValue(cols[c]);
+          cell.cellStyle = hStyle;
+        }
+      }
+
+      // ── Feuille 1 : Stock Actuel ───────────────────────────────────────────
+      final stock = wb['Stock Actuel'];
+      wb.setDefaultSheet('Stock Actuel');
+      wb.delete('Sheet1');
+      writeHeader(stock, const ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'TAILLE', 'QUANTITÉ']);
+
+      for (final p in produits) {
+        if (!p.aVariantes) {
+          stock.appendRow([
+            TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
+            TextCellValue(p.magasin), TextCellValue(p.modulaireNom ?? '-'),
+            TextCellValue('-'), IntCellValue(p.quantiteStock),
+          ]);
+        } else {
+          for (final v in p.variantes) {
+            stock.appendRow([
+              TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
+              TextCellValue(p.magasin), TextCellValue(p.modulaireNom ?? '-'),
+              TextCellValue(v.unite), IntCellValue(v.quantite),
+            ]);
+          }
+        }
+      }
+
+      // ── Feuille 2 : Entrées ────────────────────────────────────────────────
+      final sheetEntrees = wb['Entrées'];
+      writeHeader(sheetEntrees, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'FOURNISSEUR', 'TAILLE', 'QUANTITÉ', 'PRIX UNITAIRE (MAD)']);
+
+      for (final m in entrees) {
+        final date = TextCellValue(fmt.format(m.date));
+        final prix = m.prixUnitaire != null ? DoubleCellValue(m.prixUnitaire!) : TextCellValue('-');
+        if (!m.aVariantes) {
+          sheetEntrees.appendRow([
+            date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
+            TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+            TextCellValue(m.fournisseurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite), prix,
+          ]);
+        } else {
+          for (final l in m.lignes) {
+            sheetEntrees.appendRow([
+              date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
+              TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+              TextCellValue(m.fournisseurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite), prix,
+            ]);
+          }
+        }
+      }
+
+      // ── Feuille 3 : Sorties ────────────────────────────────────────────────
+      final sheetSorties = wb['Sorties'];
+      writeHeader(sheetSorties, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'PRÉLEVÉ PAR', 'TAILLE', 'QUANTITÉ']);
+
+      for (final m in sorties) {
+        final date = TextCellValue(fmt.format(m.date));
+        if (!m.aVariantes) {
+          sheetSorties.appendRow([
+            date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
+            TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+            TextCellValue(m.preneurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite),
+          ]);
+        } else {
+          for (final l in m.lignes) {
+            sheetSorties.appendRow([
+              date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
+              TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+              TextCellValue(m.preneurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite),
+            ]);
+          }
+        }
+      }
+
+      // ── Sauvegarde ────────────────────────────────────────────────────────
+      final bytes = wb.encode();
+      if (bytes == null) throw Exception('Échec de l\'encodage du fichier Excel');
+
+      final siteId = ctx.read<SiteProvider>().selectedSiteId ?? SiteId.all;
+      final siteLabel = SiteId.labelFr(siteId);
+      final now = DateFormat('yyyy-MM-dd_HH-mm').format(DateTime.now());
+      final fileName = 'stock_magasin_${siteLabel}_$now.xlsx';
+
+      if (Platform.isWindows) {
+        // Windows : sauvegarde dans Desktop\Rapports Stock
+        final dir = await _getRapportsDir();
+        final file = File('${dir.path}${Platform.pathSeparator}$fileName');
+        await file.writeAsBytes(bytes);
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+            content: Text('Fichier sauvegardé :\n${file.path}'),
+            backgroundColor: kGreen,
+            duration: const Duration(seconds: 6),
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
+      } else {
+        // Android/autre : sauvegarde dans temp puis partage
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsBytes(bytes);
+        if (ctx.mounted) {
+          await SharePlus.instance.share(
+            ShareParams(files: [XFile(file.path)], subject: 'Export Stock Magasin'),
+          );
+        }
+      }
+    } catch (e) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+          content: Text('Erreur lors de l\'export : $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final magasin = context.watch<MagasinProvider>();
+    final auth    = context.watch<AuthProvider>();
+    final site    = context.watch<SiteProvider>();
+
+    final filteredProduits = SiteId.filterBySite(
+      magasin.produits,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (p) => p.siteId,
+    );
+    final filteredEntrees = SiteId.filterBySite(
+      magasin.entrees,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (m) => m.siteId,
+    );
+    final filteredSorties = SiteId.filterBySite(
+      magasin.sorties,
+      auth.currentUser?.allowedSiteIds,
+      auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
+      (m) => m.siteId,
+    );
+
     if (!magasin.firebaseAvailable) {
       return SizedBox(
         height: MediaQuery.sizeOf(context).height,
@@ -709,11 +899,11 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
       );
     }
 
-    final rupt = magasin.produits.where((p) => p.rupture).length;
-    final bas = magasin.produits.where((p) => p.bas).length;
-    final totalE = magasin.entrees.fold(0, (s, m) => s + m.totalQte);
-    final totalS = magasin.sorties.fold(0, (s, m) => s + m.totalQte);
-    final totalH = magasin.entrees.length + magasin.sorties.length;
+    final rupt = filteredProduits.where((p) => p.rupture && p.categorie == 'EPI').length;
+    final bas = filteredProduits.where((p) => p.bas && p.categorie == 'EPI').length;
+    final totalE = filteredEntrees.fold(0, (s, m) => s + m.totalQte);
+    final totalS = filteredSorties.fold(0, (s, m) => s + m.totalQte);
+    final totalH = filteredEntrees.length + filteredSorties.length;
 
     final screenH = MediaQuery.sizeOf(context).height;
     return SizedBox(
@@ -728,18 +918,38 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
                 _tab = i;
                 _tabCtrl.animateTo(i);
               }),
+              onExport: () => _exportExcel(context, filteredProduits, filteredEntrees, filteredSorties),
               statChips: [
                 if (_tab == 0) ...[
-                  _StatChip('${magasin.produits.length} produits', kBlueLt, kBlue),
-                  if (rupt > 0) _StatChip('$rupt rupture${rupt > 1 ? "s" : ""}', kRedLt, kRed),
-                  if (bas > 0) _StatChip('$bas bas', kOrangeLt, kOrange),
+                  if (rupt > 0) _AlertChipButton(
+                    label: '$rupt rupture${rupt > 1 ? "s" : ""} EPI',
+                    col: kRed,
+                    icon: Icons.remove_shopping_cart_rounded,
+                    onTap: () => _showStockAlert(
+                      context,
+                      filteredProduits.where((p) => p.rupture && p.categorie == 'EPI').toList(),
+                      'Ruptures de Stock — EPI', kRed, kRedLt,
+                      isRupture: true,
+                    ),
+                  ),
+                  if (bas > 0) _AlertChipButton(
+                    label: '$bas stock bas EPI',
+                    col: kOrange,
+                    icon: Icons.warning_amber_rounded,
+                    onTap: () => _showStockAlert(
+                      context,
+                      filteredProduits.where((p) => p.bas && p.categorie == 'EPI').toList(),
+                      'Stock Bas — EPI', kOrange, kOrangeLt,
+                      isRupture: false,
+                    ),
+                  ),
                 ],
                 if (_tab == 1) ...[
-                  _StatChip('${magasin.entrees.length} entrée${magasin.entrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
+                  _StatChip('${filteredEntrees.length} entrée${filteredEntrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
                   _StatChip('$totalE unités', kBlueLt, kBlue),
                 ],
                 if (_tab == 2) ...[
-                  _StatChip('${magasin.sorties.length} sortie${magasin.sorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
+                  _StatChip('${filteredSorties.length} sortie${filteredSorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
                   _StatChip('$totalS unités', kBlueLt, kBlue),
                 ],
                 if (_tab == 3) _StatChip('$totalH opérations', kPurpleLt, kPurple),
@@ -751,10 +961,10 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
                 controller: _tabCtrl,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _StockPage(magasin: magasin, produits: magasin.produits),
-                  _EntreesPage(magasin: magasin, entrees: magasin.entrees),
-                  _SortiesPage(magasin: magasin, sorties: magasin.sorties),
-                  _HistoriquePage(magasin: magasin),
+                  _StockPage(magasin: magasin, produits: filteredProduits),
+                  _EntreesPage(magasin: magasin, entrees: filteredEntrees),
+                  _SortiesPage(magasin: magasin, sorties: filteredSorties),
+                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties]),
                   _FournisseursPage(magasin: magasin),
                 ],
               ),
@@ -774,7 +984,8 @@ class _TopNavBar extends StatelessWidget {
   final int tab;
   final void Function(int) onTap;
   final List<Widget> statChips;
-  const _TopNavBar({required this.tab, required this.onTap, required this.statChips});
+  final Future<void> Function()? onExport;
+  const _TopNavBar({required this.tab, required this.onTap, required this.statChips, this.onExport});
 
   @override
   Widget build(BuildContext context) {
@@ -870,6 +1081,10 @@ class _TopNavBar extends StatelessWidget {
                           child: Row(mainAxisSize: MainAxisSize.min, children: statChips),
                         ),
                       ),
+                    if (onExport != null) ...[
+                      const SizedBox(width: 6),
+                      _ExportButton(onTap: onExport!),
+                    ],
                   ],
                 ),
               ),
@@ -920,6 +1135,12 @@ class _TopNavBar extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (onExport != null) ...[
+                  const SizedBox(width: 12),
+                  Container(width: 1.5, height: 24, color: kBorder),
+                  const SizedBox(width: 12),
+                  _ExportButton(onTap: onExport!),
+                ],
               ],
             ),
           ),
@@ -945,6 +1166,433 @@ class _StatChip extends StatelessWidget {
     ),
     child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: col), maxLines: 1, overflow: TextOverflow.ellipsis),
   );
+}
+
+class _ExportButton extends StatefulWidget {
+  final Future<void> Function() onTap;
+  const _ExportButton({required this.onTap});
+  @override
+  State<_ExportButton> createState() => _ExportButtonState();
+}
+
+class _ExportButtonState extends State<_ExportButton> {
+  bool _loading = false;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Exporter Excel (Stock, Entrées, Sorties)',
+    child: InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: _loading ? null : () async {
+        setState(() => _loading = true);
+        try {
+          await widget.onTap();
+        } finally {
+          if (mounted) setState(() => _loading = false);
+        }
+      },
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFD1FAE5),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF6EE7B7)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_loading)
+              const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: kGreen))
+            else
+              const Icon(Icons.download_rounded, size: 15, color: kGreen),
+            const SizedBox(width: 6),
+            const Text('Excel', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kGreen)),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ALERT CHIP BUTTON
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AlertChipButton extends StatelessWidget {
+  final String label;
+  final Color col;
+  final IconData icon;
+  final VoidCallback onTap;
+  const _AlertChipButton({required this.label, required this.col, required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 8),
+    child: MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: col.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: col),
+              const SizedBox(width: 5),
+              Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: col)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  STOCK ALERT DIALOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Retourne le dossier Desktop\Rapports Stock, le crée si nécessaire.
+Future<Directory> _getRapportsDir() async {
+  final userProfile = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+  final dir = Directory('$userProfile${Platform.pathSeparator}Desktop${Platform.pathSeparator}Rapports Stock');
+  if (!dir.existsSync()) await dir.create(recursive: true);
+  return dir;
+}
+
+Future<void> _exportAlertPdf(List<Produit> produits, String titre, {required bool isRupture}) async {
+  // ── Préparer les lignes ──────────────────────────────────────────────────
+  final dataRows = <List<String>>[];
+  for (final p in produits) {
+    if (!p.aVariantes) {
+      dataRows.add([p.nom, p.reference, p.categorie, p.magasin, p.modulaireNom ?? '-', '-', '${p.quantiteStock}']);
+    } else {
+      final filtrees = p.variantes.where((v) => isRupture ? v.quantite == 0 : (v.quantite > 0 && v.quantite <= 2));
+      for (final v in filtrees) {
+        dataRows.add([p.nom, p.reference, p.categorie, p.magasin, p.modulaireNom ?? '-', v.unite, '${v.quantite}']);
+      }
+    }
+  }
+
+  final accentColor = isRupture ? PdfColor.fromHex('#DC2626') : PdfColor.fromHex('#D97706');
+
+  final headerBg    = PdfColor.fromHex('#1D4ED8');
+  final rowAlt      = PdfColor.fromHex('#F9FAFB');
+  final borderColor = PdfColor.fromHex('#E5E7EB');
+  final dateStr     = DateFormat('dd/MM/yyyy').format(DateTime.now()); // affichage dans le PDF
+  final dateFile    = DateFormat('yyyy-MM-dd').format(DateTime.now()); // nom de fichier (sans /)
+
+  const headers = ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'TAILLE', 'QTÉ'];
+  const colWidths = <int, pw.TableColumnWidth>{
+    0: pw.FlexColumnWidth(3),
+    1: pw.FlexColumnWidth(2),
+    2: pw.FlexColumnWidth(2),
+    3: pw.FlexColumnWidth(2),
+    4: pw.FlexColumnWidth(2),
+    5: pw.FlexColumnWidth(1.5),
+    6: pw.FlexColumnWidth(1),
+  };
+
+  // Chargement du logo depuis les assets Flutter
+  final logoBytes = await rootBundle.load('assets/images/logo.png');
+  final logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
+
+  final doc = pw.Document();
+
+  doc.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4.landscape,
+    margin: const pw.EdgeInsets.all(28),
+    header: (_) => pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
+          children: [
+            // ── Logo gauche ───────────────────────────────────────────────
+            pw.Image(logoImage, width: 48, height: 48, fit: pw.BoxFit.contain),
+            pw.SizedBox(width: 12),
+            // ── Titre centre ──────────────────────────────────────────────
+            pw.Expanded(
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.Text(
+                    'Rapport de Stock',
+                    style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold, color: headerBg),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                  pw.SizedBox(height: 3),
+                  pw.Text(
+                    titre,
+                    style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: accentColor),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(width: 12),
+            // ── Infos droite ──────────────────────────────────────────────
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.end,
+              children: [
+                pw.Text('Généré le $dateStr',
+                    style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+                pw.SizedBox(height: 3),
+                pw.Text('${dataRows.length} ligne${dataRows.length != 1 ? "s" : ""}',
+                    style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+              ],
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 8),
+        pw.Divider(color: borderColor, thickness: 0.8),
+        pw.SizedBox(height: 8),
+      ],
+    ),
+    build: (_) => [
+      pw.Table(
+        columnWidths: colWidths,
+        border: pw.TableBorder.all(color: borderColor, width: 0.5),
+        children: [
+          // ── En-tête ────────────────────────────────────────────────────
+          pw.TableRow(
+            decoration: pw.BoxDecoration(color: headerBg),
+            children: headers.map((h) => pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              child: pw.Text(h, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.white)),
+            )).toList(),
+          ),
+          // ── Données ────────────────────────────────────────────────────
+          ...dataRows.asMap().entries.map((e) {
+            final idx = e.key;
+            final row = e.value;
+            final qty = int.tryParse(row.last) ?? 0;
+            final qtyColor = qty == 0 ? PdfColor.fromHex('#DC2626') : PdfColor.fromHex('#D97706');
+            return pw.TableRow(
+              decoration: pw.BoxDecoration(color: idx.isEven ? PdfColors.white : rowAlt),
+              children: row.asMap().entries.map((ce) {
+                final isQty = ce.key == row.length - 1;
+                return pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                  child: pw.Text(
+                    ce.value,
+                    textAlign: isQty ? pw.TextAlign.right : pw.TextAlign.left,
+                    style: pw.TextStyle(
+                      fontSize: 9,
+                      fontWeight: isQty ? pw.FontWeight.bold : pw.FontWeight.normal,
+                      color: isQty ? qtyColor : PdfColors.grey800,
+                    ),
+                  ),
+                );
+              }).toList(),
+            );
+          }),
+        ],
+      ),
+    ],
+  ));
+
+  final bytes = await doc.save();
+  final safeName = titre.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+  final fileName = '${safeName}_$dateFile.pdf';
+
+  if (Platform.isWindows) {
+    final dir = await _getRapportsDir();
+    final file = File('${dir.path}${Platform.pathSeparator}$fileName');
+    await file.writeAsBytes(bytes);
+  } else {
+    await Printing.sharePdf(bytes: Uint8List.fromList(bytes), filename: fileName);
+  }
+}
+
+class _StockAlertDialog extends StatefulWidget {
+  final List<Produit> produits;
+  final String titre;
+  final Color color, colorLt;
+  final bool isRupture;
+  const _StockAlertDialog({required this.produits, required this.titre, required this.color, required this.colorLt, required this.isRupture});
+  @override
+  State<_StockAlertDialog> createState() => _StockAlertDialogState();
+}
+
+class _StockAlertDialogState extends State<_StockAlertDialog> {
+  bool _exporting = false;
+
+  // Explose les variantes en lignes plates — seules les tailles concernées
+  List<({String nom, String reference, String categorie, String magasin, String modulaire, String taille, int quantite})> get _rows {
+    final result = <({String nom, String reference, String categorie, String magasin, String modulaire, String taille, int quantite})>[];
+    for (final p in widget.produits) {
+      if (!p.aVariantes) {
+        result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, modulaire: p.modulaireNom ?? '-', taille: '-', quantite: p.quantiteStock));
+      } else {
+        final variantesFiltrees = p.variantes.where((v) => widget.isRupture ? v.quantite == 0 : (v.quantite > 0 && v.quantite <= 2));
+        for (final v in variantesFiltrees) {
+          result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, modulaire: p.modulaireNom ?? '-', taille: v.unite, quantite: v.quantite));
+        }
+      }
+    }
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = isMobile(context);
+    final rows = _rows;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: EdgeInsets.symmetric(horizontal: mobile ? 16 : 48, vertical: 32),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 900, maxHeight: MediaQuery.sizeOf(context).height * 0.85),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── En-tête ──────────────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              decoration: BoxDecoration(
+                color: widget.colorLt,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                border: Border(bottom: BorderSide(color: widget.color.withValues(alpha: 0.2))),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(color: widget.color.withValues(alpha: 0.15), shape: BoxShape.circle),
+                    child: Icon(
+                      widget.color == kRed ? Icons.remove_shopping_cart_rounded : Icons.warning_amber_rounded,
+                      color: widget.color, size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                      Text(widget.titre, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: widget.color)),
+                      Text('${widget.produits.length} produit${widget.produits.length != 1 ? "s" : ""}', style: const TextStyle(fontSize: 12, color: kMuted)),
+                    ]),
+                  ),
+                  // Bouton export
+                  StatefulBuilder(builder: (ctx, setSt) => Tooltip(
+                    message: 'Télécharger rapport Excel',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _exporting ? null : () async {
+                        setState(() => _exporting = true);
+                        try {
+                          await _exportAlertPdf(widget.produits, widget.titre, isRupture: widget.isRupture);
+                          if (mounted && Platform.isWindows) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: const Text('Rapport sauvegardé dans Desktop\\Rapports Stock'),
+                              backgroundColor: widget.color,
+                              duration: const Duration(seconds: 5),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text('Erreur export : $e'),
+                              backgroundColor: Colors.red,
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        } finally {
+                          if (mounted) setState(() => _exporting = false);
+                        }
+                      },
+                      child: Container(
+                        height: 34, padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: widget.color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: widget.color.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          if (_exporting)
+                            SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: widget.color))
+                          else
+                            Icon(Icons.download_rounded, size: 15, color: widget.color),
+                          const SizedBox(width: 6),
+                          Text('PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: widget.color)),
+                        ]),
+                      ),
+                    ),
+                  )),
+                  const SizedBox(width: 8),
+                  IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, size: 18)),
+                ],
+              ),
+            ),
+            // ── Tableau ──────────────────────────────────────────────────────
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    // En-tête tableau
+                    Container(
+                      decoration: BoxDecoration(
+                        color: widget.color.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(children: [
+                        Expanded(flex: 3, child: Text('PRODUIT', style: _thStyle)),
+                        if (!mobile) Expanded(flex: 2, child: Text('RÉFÉR.', style: _thStyle)),
+                        if (!mobile) Expanded(flex: 2, child: Text('CATÉGORIE', style: _thStyle)),
+                        Expanded(flex: 2, child: Text('MAGASIN', style: _thStyle)),
+                        Expanded(flex: 2, child: Text('TAILLE', style: _thStyle)),
+                        Expanded(flex: 1, child: Text('QTÉ', style: _thStyle, textAlign: TextAlign.right)),
+                      ]),
+                    ),
+                    const SizedBox(height: 4),
+                    // Lignes
+                    ...rows.asMap().entries.map((e) {
+                      final i = e.key;
+                      final r = e.value;
+                      final isZero = r.quantite == 0;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 2),
+                        decoration: BoxDecoration(
+                          color: i.isEven ? Colors.white : const Color(0xFFF9FAFB),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                        child: Row(children: [
+                          Expanded(flex: 3, child: Text(r.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText), overflow: TextOverflow.ellipsis)),
+                          if (!mobile) Expanded(flex: 2, child: Text(r.reference, style: _tdStyle, overflow: TextOverflow.ellipsis)),
+                          if (!mobile) Expanded(flex: 2, child: Text(r.categorie, style: _tdStyle, overflow: TextOverflow.ellipsis)),
+                          Expanded(flex: 2, child: Text(r.magasin, style: _tdStyle, overflow: TextOverflow.ellipsis)),
+                          Expanded(flex: 2, child: Text(r.taille, style: _tdStyle)),
+                          Expanded(flex: 1, child: Text(
+                            '${r.quantite}',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: isZero ? kRed : kOrange),
+                          )),
+                        ]),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static const _thStyle = TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kMuted, letterSpacing: .5);
+  static const _tdStyle = TextStyle(fontSize: 12, color: kMuted);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1204,12 +1852,21 @@ class _EntreesPage extends StatefulWidget {
 
 class _EntreesPageState extends State<_EntreesPage> {
   String _cat = 'Toutes', _mag = 'Tous', _modulaire = 'Tous';
+  String _search = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   List<Mouvement> get _list => widget.entrees.where((m) {
     final catOk = _cat == 'Toutes' || m.categorie == _cat;
     final magOk = _mag == 'Tous' || m.magasin == _mag;
     final modOk = _modulaire == 'Tous' || m.modulaireNom == _modulaire;
-    return catOk && magOk && modOk;
+    final searchOk = _search.isEmpty || m.nomProduit.toLowerCase().contains(_search.toLowerCase());
+    return catOk && magOk && modOk && searchOk;
   }).toList();
 
   @override
@@ -1256,6 +1913,24 @@ class _EntreesPageState extends State<_EntreesPage> {
             if (!showModulaire) const Spacer(),
           ]),
         ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _search = v),
+            decoration: InputDecoration(
+              hintText: 'Rechercher un article…',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              suffixIcon: _search.isNotEmpty
+                  ? IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { _searchCtrl.clear(); setState(() => _search = ''); })
+                  : null,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kGreen, width: 1.5)),
+            ),
+          ),
+        ),
         const SizedBox(height: 10),
         Expanded(
           child: list.isEmpty
@@ -1269,6 +1944,7 @@ class _EntreesPageState extends State<_EntreesPage> {
               m: list[i], color: kGreen, bgColor: kGreenLt,
               fournisseurNom: list[i].fournisseurNom,
               modulaireNom: list[i].modulaireNom,
+              onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kGreen, bgColor: kGreenLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
             ),
@@ -1277,8 +1953,9 @@ class _EntreesPageState extends State<_EntreesPage> {
             padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
             child: _DataTable(
               empty: false, accentColor: kGreen,
-              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 1)],
+              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 2)],
               rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true, showModulaire: true,
+                onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kGreen, bgColor: kGreenLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
@@ -1304,12 +1981,21 @@ class _SortiesPage extends StatefulWidget {
 
 class _SortiesPageState extends State<_SortiesPage> {
   String _cat = 'Toutes', _mag = 'Tous', _modulaire = 'Tous';
+  String _search = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   List<Mouvement> get _list => widget.sorties.where((m) {
     final catOk = _cat == 'Toutes' || m.categorie == _cat;
     final magOk = _mag == 'Tous' || m.magasin == _mag;
     final modOk = _modulaire == 'Tous' || m.modulaireNom == _modulaire;
-    return catOk && magOk && modOk;
+    final searchOk = _search.isEmpty || m.nomProduit.toLowerCase().contains(_search.toLowerCase());
+    return catOk && magOk && modOk && searchOk;
   }).toList();
 
   @override
@@ -1356,6 +2042,24 @@ class _SortiesPageState extends State<_SortiesPage> {
             if (!showModulaire) const Spacer(),
           ]),
         ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _search = v),
+            decoration: InputDecoration(
+              hintText: 'Rechercher un article…',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              suffixIcon: _search.isNotEmpty
+                  ? IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { _searchCtrl.clear(); setState(() => _search = ''); })
+                  : null,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kOrange, width: 1.5)),
+            ),
+          ),
+        ),
         const SizedBox(height: 10),
         Expanded(
           child: list.isEmpty
@@ -1368,6 +2072,7 @@ class _SortiesPageState extends State<_SortiesPage> {
             itemBuilder: (ctx, i) => _MouvCard(
               m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
               modulaireNom: list[i].modulaireNom,
+              onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kOrange, bgColor: kOrangeLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
             ),
@@ -1376,8 +2081,9 @@ class _SortiesPageState extends State<_SortiesPage> {
             padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
             child: _DataTable(
               empty: false, accentColor: kOrange,
-              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
+              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 2)],
               rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
+                onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kOrange, bgColor: kOrangeLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
@@ -1401,7 +2107,8 @@ class _MouvCard extends StatelessWidget {
   final String? modulaireNom;
   final VoidCallback onDelete;
   final VoidCallback? onEdit;
-  const _MouvCard({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.fournisseurNom, this.modulaireNom, required this.onDelete, this.onEdit});
+  final VoidCallback? onDetails;
+  const _MouvCard({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.fournisseurNom, this.modulaireNom, required this.onDelete, this.onEdit, this.onDetails});
 
   String get _d => '${m.date.day.toString().padLeft(2, '0')}/${m.date.month.toString().padLeft(2, '0')}/${m.date.year}';
   String get _t => '${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}';
@@ -1437,7 +2144,7 @@ class _MouvCard extends StatelessWidget {
         Row(children: [
           const Icon(Icons.calendar_today_rounded, size: 11, color: kMuted),
           const SizedBox(width: 4),
-          Text('$_d à $_t', style: _muted.copyWith(fontSize: 11)),
+          Flexible(child: Text('$_d à $_t', style: _muted.copyWith(fontSize: 11), overflow: TextOverflow.ellipsis)),
           if (showPreneur && m.preneurNom != null) ...[
             const SizedBox(width: 8),
             const Icon(Icons.person_outline_rounded, size: 12, color: kMuted),
@@ -1445,12 +2152,193 @@ class _MouvCard extends StatelessWidget {
             Expanded(child: Text(m.preneurNom!, style: _muted.copyWith(fontSize: 11), overflow: TextOverflow.ellipsis, maxLines: 1)),
           ] else const Spacer(),
           const SizedBox(width: 6),
+          if (onDetails != null) ...[_IconBtn(Icons.visibility_rounded, 'Voir détails', kBlueLt, kBlue, onDetails!), const SizedBox(width: 6)],
           if (onEdit != null) ...[_IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, onEdit!), const SizedBox(width: 6)],
           _IconBtn(Icons.delete_outline_rounded, 'Supprimer', kRedLt, kRed, onDelete),
         ]),
       ]),
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DETAIL DIALOG MOUVEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _MouvDetailDialog extends StatelessWidget {
+  final Mouvement m;
+  final Color color, bgColor;
+  const _MouvDetailDialog({required this.m, required this.color, required this.bgColor});
+
+  String get _date => '${m.date.day.toString().padLeft(2, '0')}/${m.date.month.toString().padLeft(2, '0')}/${m.date.year}  ${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final isEntree = m.type == 'entree';
+    final totalQte = m.aVariantes ? m.lignes.fold(0, (s, l) => s + l.quantite) : m.quantite;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── En-tête ───────────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+              ),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                  child: Icon(Icons.visibility_rounded, size: 16, color: color),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(
+                  m.nomProduit,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: color),
+                  overflow: TextOverflow.ellipsis,
+                )),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  style: IconButton.styleFrom(foregroundColor: kMuted),
+                ),
+              ]),
+            ),
+            // ── Corps ─────────────────────────────────────────────────────
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Métadonnées
+                    Wrap(spacing: 6, runSpacing: 6, children: [
+                      _InfoChip(Icons.calendar_today_rounded, _date),
+                      _InfoChip(Icons.qr_code_rounded, m.reference),
+                      _PillBadge(m.categorie, kBlueLt, kBlue),
+                      _PillBadge(m.magasin, kBlueMd, kBlueDk),
+                      if (m.modulaireNom != null) _PillBadge(m.modulaireNom!, kBrownLt, kBrown),
+                      if (isEntree && m.fournisseurNom != null) _PillBadge(m.fournisseurNom!, kTealLt, kTeal),
+                      if (!isEntree && m.preneurNom != null) _InfoChip(Icons.person_outline_rounded, m.preneurNom!),
+                    ]),
+                    if (isEntree && m.prixUnitaire != null) ...[
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        const Icon(Icons.attach_money_rounded, size: 13, color: kMuted),
+                        const SizedBox(width: 4),
+                        Text('Prix unitaire : ${m.prixUnitaire!.toStringAsFixed(2)} MAD',
+                            style: const TextStyle(fontSize: 12, color: kMuted)),
+                      ]),
+                    ],
+                    const SizedBox(height: 14),
+                    // ── Tailles ──────────────────────────────────────────
+                    if (m.aVariantes && m.lignes.isNotEmpty) ...[
+                      Text(
+                        (m.groupeUniteLabel?.isNotEmpty == true ? m.groupeUniteLabel! : 'Détail par taille').toUpperCase(),
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: kMuted, letterSpacing: .5),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: kBorder),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          children: [
+                            // header
+                            Container(
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.07),
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              child: Row(children: [
+                                Expanded(child: Text('TAILLE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color))),
+                                Text('QTÉ', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+                              ]),
+                            ),
+                            const Divider(height: 1, color: kBorder),
+                            // lignes
+                            ...m.lignes.asMap().entries.map((e) {
+                              final i = e.key;
+                              final l = e.value;
+                              return Column(mainAxisSize: MainAxisSize.min, children: [
+                                if (i > 0) const Divider(height: 1, color: kBorder),
+                                Container(
+                                  color: i.isEven ? Colors.white : const Color(0xFFF9FAFB),
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                                  child: Row(children: [
+                                    Expanded(child: Text(l.unite, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText))),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+                                      child: Text('${l.quantite}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
+                                    ),
+                                  ]),
+                                ),
+                              ]);
+                            }),
+                            // total
+                            const Divider(height: 1, color: kBorder),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.05),
+                                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(9)),
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                              child: Row(children: [
+                                Expanded(child: Text('TOTAL', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color))),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                  decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+                                  child: Text('$totalQte', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: color)),
+                                ),
+                              ]),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      // Produit sans variantes
+                      Row(children: [
+                        Text('Quantité :', style: const TextStyle(fontSize: 12, color: kMuted)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+                          child: Text('$totalQte', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: color)),
+                        ),
+                      ]),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _InfoChip(this.icon, this.label);
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Icon(icon, size: 11, color: kMuted),
+    const SizedBox(width: 4),
+    Text(label, style: const TextStyle(fontSize: 11, color: kMuted)),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1520,7 +2408,8 @@ class _BanniereAction extends StatelessWidget {
 
 class _HistoriquePage extends StatefulWidget {
   final MagasinProvider magasin;
-  const _HistoriquePage({required this.magasin});
+  final List<Mouvement> mouvements;
+  const _HistoriquePage({required this.magasin, required this.mouvements});
   @override
   State<_HistoriquePage> createState() => _HistoriquePageState();
 }
@@ -1533,7 +2422,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
   DateTime? _dateDebut, _dateFin;
 
   List<Mouvement> get _list {
-    final all = [...widget.magasin.entrees, ...widget.magasin.sorties];
+    final all = List<Mouvement>.from(widget.mouvements);
     all.sort((a, b) => b.date.compareTo(a.date));
     return all.where((m) {
       final typeOk = _typeFiltre == 'Tout' || (_typeFiltre == 'Entrées' && m.type == 'entree') || (_typeFiltre == 'Sorties' && m.type == 'sortie');
@@ -2140,6 +3029,7 @@ class _MouvFormState extends State<_MouvForm> {
   String? _stockError;
   Map<String, String> _varStockErrors = {};
   bool _saving = false;
+  String _siteId = SiteId.jadida;
   String? _selFournisseurId;      // NOUVEAU
   String? _newProdFournisseurId;  // NOUVEAU (pour nouveau produit)
   String? _selModulaireId;        // MODULAIRE (Base de vie)
@@ -2203,6 +3093,7 @@ class _MouvFormState extends State<_MouvForm> {
 
     if (_isEditing) {
       final m = widget.mouvement!;
+      _siteId = m.siteId == 'default' ? SiteId.jadida : m.siteId;
       _selCat = m.categorie;
       _mvtNomCtrl.text = m.nomProduit;
       _mvtRefCtrl.text = m.reference;
@@ -2331,6 +3222,7 @@ class _MouvFormState extends State<_MouvForm> {
           magasin: magasinFinal, aVariantes: _newHasVar,
           groupeUniteLabel: _newHasVar ? _newGroupeLabel : null,
           quantiteStock: 0, variantes: [],
+          siteId: _siteId,
           fournisseurId: fouId,
           modulaireId: modulaireId,
           modulaireNom: modulaireNom,
@@ -2383,6 +3275,7 @@ class _MouvFormState extends State<_MouvForm> {
         lignes: lignes,
         date: _mvtDate,
         preneurNom: (_isSortie && _preneurC.text.trim().isNotEmpty) ? _preneurC.text.trim() : null,
+        siteId: _siteId,
         fournisseurId: fouId,
         fournisseurNom: fouNom,
         modulaireId: modulaireId,
@@ -2526,8 +3419,35 @@ class _MouvFormState extends State<_MouvForm> {
             ),
           const SizedBox(height: 20),
 
-          // ── 3. Magasin de stock ──────────────────────────────────────
-          _SectionHdr('3. Magasin de stock *', Icons.warehouse_rounded, _col),
+          // ── 3. Site ──────────────────────────────────────────────────
+          _SectionHdr('3. Site *', Icons.location_on_rounded, kBlue),
+          const SizedBox(height: 10),
+          _StyledDrop<String>(
+            value: _siteId,
+            items: [
+              DropdownMenuItem(
+                value: SiteId.jadida,
+                child: Row(children: [
+                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
+                  const SizedBox(width: 8),
+                  Text(SiteId.labelFr(SiteId.jadida)),
+                ]),
+              ),
+              DropdownMenuItem(
+                value: SiteId.safi,
+                child: Row(children: [
+                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
+                  const SizedBox(width: 8),
+                  Text(SiteId.labelFr(SiteId.safi)),
+                ]),
+              ),
+            ],
+            onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
+          ),
+          const SizedBox(height: 20),
+
+          // ── 4. Magasin de stock ──────────────────────────────────────
+          _SectionHdr('4. Magasin de stock *', Icons.warehouse_rounded, _col),
           const SizedBox(height: 10),
           _StyledDrop<String>(
             value: _selMag,
@@ -2548,9 +3468,9 @@ class _MouvFormState extends State<_MouvForm> {
           ),
           const SizedBox(height: 20),
 
-          // ── 4. Modulaire (Base de vie uniquement, optionnel) ─────────
+          // ── 5. Modulaire (Base de vie uniquement, optionnel) ─────────
           if (_selMag == 'Base de vie') ...[
-            _SectionHdr('4. Modulaire', Icons.home_work_rounded, kBrown),
+            _SectionHdr('5. Modulaire', Icons.home_work_rounded, kBrown),
             const SizedBox(height: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -2620,11 +3540,36 @@ class _MouvFormState extends State<_MouvForm> {
             const SizedBox(height: 20),
           ],
 
-          // ── 5. Catégorie ─────────────────────────────────────────────
-          _SectionHdr('${_selMag == 'Base de vie' ? '5' : '4'}. Catégorie', Icons.category_outlined, _col),
+          // ── 6/5. Catégorie ───────────────────────────────────────────
+          _SectionHdr('${_selMag == 'Base de vie' ? '6' : '5'}. Catégorie', Icons.category_outlined, _col),
         ] else ...[
-          // Pour sortie : section 2
-          _SectionHdr('2. Catégorie', Icons.category_outlined, _col),
+          // Pour sortie : site puis catégorie
+          _SectionHdr('2. Site *', Icons.location_on_rounded, kBlue),
+          const SizedBox(height: 10),
+          _StyledDrop<String>(
+            value: _siteId,
+            items: [
+              DropdownMenuItem(
+                value: SiteId.jadida,
+                child: Row(children: [
+                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
+                  const SizedBox(width: 8),
+                  Text(SiteId.labelFr(SiteId.jadida)),
+                ]),
+              ),
+              DropdownMenuItem(
+                value: SiteId.safi,
+                child: Row(children: [
+                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
+                  const SizedBox(width: 8),
+                  Text(SiteId.labelFr(SiteId.safi)),
+                ]),
+              ),
+            ],
+            onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
+          ),
+          const SizedBox(height: 20),
+          _SectionHdr('3. Catégorie', Icons.category_outlined, _col),
         ],
         const SizedBox(height: 10),
 
@@ -2656,7 +3601,7 @@ class _MouvFormState extends State<_MouvForm> {
         if (_selCat != null || _newCatMode) ...[
           // ── Produit ──────────────────────────────────────────────────
           Builder(builder: (ctx) {
-            final secNum = _isSortie ? '3' : (_selMag == 'Base de vie' ? '6' : '5');
+            final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
             return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
           }),
           const SizedBox(height: 10),
@@ -3343,8 +4288,9 @@ class _MouvRow extends _DataTableRow {
   final bool showPreneur, showFournisseur, showModulaire;
   final VoidCallback onDelete;
   final VoidCallback? onEdit;
+  final VoidCallback? onDetails;
 
-  _MouvRow({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.showFournisseur = false, this.showModulaire = true, required this.onDelete, this.onEdit}) : super(cells: const []);
+  _MouvRow({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.showFournisseur = false, this.showModulaire = true, required this.onDelete, this.onEdit, this.onDetails}) : super(cells: const []);
 
   String get _d => '${m.date.day.toString().padLeft(2, '0')}/${m.date.month.toString().padLeft(2, '0')}/${m.date.year}';
   String get _t => '${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}';
@@ -3373,6 +4319,7 @@ class _MouvRow extends _DataTableRow {
       Flexible(child: Text(m.preneurNom ?? '—', style: const TextStyle(fontSize: 11, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1)),
     ]),
     Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (onDetails != null) ...[_IconBtn(Icons.visibility_rounded, 'Voir détails', kBlueLt, kBlue, onDetails!), const SizedBox(width: 6)],
       if (onEdit != null) ...[_IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, onEdit!), const SizedBox(width: 6)],
       _IconBtn(Icons.delete_outline_rounded, 'Supprimer', kRedLt, kRed, onDelete),
     ])),
