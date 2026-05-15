@@ -31,7 +31,7 @@ class DefaultFirebaseOptions {
       measurementId: "G-GZY5S9Y9ZE"
   );
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCKq618bn1FIz9H5BMhVX6_g0BGrrH8tV4',
+    apiKey: 'AIzaSyDHfbByFU-dMorWCHkz_BeK7vGMZhHrzVI',
     appId: '1:581884367090:android:afa92063ebd997da35406b',
     messagingSenderId: '581884367090',
     projectId: 'dips-management',

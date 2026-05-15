@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import '../employees/models/employe_model.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
@@ -11,6 +14,53 @@ import 'services/pointage_export_service.dart';
 bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
   return config.canMarkArrivalNow(now, graceBefore: grace, graceAfter: grace) ||
       config.canMarkDepartureNow(now, graceBefore: grace, graceAfter: grace);
+}
+
+class _ChefReportPendingPayload {
+  final List<Employe> workersDisplay;
+  final Set<String> overtimeWorkerIds;
+  final String equipeId;
+  final String equipeName;
+  final String chefName;
+  final String? chefId;
+  final PointageHoursConfig configOverride;
+  final bool bypassTimeWindows;
+  final int totalEmployees;
+  final int presentCount;
+  final int absentCount;
+  final bool syncBypassTimeWindows;
+  /// employeId → texte (shift nuit uniquement, optionnel)
+  final Map<String, String>? nightShiftSupervisorNotes;
+
+  const _ChefReportPendingPayload({
+    required this.workersDisplay,
+    required this.overtimeWorkerIds,
+    required this.equipeId,
+    required this.equipeName,
+    required this.chefName,
+    required this.chefId,
+    required this.configOverride,
+    required this.bypassTimeWindows,
+    required this.totalEmployees,
+    required this.presentCount,
+    required this.absentCount,
+    this.syncBypassTimeWindows = true,
+    this.nightShiftSupervisorNotes,
+  });
+}
+
+class _DriverReportPendingPayload {
+  final String equipeId;
+  final PointageHoursConfig configOverride;
+  final bool bypassTimeWindows;
+  final bool syncBypassTimeWindows;
+
+  const _DriverReportPendingPayload({
+    required this.equipeId,
+    required this.configOverride,
+    required this.bypassTimeWindows,
+    this.syncBypassTimeWindows = true,
+  });
 }
 
 class PointageProvider extends ChangeNotifier {
@@ -30,12 +80,33 @@ class PointageProvider extends ChangeNotifier {
   /// Verrouillage immÃ©diat aprÃ¨s confirmation dâ€™envoi (rÃ©seau lent) â€” rÃ©voquÃ© quand Firestore confirme.
   bool _optimisticDriverReportLocked = false;
   final Set<String> _optimisticChefLockedEmployeIds = <String>{};
+  _DriverReportPendingPayload? _pendingDriverReportPayload;
+  Timer? _driverReportRetryTimer;
+  bool _driverReportSyncPending = false;
+  _ChefReportPendingPayload? _pendingChefReportPayload;
+  Timer? _chefReportRetryTimer;
+  bool _chefReportSyncPending = false;
 
   List<PointageRecord> get todayPointage => List.unmodifiable(_todayPointage);
   List<PointageRecord> get pointageByDate => List.unmodifiable(_pointageByDate);
   DateTime? get selectedReportDate => _selectedReportDate;
   List<String> get nonWorkingEquipeIds => List.unmodifiable(_nonWorkingEquipeIds);
   List<DailyReport> get reports => List.unmodifiable(_reports);
+
+  /// Rapport quotidien (PDF / RH) déjà enregistré pour l'équipe aujourd'hui — le chef a terminé l'envoi.
+  bool hasEquipeDailyReportSubmittedToday(String equipeId) {
+    if (equipeId.isEmpty) return false;
+    final n = DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    return _reports.any(
+      (r) =>
+          r.equipeId == equipeId &&
+          r.date.year == today.year &&
+          r.date.month == today.month &&
+          r.date.day == today.day,
+    );
+  }
+
   int get todayPresentCount => _todayPresentCount;
   int get monthlyReportsCount => _monthlyReportsCount;
   bool get loading => _loading;
@@ -43,17 +114,52 @@ class PointageProvider extends ChangeNotifier {
   bool get firebaseAvailable => _firebaseAvailable;
 
   bool get optimisticDriverReportLocked => _optimisticDriverReportLocked;
+  bool get driverReportSyncPending => _driverReportSyncPending;
+  bool get chefReportSyncPending => _chefReportSyncPending;
 
   /// Au moins un document du jour porte dÃ©jÃ  un envoi chauffeur (batch global).
   bool get hasDriverReportBeenSubmittedGlobally =>
       _todayPointage.any((p) => p.submittedByDriverAt != null);
 
   bool _ignoreTimeWindowsForTest = false;
+  DateTime? _testCycleStartedAt;
+  int _testArrivalPhaseMinutes = 5;
   bool get ignoreTimeWindowsForTest => _ignoreTimeWindowsForTest;
+  bool get hasActiveTestCycle => _testCycleStartedAt != null;
+  int get testArrivalPhaseMinutes => _testArrivalPhaseMinutes;
   void setIgnoreTimeWindowsForTest(bool value) {
     if (_ignoreTimeWindowsForTest == value) return;
     _ignoreTimeWindowsForTest = value;
+    if (!value) {
+      _testCycleStartedAt = null;
+    }
     notifyListeners();
+  }
+
+  void startTestCycle({int arrivalMinutes = 5}) {
+    _testCycleStartedAt = DateTime.now();
+    _testArrivalPhaseMinutes = arrivalMinutes < 1 ? 1 : arrivalMinutes;
+    if (!_ignoreTimeWindowsForTest) {
+      _ignoreTimeWindowsForTest = true;
+    }
+    notifyListeners();
+  }
+
+  void resetTestCycle() {
+    _testCycleStartedAt = null;
+    notifyListeners();
+  }
+
+  bool get isInTestArrivalPhase {
+    if (!_ignoreTimeWindowsForTest || _testCycleStartedAt == null) return false;
+    final end = _testCycleStartedAt!.add(Duration(minutes: _testArrivalPhaseMinutes));
+    return DateTime.now().isBefore(end);
+  }
+
+  bool get isInTestDeparturePhase {
+    if (!_ignoreTimeWindowsForTest || _testCycleStartedAt == null) return false;
+    final end = _testCycleStartedAt!.add(Duration(minutes: _testArrivalPhaseMinutes));
+    return !DateTime.now().isBefore(end);
   }
 
   StreamSubscription? _subPointage;
@@ -61,6 +167,8 @@ class PointageProvider extends ChangeNotifier {
   StreamSubscription? _subByDate;
 
   PointageProvider() {
+    unawaited(_restorePendingDriverSyncFromDisk());
+    unawaited(_restorePendingChefSyncFromDisk());
     if (!_firebaseAvailable) {
       _loading = false;
       notifyListeners();
@@ -138,6 +246,61 @@ class PointageProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> submitDriverReportWithRetry({
+    required String equipeId,
+    required PointageHoursConfig configOverride,
+    bool bypassTimeWindows = false,
+  }) async {
+    if (!_firebaseAvailable || _repo == null || equipeId.isEmpty) return false;
+    final payload = _DriverReportPendingPayload(
+      equipeId: equipeId,
+      configOverride: configOverride,
+      bypassTimeWindows: bypassTimeWindows,
+      // Once confirmed by user, background sync is allowed even if window closes.
+      syncBypassTimeWindows: true,
+    );
+    _pendingDriverReportPayload = payload;
+    await _savePendingDriverSyncToDisk(payload);
+    final ok = await _tryFlushPendingDriverReport();
+    if (!ok) {
+      _driverReportSyncPending = true;
+      applyOptimisticDriverReportLock();
+      _ensureDriverRetryTimer();
+      notifyListeners();
+    }
+    // Accepted from UI perspective even if awaiting sync.
+    return true;
+  }
+
+  void _ensureDriverRetryTimer() {
+    if (_driverReportRetryTimer != null) return;
+    _driverReportRetryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_tryFlushPendingDriverReport());
+    });
+  }
+
+  Future<bool> _tryFlushPendingDriverReport() async {
+    final p = _pendingDriverReportPayload;
+    if (p == null || !_firebaseAvailable || _repo == null || p.equipeId.isEmpty) return false;
+    try {
+      final ok = await submitDriverReportToFirestore(
+        equipeId: p.equipeId,
+        configOverride: p.configOverride,
+        bypassTimeWindows: p.syncBypassTimeWindows ? true : p.bypassTimeWindows,
+      );
+      if (!ok) return false;
+      _pendingDriverReportPayload = null;
+      _driverReportSyncPending = false;
+      _driverReportRetryTimer?.cancel();
+      _driverReportRetryTimer = null;
+      await _clearPendingDriverSyncFromDisk();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// AprÃ¨s confirmation chef : bloque les fiches des IDs listÃ©s jusquâ€™Ã  rÃ©ception Firestore.
   void applyOptimisticChefReportLock(Set<String> employeIds) {
     _optimisticChefLockedEmployeIds
@@ -150,6 +313,291 @@ class PointageProvider extends ChangeNotifier {
     if (_optimisticChefLockedEmployeIds.isNotEmpty) {
       _optimisticChefLockedEmployeIds.clear();
       notifyListeners();
+    }
+  }
+
+  Future<bool> submitChefReportWithRetry({
+    required List<Employe> workersDisplay,
+    required Set<String> overtimeWorkerIds,
+    required String equipeId,
+    required String equipeName,
+    required String chefName,
+    required String? chefId,
+    required PointageHoursConfig configOverride,
+    required bool bypassTimeWindows,
+    required int totalEmployees,
+    required int presentCount,
+    required int absentCount,
+    Map<String, String>? nightShiftSupervisorNotes,
+  }) async {
+    if (!_firebaseAvailable || _repo == null) return false;
+    final payload = _ChefReportPendingPayload(
+      workersDisplay: workersDisplay,
+      overtimeWorkerIds: overtimeWorkerIds,
+      equipeId: equipeId,
+      equipeName: equipeName,
+      chefName: chefName,
+      chefId: chefId,
+      configOverride: configOverride,
+      bypassTimeWindows: bypassTimeWindows,
+      totalEmployees: totalEmployees,
+      presentCount: presentCount,
+      absentCount: absentCount,
+      // Once user confirms send, sync is allowed even if window closes later.
+      syncBypassTimeWindows: true,
+      nightShiftSupervisorNotes: nightShiftSupervisorNotes,
+    );
+    _pendingChefReportPayload = payload;
+    await _savePendingChefSyncToDisk(payload);
+    final ok = await _tryFlushPendingChefReport();
+    if (!ok) {
+      _chefReportSyncPending = true;
+      applyOptimisticChefReportLock(workersDisplay.map((e) => e.id).toSet());
+      _ensureChefRetryTimer();
+      notifyListeners();
+    }
+    // Even on temporary failure, we keep it "accepted" and locked.
+    return true;
+  }
+
+  void _ensureChefRetryTimer() {
+    if (_chefReportRetryTimer != null) return;
+    _chefReportRetryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_tryFlushPendingChefReport());
+    });
+  }
+
+  Future<bool> _tryFlushPendingChefReport() async {
+    final p = _pendingChefReportPayload;
+    if (p == null || !_firebaseAvailable || _repo == null) return false;
+    try {
+      await batchMarkUnmarkedAbsentBeforeChefSubmit(
+        workersDisplay: p.workersDisplay,
+        overtimeWorkerIds: p.overtimeWorkerIds,
+        equipeId: p.equipeId,
+        equipeName: p.equipeName,
+        chefName: p.chefName,
+        chefId: p.chefId,
+        configOverride: p.configOverride,
+        bypassTimeWindows: p.syncBypassTimeWindows ? true : p.bypassTimeWindows,
+      );
+      final ok = await submitChefReport(
+        p.equipeId,
+        configOverride: p.configOverride,
+        bypassTimeWindows: p.syncBypassTimeWindows ? true : p.bypassTimeWindows,
+      );
+      if (!ok) return false;
+      await submitDailyReport(
+        equipeId: p.equipeId,
+        equipeName: p.equipeName,
+        chefId: p.chefId ?? '',
+        chefName: p.chefName,
+        totalEmployees: p.totalEmployees,
+        presentCount: p.presentCount,
+        absentCount: p.absentCount,
+        notInVehicleCount: 0,
+      );
+      final notes = p.nightShiftSupervisorNotes;
+      if (notes != null && notes.isNotEmpty) {
+        final cleaned = {
+          for (final e in notes.entries)
+            if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
+        };
+        if (cleaned.isNotEmpty) {
+          final pointageDate = getPointageDateForConfig(p.configOverride, DateTime.now());
+          await _repo!.updateNightShiftSupervisorNotes(
+            employeIdToNote: cleaned,
+            date: pointageDate,
+          );
+        }
+      }
+      _pendingChefReportPayload = null;
+      _chefReportSyncPending = false;
+      _chefReportRetryTimer?.cancel();
+      _chefReportRetryTimer = null;
+      await _clearPendingChefSyncFromDisk();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<File> _pendingChefSyncFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}${Platform.pathSeparator}pending_chef_report_sync.json');
+  }
+
+  Future<File> _pendingDriverSyncFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}${Platform.pathSeparator}pending_driver_report_sync.json');
+  }
+
+  Map<String, dynamic> _configToMap(PointageHoursConfig c) => {
+        'startHour': c.startHour,
+        'startMinute': c.startMinute,
+        'endHour': c.endHour,
+        'endMinute': c.endMinute,
+        'departureEarliestHour': c.departureEarliestHour,
+        'departureEarliestMinute': c.departureEarliestMinute,
+        'departureLatestHour': c.departureLatestHour,
+        'departureLatestMinute': c.departureLatestMinute,
+        'isRestDay': c.isRestDay,
+      };
+
+  PointageHoursConfig _configFromMap(Map<String, dynamic> m) => PointageHoursConfig(
+        startHour: (m['startHour'] as int?) ?? 6,
+        startMinute: (m['startMinute'] as int?) ?? 0,
+        endHour: (m['endHour'] as int?) ?? 22,
+        endMinute: (m['endMinute'] as int?) ?? 0,
+        departureEarliestHour: (m['departureEarliestHour'] as int?) ?? 14,
+        departureEarliestMinute: (m['departureEarliestMinute'] as int?) ?? 0,
+        departureLatestHour: (m['departureLatestHour'] as int?) ?? 23,
+        departureLatestMinute: (m['departureLatestMinute'] as int?) ?? 59,
+        isRestDay: (m['isRestDay'] as bool?) ?? false,
+      );
+
+  Future<void> _savePendingChefSyncToDisk(_ChefReportPendingPayload p) async {
+    try {
+      final f = await _pendingChefSyncFile();
+      final data = <String, dynamic>{
+        'workers': p.workersDisplay
+            .map((w) => {'id': w.id, 'nom': w.nom, 'cin': w.cin})
+            .toList(),
+        'overtimeWorkerIds': p.overtimeWorkerIds.toList(),
+        'equipeId': p.equipeId,
+        'equipeName': p.equipeName,
+        'chefName': p.chefName,
+        'chefId': p.chefId,
+        'config': _configToMap(p.configOverride),
+        'bypassTimeWindows': p.bypassTimeWindows,
+        'totalEmployees': p.totalEmployees,
+        'presentCount': p.presentCount,
+        'absentCount': p.absentCount,
+        'syncBypassTimeWindows': p.syncBypassTimeWindows,
+        if (p.nightShiftSupervisorNotes != null && p.nightShiftSupervisorNotes!.isNotEmpty)
+          'nightShiftSupervisorNotes': p.nightShiftSupervisorNotes,
+      };
+      await f.writeAsString(jsonEncode(data), flush: true);
+    } catch (_) {
+      // Keep in-memory fallback if disk write fails.
+    }
+  }
+
+  Future<void> _clearPendingChefSyncFromDisk() async {
+    try {
+      final f = await _pendingChefSyncFile();
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _savePendingDriverSyncToDisk(_DriverReportPendingPayload p) async {
+    try {
+      final f = await _pendingDriverSyncFile();
+      final data = <String, dynamic>{
+        'equipeId': p.equipeId,
+        'config': _configToMap(p.configOverride),
+        'bypassTimeWindows': p.bypassTimeWindows,
+        'syncBypassTimeWindows': p.syncBypassTimeWindows,
+      };
+      await f.writeAsString(jsonEncode(data), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> _clearPendingDriverSyncFromDisk() async {
+    try {
+      final f = await _pendingDriverSyncFile();
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _restorePendingDriverSyncFromDisk() async {
+    try {
+      final f = await _pendingDriverSyncFile();
+      if (!await f.exists()) return;
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final equipeId = (m['equipeId'] as String?) ?? '';
+      if (equipeId.isEmpty) {
+        await _clearPendingDriverSyncFromDisk();
+        return;
+      }
+      _pendingDriverReportPayload = _DriverReportPendingPayload(
+        equipeId: equipeId,
+        configOverride: _configFromMap(
+            (m['config'] as Map?)?.map((k, v) => MapEntry('$k', v)) ?? const {}),
+        bypassTimeWindows: (m['bypassTimeWindows'] as bool?) ?? false,
+        syncBypassTimeWindows: (m['syncBypassTimeWindows'] as bool?) ?? true,
+      );
+      _driverReportSyncPending = true;
+      applyOptimisticDriverReportLock();
+      _ensureDriverRetryTimer();
+      notifyListeners();
+    } catch (_) {
+      await _clearPendingDriverSyncFromDisk();
+    }
+  }
+
+  Future<void> _restorePendingChefSyncFromDisk() async {
+    try {
+      final f = await _pendingChefSyncFile();
+      if (!await f.exists()) return;
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final workersRaw = (m['workers'] as List?) ?? const [];
+      final workers = workersRaw
+          .whereType<Map>()
+          .map((w) => Employe(
+                id: (w['id'] as String?) ?? '',
+                nom: (w['nom'] as String?) ?? '',
+                cin: (w['cin'] as String?) ?? '',
+                telephone: '',
+                dateNaissance: '',
+                adresse: '',
+                email: '',
+                poste: '',
+                magasin: '',
+                departement: '',
+                salaireBase: 0,
+                typeContrat: '',
+                dateDebut: '',
+                cnss: '',
+                dateCnss: '',
+                statut: EmployeStatut.enService,
+              ))
+          .where((w) => w.id.isNotEmpty)
+          .toList();
+      if (workers.isEmpty) {
+        await _clearPendingChefSyncFromDisk();
+        return;
+      }
+      _pendingChefReportPayload = _ChefReportPendingPayload(
+        workersDisplay: workers,
+        overtimeWorkerIds:
+            ((m['overtimeWorkerIds'] as List?) ?? const []).map((e) => '$e').toSet(),
+        equipeId: (m['equipeId'] as String?) ?? '',
+        equipeName: (m['equipeName'] as String?) ?? '',
+        chefName: (m['chefName'] as String?) ?? '',
+        chefId: m['chefId'] as String?,
+        configOverride: _configFromMap(
+            (m['config'] as Map?)?.map((k, v) => MapEntry('$k', v)) ?? const {}),
+        bypassTimeWindows: (m['bypassTimeWindows'] as bool?) ?? false,
+        totalEmployees: (m['totalEmployees'] as num?)?.toInt() ?? workers.length,
+        presentCount: (m['presentCount'] as num?)?.toInt() ?? 0,
+        absentCount: (m['absentCount'] as num?)?.toInt() ?? 0,
+        syncBypassTimeWindows: (m['syncBypassTimeWindows'] as bool?) ?? true,
+        nightShiftSupervisorNotes: (m['nightShiftSupervisorNotes'] as Map?)?.map(
+          (k, v) => MapEntry('$k', '$v'),
+        ),
+      );
+      _chefReportSyncPending = true;
+      applyOptimisticChefReportLock(workers.map((w) => w.id).toSet());
+      _ensureChefRetryTimer();
+      notifyListeners();
+    } catch (_) {
+      await _clearPendingChefSyncFromDisk();
     }
   }
 
@@ -611,7 +1059,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable) return false;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
+    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
     await _repo!.submitChefReport(equipeId, pointageDate);
     return true;
@@ -638,8 +1086,7 @@ class PointageProvider extends ChangeNotifier {
     if (!_firebaseAvailable || _repo == null) return;
     final config = configOverride ?? PointageHoursConfig.instance;
     final now = DateTime.now();
-    // Utilise la mÃªme fenÃªtre que submitChefReport (departure) pour cohÃ©rence.
-    if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
+    if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
     final pointageDate = getPointageDateForConfig(config, now);
 
     final regularTemplates = <PointageRecord>[];
@@ -693,6 +1140,7 @@ class PointageProvider extends ChangeNotifier {
     int? overtimeMinutes,
     String? incompleteShiftReason,
     int? workedMinutesBeforeStop,
+    DateTime? departureAt,
     PointageHoursConfig? configOverride,
     bool bypassTimeWindows = false,
   }) async {
@@ -741,6 +1189,7 @@ class PointageProvider extends ChangeNotifier {
       overtimeMinutes: resolvedOvertime,
       incompleteShiftReason: incompleteShiftReason,
       workedMinutesBeforeStop: workedMinutesBeforeStop,
+      departureAt: departureAt,
     );
     return true;
   }
@@ -902,6 +1351,14 @@ class PointageProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> clearPointageAndReportsForDay(DateTime day, {String? equipeId}) async {
+    if (!_firebaseAvailable || _repo == null) return;
+    await _repo!.clearPointageAndReportsForDay(day, equipeId: equipeId);
+    if (_selectedReportDate != null) {
+      selectReportDate(_selectedReportDate);
+    }
+  }
+
   /// ØªÙ†Ø¸ÙŠÙ ÙƒÙ„ Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù…Ù„ÙˆØ«Ø© Ù…Ù† Ø§Ù„Ù†Ø¸Ø§Ù… Ø§Ù„Ù‚Ø¯ÙŠÙ… (tempAssigned ÙÙŠ Ø§Ù„Ø³Ø¬Ù„ Ø§Ù„Ø£ØµÙ„ÙŠ).
   /// ÙŠÙØ³ØªØ®Ø¯Ù… Ù…Ø±Ø© ÙˆØ§Ø­Ø¯Ø© Ù„Ø¥ØµÙ„Ø§Ø­ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© ÙÙŠ Firestore.
   Future<void> fixLegacyRenfortRecords() async {
@@ -928,6 +1385,8 @@ class PointageProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _driverReportRetryTimer?.cancel();
+    _chefReportRetryTimer?.cancel();
     _subPointage?.cancel();
     _subReports?.cancel();
     _subByDate?.cancel();

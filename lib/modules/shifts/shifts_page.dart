@@ -6,11 +6,14 @@ import '../../core/locale/app_locale.dart';
 import '../../core/utils/responsive.dart';
 import '../../modules/employees/employees_provider.dart';
 import '../../modules/employees/models/equipe_model.dart';
+import '../distribution/distribution_shifts_page.dart';
 import 'models/shift_models.dart';
 import 'shifts_provider.dart';
 import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import 'services/shifts_export_service.dart';
+
+enum _AdminShiftsScope { equipes, distribution }
 
 class ShiftsPage extends StatefulWidget {
   const ShiftsPage({super.key});
@@ -22,6 +25,7 @@ class ShiftsPage extends StatefulWidget {
 class _ShiftsPageState extends State<ShiftsPage> {
   bool _loadingTooLong = false;
   Timer? _loadTimer;
+  _AdminShiftsScope _adminScope = _AdminShiftsScope.equipes;
 
   @override
   void initState() {
@@ -47,6 +51,32 @@ class _ShiftsPageState extends State<ShiftsPage> {
     super.dispose();
   }
 
+  Widget _shiftsTitleHeader(BuildContext context, {required bool distributionMode}) {
+    return Row(
+      children: [
+        Icon(Icons.rotate_right, color: Colors.grey[700], size: 28),
+        SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                distributionMode ? tr(context, 'shifts_title_distribution') : tr(context, 'shifts_title'),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 4),
+              Text(
+                distributionMode ? tr(context, 'dist_shifts_subtitle') : tr(context, 'shifts_subtitle'),
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final locale = context.watch<LocaleProvider>();
@@ -56,39 +86,19 @@ class _ShiftsPageState extends State<ShiftsPage> {
     final shifts = context.watch<ShiftsProvider>();
     final isRtl = locale.isArabic;
     final isAdmin = auth.isDirecteur;
+    final mobile = isMobile(context);
     final equipes = SiteId.filterBySite(
       emp.equipes,
       auth.currentUser?.allowedSiteIds,
       auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
       (e) => e.siteId,
     );
+    final pad = pagePadding(context);
 
-    return Directionality(
-      textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.all(pagePadding(context)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.rotate_right, color: Colors.grey[700], size: 28),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(tr(context, 'shifts_title'), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                      SizedBox(height: 4),
-                      Text(tr(context, 'shifts_subtitle'), style: TextStyle(fontSize: 14, color: Colors.grey[600])),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 24),
+    final equipesBody = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
             if (shifts.loading)
               Center(
                 child: Padding(
@@ -152,76 +162,84 @@ class _ShiftsPageState extends State<ShiftsPage> {
               _TodaySummary(equipes: equipes),
               SizedBox(height: 24),
               if (isAdmin)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(tr(context, 'shifts_schedule'), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Tooltip(
-                          message: tr(context, 'shifts_refresh_tooltip'),
-                          child: IconButton(
-                            icon: const Icon(Icons.sync, size: 22),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Tooltip(
+                            message: tr(context, 'shifts_refresh_tooltip'),
+                            child: IconButton(
+                              icon: const Icon(Icons.sync, size: 22),
+                              onPressed: () async {
+                                await context.read<ShiftsProvider>().refresh();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(tr(context, 'shifts_refreshed')), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                          SizedBox(width: mobile ? 2 : 4),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.download, size: 18),
+                            label: Text(tr(context, 'shifts_export_excel')),
+                            onPressed: () => _showShiftsExportDialog(context, shifts, equipes),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            icon: const Icon(Icons.refresh, size: 20),
+                            label: Text(tr(context, 'shifts_reset_config')),
                             onPressed: () async {
-                              await context.read<ShiftsProvider>().refresh();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(tr(context, 'shifts_refreshed')), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
-                                );
+                              final ok = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: Text(tr(ctx, 'shifts_reset_config')),
+                                  content: Text(tr(ctx, 'shifts_reset_confirm')),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel)),
+                                    FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr(ctx, 'shifts_reset_confirm_btn'))),
+                                  ],
+                                ),
+                              );
+                              if (ok == true && context.mounted) {
+                                final now = DateTime.now();
+                                await context.read<ShiftsProvider>().setConfig(RotationConfig(
+                                  startDate: DateTime(now.year, now.month, now.day),
+                                  equipeIds: ['', '', '', ''],
+                                ));
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(tr(context, 'shifts_reset_done')), backgroundColor: Colors.orange),
+                                  );
+                                }
                               }
                             },
                           ),
-                        ),
-                        SizedBox(width: 4),
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.download, size: 18),
-                          label: Text(tr(context, 'shifts_export_excel')),
-                          onPressed: () => _showShiftsExportDialog(context, shifts, equipes),
-                        ),
-                        SizedBox(width: 8),
-                        TextButton.icon(
-                      icon: const Icon(Icons.refresh, size: 20),
-                      label: Text(tr(context, 'shifts_reset_config')),
-                      onPressed: () async {
-                        final ok = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: Text(tr(ctx, 'shifts_reset_config')),
-                            content: Text(tr(ctx, 'shifts_reset_confirm')),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel)),
-                              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr(ctx, 'shifts_reset_confirm_btn'))),
-                            ],
-                          ),
-                        );
-                        if (ok == true && context.mounted) {
-                          final now = DateTime.now();
-                          await context.read<ShiftsProvider>().setConfig(RotationConfig(
-                            startDate: DateTime(now.year, now.month, now.day),
-                            equipeIds: ['', '', '', ''],
-                          ));
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(tr(context, 'shifts_reset_done')), backgroundColor: Colors.orange),
-                            );
-                          }
-                        }
-                      },
-                    ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 )
               else
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(tr(context, 'shifts_schedule'), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.download, size: 18),
-                      label: Text(tr(context, 'shifts_export_excel')),
-                      onPressed: () => _showShiftsExportDialog(context, shifts, equipes),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.download, size: 18),
+                        label: Text(tr(context, 'shifts_export_excel')),
+                        onPressed: () => _showShiftsExportDialog(context, shifts, equipes),
+                      ),
                     ),
                   ],
                 ),
@@ -233,8 +251,103 @@ class _ShiftsPageState extends State<ShiftsPage> {
               SizedBox(height: 32),
               _DoubleDaysSection(isAdmin: isAdmin),
             ],
-          ],
+      ],
+    );
+
+    if (!isAdmin) {
+      return Directionality(
+        textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(pad),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _shiftsTitleHeader(context, distributionMode: false),
+              SizedBox(height: 24),
+              equipesBody,
+            ],
+          ),
         ),
+      );
+    }
+
+    final hideDistributionShifts = auth.isChefAtelierAdmin;
+    final adminScopeEffective = hideDistributionShifts
+        ? _AdminShiftsScope.equipes
+        : _adminScope;
+    final distributionMode = adminScopeEffective == _AdminShiftsScope.distribution;
+    final header = Padding(
+      padding: EdgeInsets.fromLTRB(pad, pad, pad, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _shiftsTitleHeader(context, distributionMode: distributionMode),
+          if (!hideDistributionShifts) ...[
+            SizedBox(height: 12),
+            SegmentedButton<_AdminShiftsScope>(
+              segments: [
+                ButtonSegment<_AdminShiftsScope>(
+                  value: _AdminShiftsScope.equipes,
+                  label: Text(tr(context, 'shifts_filter_equipes')),
+                  icon: Icon(Icons.groups_outlined, size: 18),
+                ),
+                ButtonSegment<_AdminShiftsScope>(
+                  value: _AdminShiftsScope.distribution,
+                  label: Text(tr(context, 'shifts_filter_distribution')),
+                  icon: Icon(Icons.local_shipping_outlined, size: 18),
+                ),
+              ],
+              selected: {_adminScope},
+              onSelectionChanged: (Set<_AdminShiftsScope> next) {
+                setState(() => _adminScope = next.first);
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (mobile && adminScopeEffective == _AdminShiftsScope.equipes) {
+      return Directionality(
+        textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(bottom: pad),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              SizedBox(height: 16),
+              Padding(
+                padding: EdgeInsets.fromLTRB(pad, 0, pad, 0),
+                child: equipesBody,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Directionality(
+      textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header,
+          SizedBox(height: 16),
+          Expanded(
+            child: adminScopeEffective == _AdminShiftsScope.distribution
+                ? Padding(
+                    padding: EdgeInsets.fromLTRB(pad, 0, pad, pad),
+                    child: DistributionShiftsPage(showPageHeader: false),
+                  )
+                : SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(pad, 0, pad, pad),
+                    child: equipesBody,
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -604,7 +717,7 @@ class _ScheduleTableState extends State<_ScheduleTable> {
                   : null,
             ),
             child: Text(
-              _shiftLabel(context, shift),
+              '${_shiftLabel(context, shift)} ${shift.timeRange.replaceAll('–', '-')}',
               style: TextStyle(
                 fontSize: mobile ? 10 : 12,
                 fontWeight: isDouble && isWorking ? FontWeight.w700 : FontWeight.normal,
@@ -733,23 +846,51 @@ class _ShiftsExportRangeDialogState extends State<_ShiftsExportRangeDialog> {
             if (_mode == 0) ...[
               Padding(
                 padding: const EdgeInsets.only(left: 32),
-                child: Row(
-                  children: [
-                    DropdownButton<int>(
-                      value: _month,
-                      items: List.generate(12, (i) => DropdownMenuItem(value: i + 1, child: Text(_monthNames[i]))),
-                      onChanged: (v) => setState(() => _month = v ?? _month),
-                    ),
-                    SizedBox(width: 12),
-                    DropdownButton<int>(
-                      value: _year,
-                      items: List.generate(5, (i) {
-                        final y = DateTime.now().year - 1 + i;
-                        return DropdownMenuItem(value: y, child: Text('$y'));
-                      }),
-                      onChanged: (v) => setState(() => _year = v ?? _year),
-                    ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 320;
+                    if (!compact) {
+                      return Row(
+                        children: [
+                          DropdownButton<int>(
+                            value: _month,
+                            items: List.generate(12, (i) => DropdownMenuItem(value: i + 1, child: Text(_monthNames[i]))),
+                            onChanged: (v) => setState(() => _month = v ?? _month),
+                          ),
+                          SizedBox(width: 12),
+                          DropdownButton<int>(
+                            value: _year,
+                            items: List.generate(5, (i) {
+                              final y = DateTime.now().year - 1 + i;
+                              return DropdownMenuItem(value: y, child: Text('$y'));
+                            }),
+                            onChanged: (v) => setState(() => _year = v ?? _year),
+                          ),
+                        ],
+                      );
+                    }
+                    return SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          DropdownButton<int>(
+                            value: _month,
+                            items: List.generate(12, (i) => DropdownMenuItem(value: i + 1, child: Text(_monthNames[i]))),
+                            onChanged: (v) => setState(() => _month = v ?? _month),
+                          ),
+                          SizedBox(width: 12),
+                          DropdownButton<int>(
+                            value: _year,
+                            items: List.generate(5, (i) {
+                              final y = DateTime.now().year - 1 + i;
+                              return DropdownMenuItem(value: y, child: Text('$y'));
+                            }),
+                            onChanged: (v) => setState(() => _year = v ?? _year),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -834,6 +975,9 @@ class _ConfigSection extends StatefulWidget {
 class _ConfigSectionState extends State<_ConfigSection> {
   late DateTime _startDate;
   late List<String?> _selectedIds;
+  late ShiftsProvider _shifts;
+  /// True si l’utilisateur a modifié le formulaire localement — on n’écrase pas avec le provider.
+  bool _dirty = false;
 
   String _positionHintKey(int positionIndex) {
     switch (positionIndex) {
@@ -851,11 +995,36 @@ class _ConfigSectionState extends State<_ConfigSection> {
     final now = DateTime.now();
     _startDate = DateTime(now.year, now.month, now.day);
     _selectedIds = ['', '', '', ''];
-    final config = context.read<ShiftsProvider>().config;
-    if (config != null) {
-      _startDate = config.startDay;
-      for (var i = 0; i < 4 && i < config.equipeIds.length; i++) _selectedIds[i] = config.equipeIds[i].isEmpty ? '' : config.equipeIds[i];
+    _shifts = context.read<ShiftsProvider>();
+    _shifts.addListener(_onShiftsChanged);
+    _applyProviderToForm();
+  }
+
+  void _onShiftsChanged() {
+    if (!mounted || _dirty) return;
+    setState(_applyProviderToForm);
+  }
+
+  /// Aligner le formulaire sur Firestore / cache (une fois le chargement terminé).
+  void _applyProviderToForm() {
+    if (_shifts.loading) return;
+    final config = _shifts.config;
+    if (config == null) return;
+    _startDate = config.startDay;
+    if (!config.equipeIds.any((id) => id.isNotEmpty)) {
+      _selectedIds = ['', '', '', ''];
+      return;
     }
+    for (var i = 0; i < 4; i++) {
+      final v = i < config.equipeIds.length ? config.equipeIds[i] : '';
+      _selectedIds[i] = v.isEmpty ? '' : v;
+    }
+  }
+
+  @override
+  void dispose() {
+    _shifts.removeListener(_onShiftsChanged);
+    super.dispose();
   }
 
   @override
@@ -880,7 +1049,12 @@ class _ConfigSectionState extends State<_ConfigSection> {
                   firstDate: DateTime(2020),
                   lastDate: DateTime(2030),
                 );
-                if (picked != null) setState(() => _startDate = DateTime(picked.year, picked.month, picked.day));
+                if (picked != null) {
+                  setState(() {
+                    _dirty = true;
+                    _startDate = DateTime(picked.year, picked.month, picked.day);
+                  });
+                }
               },
               icon: Icon(Icons.calendar_today),
               label: Text('${_startDate.day}/${_startDate.month}/${_startDate.year}'),
@@ -891,13 +1065,28 @@ class _ConfigSectionState extends State<_ConfigSection> {
             ),
             SizedBox(height: 20),
             for (var i = 0; i < 4; i++) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(tr(context, 'shifts_config_equipe').replaceAll('%s', '${i + 1}'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                  ),
-                  Text(_positionHintKey(i), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                ],
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 360;
+                  if (compact) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tr(context, 'shifts_config_equipe').replaceAll('%s', '${i + 1}'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text(_positionHintKey(i), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Text(tr(context, 'shifts_config_equipe').replaceAll('%s', '${i + 1}'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                      Text(_positionHintKey(i), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  );
+                },
               ),
               SizedBox(height: 4),
               DropdownButtonFormField<String>(
@@ -907,7 +1096,10 @@ class _ConfigSectionState extends State<_ConfigSection> {
                   DropdownMenuItem(value: null, child: Text('—')),
                   ...equipes.map((e) => DropdownMenuItem(value: e.id, child: Text(e.nom))),
                 ],
-                onChanged: (v) => setState(() => _selectedIds[i] = v ?? ''),
+                onChanged: (v) => setState(() {
+                  _dirty = true;
+                  _selectedIds[i] = v ?? '';
+                }),
               ),
               SizedBox(height: 12),
             ],
@@ -917,7 +1109,10 @@ class _ConfigSectionState extends State<_ConfigSection> {
                 final ids = _selectedIds.map((v) => v ?? '').toList();
                 if (ids.length != 4) return;
                 await context.read<ShiftsProvider>().setConfig(RotationConfig(startDate: _startDate, equipeIds: ids));
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr(context, 'shifts_save')), backgroundColor: Colors.green));
+                if (mounted) {
+                  setState(() => _dirty = false);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr(context, 'shifts_save')), backgroundColor: Colors.green));
+                }
               },
               icon: Icon(Icons.save),
               label: Text(tr(context, 'shifts_save')),
@@ -957,55 +1152,118 @@ class _DoubleDaysSectionState extends State<_DoubleDaysSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── En-tête ──
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade700,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 430;
+            if (!compact) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Icon(Icons.star, color: Colors.white, size: 16),
-                  SizedBox(width: 6),
-                  Text('×2', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade700,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.star, color: Colors.white, size: 16),
+                        SizedBox(width: 6),
+                        Text('×2', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Jours ×2',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DropdownButton<int>(
+                    value: _filterYear,
+                    underline: const SizedBox(),
+                    items: sortedYears.map((y) => DropdownMenuItem(value: y, child: Text('$y'))).toList(),
+                    onChanged: (v) => setState(() => _filterYear = v ?? _filterYear),
+                  ),
+                  if (widget.isAdmin) ...[
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.orange.shade700,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () => _showAddDoubleDayDialog(context, shifts),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Ajouter', style: TextStyle(fontSize: 13)),
+                    ),
+                  ],
                 ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Jours ×2',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // Sélecteur d'année
-            DropdownButton<int>(
-              value: _filterYear,
-              underline: const SizedBox(),
-              items: sortedYears
-                  .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
-                  .toList(),
-              onChanged: (v) => setState(() => _filterYear = v ?? _filterYear),
-            ),
-            if (widget.isAdmin) ...[
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.orange.shade700,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade700,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.star, color: Colors.white, size: 16),
+                          SizedBox(width: 6),
+                          Text('×2', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'Jours ×2',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-                onPressed: () => _showAddDoubleDayDialog(context, shifts),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Ajouter', style: TextStyle(fontSize: 13)),
-              ),
-            ],
-          ],
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      DropdownButton<int>(
+                        value: _filterYear,
+                        underline: const SizedBox(),
+                        items: sortedYears.map((y) => DropdownMenuItem(value: y, child: Text('$y'))).toList(),
+                        onChanged: (v) => setState(() => _filterYear = v ?? _filterYear),
+                      ),
+                      if (widget.isAdmin) ...[
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.orange.shade700,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: () => _showAddDoubleDayDialog(context, shifts),
+                          icon: const Icon(Icons.add, size: 16),
+                          label: const Text('Ajouter', style: TextStyle(fontSize: 13)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 4),
         Text(

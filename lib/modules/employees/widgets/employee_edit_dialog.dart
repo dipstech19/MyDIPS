@@ -40,6 +40,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   late TextEditingController _emailCtrl;
   late TextEditingController _salaireCtrl;
   late TextEditingController _dateDebutCtrl;
+  late TextEditingController _leaveExtraCtrl;
   late TextEditingController _finContratCtrl;
   late TextEditingController _cnssCtrl;
   late TextEditingController _dateCnssCtrl;
@@ -58,6 +59,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   final List<_TempDocument> _newDocuments = [];
   bool _badgeActif = false;
   late TextEditingController _badgeExpiryCtrl;
+  late String _ocpExcelSegment;
+  late bool _ocpForceSalleControle;
 
   static const _contrats = ['CDI', 'CDD', 'Anapec'];
 
@@ -74,6 +77,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _emailCtrl = TextEditingController(text: e.email);
     _salaireCtrl = TextEditingController(text: e.salaireBase.toStringAsFixed(0));
     _dateDebutCtrl = TextEditingController(text: e.dateDebut);
+    _leaveExtraCtrl = TextEditingController(text: e.leaveDaysExtra.toStringAsFixed(1));
     _finContratCtrl = TextEditingController(text: e.finContrat);
     _cnssCtrl = TextEditingController(text: e.cnss);
     _dateCnssCtrl = TextEditingController(text: e.dateCnss);
@@ -87,6 +91,9 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _documents = List.from(e.documents);
     _badgeActif = e.badgeActif;
     _badgeExpiryCtrl = TextEditingController(text: e.badgeExpiration);
+    final seg = e.ocpExcelSegment.trim();
+    _ocpExcelSegment = OcpExcelSegmentCode.allCodes.contains(seg) ? seg : OcpExcelSegmentCode.auto;
+    _ocpForceSalleControle = e.ocpForceSalleControle;
   }
 
   @override
@@ -100,6 +107,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _emailCtrl.dispose();
     _salaireCtrl.dispose();
     _dateDebutCtrl.dispose();
+    _leaveExtraCtrl.dispose();
     _finContratCtrl.dispose();
     _cnssCtrl.dispose();
     _dateCnssCtrl.dispose();
@@ -202,11 +210,34 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                           _dateField(_dateDebutCtrl, 'Date début *', required: true),
                         ),
                         const SizedBox(height: 12),
+                        _field(
+                          _leaveExtraCtrl,
+                          'Solde congé additionnel / reporté (jours)',
+                          isNumber: true,
+                        ),
+                        const SizedBox(height: 12),
                         _row2(
                           _contrat != 'CDI'
                               ? _dateField(_finContratCtrl, 'Fin contrat')
                               : const SizedBox(),
                           _dropdownEmploye(),
+                        ),
+                        const SizedBox(height: 12),
+                        _sectionTitle('Export pointage OCP'),
+                        const SizedBox(height: 8),
+                        _dropdownOcpSegment(),
+                        const SizedBox(height: 4),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: _ocpForceSalleControle,
+                          onChanged: (v) => setState(() => _ocpForceSalleControle = v ?? false),
+                          title: const Text('Salle de contrôle (P1)'),
+                          subtitle: Text(
+                            'Cocher si le libellé du poste ne contient pas « salle de contrôle » mais l’export Excel doit classer en P1.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                          ),
+                          controlAffinity: ListTileControlAffinity.leading,
                         ),
                         const SizedBox(height: 12),
                         // STATUT
@@ -400,6 +431,12 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         documents: allDocs,
         photoUrl: photoUrl,
         siteId: widget.employe.siteId,
+        leaveDaysTaken: widget.employe.leaveDaysTaken,
+        leaveDaysExtra: double.tryParse(_leaveExtraCtrl.text.replaceFirst(',', '.')) ?? widget.employe.leaveDaysExtra,
+        ocpExcelSegment: OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment.trim())
+            ? _ocpExcelSegment.trim()
+            : OcpExcelSegmentCode.auto,
+        ocpForceSalleControle: _ocpForceSalleControle,
       ));
       
       if (mounted) {
@@ -553,6 +590,34 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   static bool _isChefPoste(String poste) {
     final p = poste.trim().toLowerCase();
     return p.contains('chef') || p == 'shef';
+  }
+
+  Widget _dropdownOcpSegment() {
+    final effective = OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment)
+        ? _ocpExcelSegment
+        : OcpExcelSegmentCode.auto;
+    return DropdownButtonFormField<String>(
+      value: effective,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Bloc OCP (tri Excel)',
+        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: [
+        for (final code in OcpExcelSegmentCode.allCodes)
+          DropdownMenuItem<String>(
+            value: code,
+            child: Text(
+              OcpExcelSegmentCode.labelFr(code),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (v) => setState(() => _ocpExcelSegment = v ?? OcpExcelSegmentCode.auto),
+    );
   }
 
   Widget _dropdownEmploye() {

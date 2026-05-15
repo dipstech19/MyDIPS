@@ -158,6 +158,10 @@ class PointageRecord {
   /// تجاوز الشيفت للسجل الفردي (مثلاً عند Renfort)
   final String? shiftOverride;
 
+  /// Remarque optionnelle du chef d'équipe (shift22h→6h) : départ anticipé, incident, etc.
+  final String? nightShiftSupervisorNote;
+  final DateTime? nightShiftSupervisorNoteAt;
+
   PointageRecord({
     required this.id,
     required this.employeId,
@@ -195,6 +199,8 @@ class PointageRecord {
     this.incompleteShiftReason,
     this.workedMinutesBeforeStop,
     this.shiftOverride,
+    this.nightShiftSupervisorNote,
+    this.nightShiftSupervisorNoteAt,
   });
 
   /// السائق لا يستطيع التعديل بعد الإرسال
@@ -211,25 +217,27 @@ class PointageRecord {
           ? ReconciledStatus.confirmedPresent
           : ReconciledStatus.confirmedAbsent;
     }
-    final d = driverStatus;
     final c = chefStatus;
-    if (d == DriverPointageStatus.unset && c == ChefPointageStatus.unset) {
+    // Chef d'equipe decision is the source of truth whenever provided.
+    // Driver input is helper/fallback only when chef didn't mark.
+    if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
+    if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
+    // Distribution : pas de chauffeur — la présence suit uniquement le responsable (chef).
+    if (equipeId.startsWith('distribution:')) {
+      return ReconciledStatus.pending;
+    }
+    final d = driverStatus;
+    if (d == DriverPointageStatus.unset) {
       return ReconciledStatus.confirmedAbsent;
     }
     if (d == DriverPointageStatus.enVehicule) {
-      if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
-      if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
       return ReconciledStatus.pending;
     }
-    if (d == DriverPointageStatus.present && c == ChefPointageStatus.present) {
+    if (d == DriverPointageStatus.present) {
       return ReconciledStatus.confirmedPresent;
     }
-    if (d == DriverPointageStatus.absent && c == ChefPointageStatus.absent) {
+    if (d == DriverPointageStatus.absent) {
       return ReconciledStatus.confirmedAbsent;
-    }
-    if ((d == DriverPointageStatus.present && c == ChefPointageStatus.absent) ||
-        (d == DriverPointageStatus.absent && c == ChefPointageStatus.present)) {
-      return ReconciledStatus.discrepancy;
     }
     return ReconciledStatus.pending;
   }
@@ -287,6 +295,8 @@ class PointageRecord {
     'incompleteShiftReason': incompleteShiftReason,
     'workedMinutesBeforeStop': workedMinutesBeforeStop,
     'shiftOverride': shiftOverride,
+    'nightShiftSupervisorNote': nightShiftSupervisorNote,
+    'nightShiftSupervisorNoteAt': nightShiftSupervisorNoteAt?.toIso8601String(),
   };
 
   static DriverPointageStatus _driverFromMap(dynamic v) {
@@ -361,6 +371,8 @@ class PointageRecord {
     incompleteShiftReason: map['incompleteShiftReason'] as String?,
     workedMinutesBeforeStop: map['workedMinutesBeforeStop'] is int ? map['workedMinutesBeforeStop'] as int : null,
     shiftOverride: map['shiftOverride'] as String?,
+    nightShiftSupervisorNote: map['nightShiftSupervisorNote'] as String?,
+    nightShiftSupervisorNoteAt: _parseDateNullable(map['nightShiftSupervisorNoteAt']),
   );
 
   PointageRecord copyWith({
@@ -400,6 +412,8 @@ class PointageRecord {
     String? incompleteShiftReason,
     int? workedMinutesBeforeStop,
     String? shiftOverride,
+    String? nightShiftSupervisorNote,
+    DateTime? nightShiftSupervisorNoteAt,
   }) => PointageRecord(
     id: id ?? this.id,
     employeId: employeId ?? this.employeId,
@@ -437,6 +451,8 @@ class PointageRecord {
     incompleteShiftReason: incompleteShiftReason ?? this.incompleteShiftReason,
     workedMinutesBeforeStop: workedMinutesBeforeStop ?? this.workedMinutesBeforeStop,
     shiftOverride: shiftOverride ?? this.shiftOverride,
+    nightShiftSupervisorNote: nightShiftSupervisorNote ?? this.nightShiftSupervisorNote,
+    nightShiftSupervisorNoteAt: nightShiftSupervisorNoteAt ?? this.nightShiftSupervisorNoteAt,
   );
 }
 

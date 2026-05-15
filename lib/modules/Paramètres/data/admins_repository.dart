@@ -13,6 +13,8 @@ class AdminUser {
   DateTime dateCreation;
   List<String> siteIds;
   String password;
+  /// Groupes Distribution gérés par ce compte (ex. Chef de zone) — même clé que `admins.distributionGroupIds`.
+  List<String> distributionGroupIds;
 
   AdminUser({
     required this.id,
@@ -26,6 +28,7 @@ class AdminUser {
     required this.dateCreation,
     this.siteIds = const ['all'],
     this.password = '',
+    this.distributionGroupIds = const [],
   });
 
   Map<String, dynamic> toMap() {
@@ -40,6 +43,7 @@ class AdminUser {
       'siteIds': siteIds,
       'password': password,
       'dateCreation': Timestamp.fromDate(dateCreation),
+      'distributionGroupIds': distributionGroupIds,
     };
   }
 
@@ -49,6 +53,10 @@ class AdminUser {
     if (dc is Timestamp) dateCreation = dc.toDate();
     final perms = map['permissions'];
     final sIds = map['siteIds'];
+    final rawDist = map['distributionGroupIds'];
+    final distIds = rawDist is List<dynamic>
+        ? rawDist.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList()
+        : <String>[];
     return AdminUser(
       id: map['id'] as String? ?? '',
       nom: map['nom'] as String? ?? '',
@@ -65,6 +73,7 @@ class AdminUser {
           ? sIds.map((e) => e.toString()).toList()
           : ['all'],
       password: map['password'] as String? ?? '',
+      distributionGroupIds: distIds,
     );
   }
 }

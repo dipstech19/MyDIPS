@@ -4,9 +4,13 @@ import '../../core/auth/auth_provider.dart';
 import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
+import '../../modules/distribution/distribution_groups_provider.dart';
+import '../../modules/distribution/models/distribution_group_model.dart';
 import '../../modules/employees/employees_provider.dart';
 import '../../modules/employees/models/employe_model.dart';
 import '../../modules/employees/models/equipe_model.dart';
+import '../../modules/groupes/groupes_provider.dart';
+import '../../modules/groupes/models/groupe_model.dart';
 import 'pointage_provider.dart';
 import 'models/pointage_model.dart';
 
@@ -28,6 +32,15 @@ class _FormationPageState extends State<FormationPage> {
   Map<String, Set<String>> _alreadyInFormationByEquipe = {};
   bool _loadingFormation = false;
 
+  bool _isProtectedHigherPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef de zone') ||
+        p.contains('chef d\'atelier') ||
+        p.contains('rh') ||
+        p.contains('admin') ||
+        p.contains('directeur');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -43,7 +56,8 @@ class _FormationPageState extends State<FormationPage> {
     final auth = context.read<AuthProvider>();
     final site = context.read<SiteProvider>();
     final emp = context.read<EmployeesProvider>();
-    final pointage = context.read<PointageProvider>();
+    final groupes = context.read<GroupesProvider>().groupes;
+    final distributionGroups = context.read<DistributionGroupsProvider>().groups;
 
     final filteredEmployes = SiteId.filterBySite(
       emp.employes,
@@ -57,11 +71,13 @@ class _FormationPageState extends State<FormationPage> {
     }).toList();
 
     final results = <({String equipeId, String equipeName, String chefName, List<Employe> workers})>[];
+    final usedInEquipe = <String>{};
 
     for (final eq in equipes) {
       final chefEmp = filteredEmployes.where((e) => e.id == eq.chefId).toList();
       final chefName = chefEmp.isNotEmpty ? chefEmp.first.nom : '';
-      final workers = _getWorkersForEquipe(eq, filteredEmployes, pointage);
+      final workers = _getWorkersForEquipe(eq, filteredEmployes);
+      usedInEquipe.addAll(workers.map((w) => w.id));
       results.add((
         equipeId: eq.id,
         equipeName: eq.nom,
@@ -70,10 +86,80 @@ class _FormationPageState extends State<FormationPage> {
       ));
     }
 
+    final usedInGroupe = <String>{};
+    for (final g in groupes) {
+      if (g.membreIds.isEmpty) continue;
+      final workers = _getWorkersForGroupe(g, filteredEmployes);
+      if (workers.isEmpty) continue;
+      usedInGroupe.addAll(workers.map((w) => w.id));
+      results.add((
+        equipeId: 'groupe:${g.id}',
+        equipeName: 'Groupe: ${g.nom}',
+        chefName: 'Responsable',
+        workers: workers,
+      ));
+    }
+
+    final usedInDistribution = <String>{};
+    for (final g in distributionGroups) {
+      if (g.membreIds.isEmpty) continue;
+      final workers = _getWorkersForDistributionGroup(g, filteredEmployes);
+      if (workers.isEmpty) continue;
+      usedInDistribution.addAll(workers.map((w) => w.id));
+      results.add((
+        equipeId: 'distribution:${g.id}',
+        equipeName: 'Distribution: ${g.nom}',
+        chefName: 'Responsable Distribution',
+        workers: workers,
+      ));
+    }
+
+    final usedByAnyGroup = <String>{
+      ...usedInEquipe,
+      ...usedInGroupe,
+      ...usedInDistribution,
+    };
+    final horsEquipeWorkers = filteredEmployes
+        .where((e) => e.statut == EmployeStatut.enService && !usedByAnyGroup.contains(e.id))
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+    if (horsEquipeWorkers.isNotEmpty) {
+      results.add((
+        equipeId: 'hors_equipe',
+        equipeName: 'Hors équipe',
+        chefName: 'Admin',
+        workers: horsEquipeWorkers,
+      ));
+    }
+
+    if (auth.isChefZoneAdmin) {
+      final allowedDistIds = auth.distributionGroupIds;
+      return results.where((t) {
+        if (t.equipeId == 'hors_equipe') return true;
+        if (!t.equipeId.startsWith('distribution:')) return false;
+        if (allowedDistIds.isEmpty) return true;
+        final gid = t.equipeId.substring('distribution:'.length);
+        return allowedDistIds.contains(gid);
+      }).toList();
+    }
+
+    if (auth.isChefAtelierAdmin) {
+      return results
+          .where((t) => t.equipeId != 'hors_equipe' && !t.equipeId.startsWith('distribution:'))
+          .map((t) => (
+                equipeId: t.equipeId,
+                equipeName: t.equipeName,
+                chefName: t.chefName,
+                workers: t.workers.where((w) => !_isProtectedHigherPoste(w.poste)).toList(),
+              ))
+          .where((t) => t.workers.isNotEmpty)
+          .toList();
+    }
+
     return results;
   }
 
-  List<Employe> _getWorkersForEquipe(Equipe equipe, List<Employe> allEmployes, PointageProvider pointage) {
+  List<Employe> _getWorkersForEquipe(Equipe equipe, List<Employe> allEmployes) {
     final result = <Employe>[];
     final seen = <String>{};
 
@@ -92,6 +178,22 @@ class _FormationPageState extends State<FormationPage> {
     }
 
     return result;
+  }
+
+  List<Employe> _getWorkersForGroupe(Groupe groupe, List<Employe> allEmployes) {
+    final workers = allEmployes
+        .where((e) => groupe.membreIds.contains(e.id) && e.statut == EmployeStatut.enService)
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+    return workers;
+  }
+
+  List<Employe> _getWorkersForDistributionGroup(DistributionGroup group, List<Employe> allEmployes) {
+    final workers = allEmployes
+        .where((e) => group.membreIds.contains(e.id) && e.statut == EmployeStatut.enService)
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+    return workers;
   }
 
   Future<void> _loadFormationStatus() async {
@@ -167,6 +269,133 @@ class _FormationPageState extends State<FormationPage> {
     }
   }
 
+  Future<void> _editTrainingRangeForEmployee(
+    ({String equipeId, String equipeName, String chefName, List<Employe> workers}) team,
+    Employe employe,
+  ) async {
+    final pointage = context.read<PointageProvider>();
+    final current = await pointage.getRecordForEmployeeForDate(employe.id, _startDate);
+    final initialStart = current?.trainingStartAt != null
+        ? DateTime(
+            current!.trainingStartAt!.year,
+            current.trainingStartAt!.month,
+            current.trainingStartAt!.day,
+          )
+        : _startDate;
+    final initialEndRaw = current?.trainingEndAt;
+    final initialEnd = initialEndRaw == null
+        ? initialStart
+        : DateTime(initialEndRaw.year, initialEndRaw.month, initialEndRaw.day);
+
+    DateTime selectedStart = initialStart;
+    DateTime selectedEnd = initialEnd.isBefore(initialStart) ? initialStart : initialEnd;
+
+    final picked = await showDialog<({DateTime startDate, DateTime endDate})>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          Future<void> pickStart() async {
+            final d = await showDatePicker(
+              context: ctx,
+              initialDate: selectedStart,
+              firstDate: DateTime(2023),
+              lastDate: DateTime.now().add(const Duration(days: 365)),
+            );
+            if (d == null) return;
+            setS(() {
+              selectedStart = DateTime(d.year, d.month, d.day);
+              if (selectedEnd.isBefore(selectedStart)) selectedEnd = selectedStart;
+            });
+          }
+
+          Future<void> pickEnd() async {
+            final d = await showDatePicker(
+              context: ctx,
+              initialDate: selectedEnd.isBefore(selectedStart) ? selectedStart : selectedEnd,
+              firstDate: selectedStart,
+              lastDate: DateTime.now().add(const Duration(days: 365)),
+            );
+            if (d == null) return;
+            setS(() => selectedEnd = DateTime(d.year, d.month, d.day));
+          }
+
+          return AlertDialog(
+            title: Text('Modifier la période de formation - ${employe.nom}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Date début'),
+                const SizedBox(height: 6),
+                _DateButton(label: 'Du', date: selectedStart, onTap: pickStart),
+                const SizedBox(height: 10),
+                const Text('Date fin'),
+                const SizedBox(height: 6),
+                _DateButton(label: 'Au', date: selectedEnd, onTap: pickEnd),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  ctx,
+                  (startDate: selectedStart, endDate: selectedEnd),
+                ),
+                child: const Text('Enregistrer'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (picked == null) return;
+
+    final oldStart = initialStart;
+    final oldEnd = initialEnd;
+    final newStart = DateTime(picked.startDate.year, picked.startDate.month, picked.startDate.day);
+    final newEnd = DateTime(picked.endDate.year, picked.endDate.month, picked.endDate.day);
+
+    setState(() => _saving = true);
+    try {
+      for (var d = oldStart; !d.isAfter(oldEnd); d = d.add(const Duration(days: 1))) {
+        final r = await pointage.getRecordForEmployeeForDate(employe.id, d);
+        if (r?.adminFinalStatus == AttendanceStatus.training) {
+          await pointage.setAdminOverride(r!.id, null);
+        }
+      }
+      for (var d = newStart; !d.isAfter(newEnd); d = d.add(const Duration(days: 1))) {
+        await pointage.setAdminOverrideForEmployee(
+          employeId: employe.id,
+          employeNom: employe.nom,
+          employeCin: employe.cin,
+          equipeId: team.equipeId,
+          equipeName: team.equipeName,
+          chefName: team.chefName,
+          status: AttendanceStatus.training,
+          viewDate: d,
+          trainingStartAt: newStart,
+          trainingEndAt: DateTime(newEnd.year, newEnd.month, newEnd.day, 23, 59, 59),
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _startDate = newStart;
+        _endDate = newEnd;
+      });
+      await _loadFormationStatus();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Période de formation mise à jour pour ${employe.nom}.'),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   String _fmtDate(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
@@ -233,7 +462,7 @@ class _FormationPageState extends State<FormationPage> {
                   const SizedBox(height: 14),
 
                   // Filtre équipe
-                  Text('Équipe', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 12 : 13)),
+                  Text('Équipe / Groupe', style: TextStyle(fontWeight: FontWeight.w600, fontSize: mobile ? 12 : 13)),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String?>(
                     value: _selectedEquipeId,
@@ -245,7 +474,7 @@ class _FormationPageState extends State<FormationPage> {
                     items: [
                       const DropdownMenuItem<String?>(
                         value: null,
-                        child: Text('Toutes les équipes'),
+                        child: Text('Tous les groupes'),
                       ),
                       ...allTeams.map((t) => DropdownMenuItem<String?>(
                             value: t.equipeId,
@@ -349,8 +578,8 @@ class _FormationPageState extends State<FormationPage> {
           else ...[
             Text(
               _selectedEquipeId == null
-                  ? 'Toutes les équipes (${allTeams.length})'
-                  : 'Équipe sélectionnée',
+                  ? 'Tous les groupes (${allTeams.length})'
+                  : 'Groupe sélectionné',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 15),
             ),
             const SizedBox(height: 10),
@@ -391,6 +620,7 @@ class _FormationPageState extends State<FormationPage> {
                     }
                   });
                 },
+                onEditTrainingRange: (employe) => _editTrainingRangeForEmployee(t, employe),
               );
             }),
           ],
@@ -413,6 +643,7 @@ class _TeamCard extends StatelessWidget {
   final void Function(String id, bool selected) onToggleEmployee;
   final void Function(List<String> ids) onSelectAll;
   final void Function(List<String> ids) onDeselectAll;
+  final void Function(Employe employe) onEditTrainingRange;
 
   const _TeamCard({
     required this.team,
@@ -424,6 +655,7 @@ class _TeamCard extends StatelessWidget {
     required this.onToggleEmployee,
     required this.onSelectAll,
     required this.onDeselectAll,
+    required this.onEditTrainingRange,
   });
 
   @override
@@ -530,9 +762,7 @@ class _TeamCard extends StatelessWidget {
                   return CheckboxListTile(
                     dense: true,
                     value: selected,
-                    onChanged: alreadyIn
-                        ? null
-                        : (v) => onToggleEmployee(e.id, v == true),
+                    onChanged: alreadyIn ? null : (v) => onToggleEmployee(e.id, v == true),
                     title: Text(
                       e.nom,
                       style: TextStyle(
@@ -543,12 +773,16 @@ class _TeamCard extends StatelessWidget {
                     ),
                     subtitle: alreadyIn
                         ? Text(
-                            'Déjà en formation — ${fmtDate(startDate)}',
+                            'Déjà en formation — cliquez modifier pour changer la période',
                             style: TextStyle(fontSize: 11, color: Colors.blue.shade600),
                           )
                         : null,
                     secondary: alreadyIn
-                        ? Icon(Icons.school, size: 18, color: Colors.blue.shade400)
+                        ? IconButton(
+                            tooltip: 'Modifier la période',
+                            onPressed: () => onEditTrainingRange(e),
+                            icon: Icon(Icons.edit_calendar, size: 18, color: Colors.blue.shade500),
+                          )
                         : null,
                     controlAffinity: ListTileControlAffinity.leading,
                   );

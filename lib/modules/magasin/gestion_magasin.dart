@@ -1,3 +1,4 @@
+
 // =============================================================================
 //  gestion_magasin.dart — VERSION AVEC FOURNISSEURS
 //  + Page Fournisseurs dans la nav
@@ -860,6 +861,7 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     final magasin = context.watch<MagasinProvider>();
     final auth    = context.watch<AuthProvider>();
     final site    = context.watch<SiteProvider>();
+    final mobile = isMobile(context);
 
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
@@ -879,7 +881,6 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
       auth.currentUser?.isSuperAdmin == true ? site.selectedSiteId : null,
       (m) => m.siteId,
     );
-
     if (!magasin.firebaseAvailable) {
       return SizedBox(
         height: MediaQuery.sizeOf(context).height,
@@ -905,6 +906,78 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     final totalS = filteredSorties.fold(0, (s, m) => s + m.totalQte);
     final totalH = filteredEntrees.length + filteredSorties.length;
 
+    final navBar = _TopNavBar(
+      tab: _tab,
+      onTap: (i) => setState(() {
+        _tab = i;
+        _tabCtrl.animateTo(i);
+      }),
+      onExport: () => _exportExcel(context, filteredProduits, filteredEntrees, filteredSorties),
+      statChips: [
+        if (_tab == 0) ...[
+          if (rupt > 0) _AlertChipButton(
+            label: '$rupt rupture${rupt > 1 ? "s" : ""} EPI',
+            col: kRed,
+            icon: Icons.remove_shopping_cart_rounded,
+            onTap: () => _showStockAlert(
+              context,
+              filteredProduits.where((p) => p.rupture && p.categorie == 'EPI').toList(),
+              'Ruptures de Stock — EPI', kRed, kRedLt,
+              isRupture: true,
+            ),
+          ),
+          if (bas > 0) _AlertChipButton(
+            label: '$bas stock bas EPI',
+            col: kOrange,
+            icon: Icons.warning_amber_rounded,
+            onTap: () => _showStockAlert(
+              context,
+              filteredProduits.where((p) => p.bas && p.categorie == 'EPI').toList(),
+              'Stock Bas — EPI', kOrange, kOrangeLt,
+              isRupture: false,
+            ),
+          ),
+        ],
+        if (_tab == 1) ...[
+          _StatChip('${filteredEntrees.length} entrée${filteredEntrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
+          _StatChip('$totalE unités', kBlueLt, kBlue),
+        ],
+        if (_tab == 2) ...[
+          _StatChip('${filteredSorties.length} sortie${filteredSorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
+          _StatChip('$totalS unités', kBlueLt, kBlue),
+        ],
+        if (_tab == 3) _StatChip('$totalH opérations', kPurpleLt, kPurple),
+        if (_tab == 4) _StatChip('${magasin.fournisseurs.length} fournisseur${magasin.fournisseurs.length != 1 ? "s" : ""}', kTealLt, kTeal),
+      ],
+    );
+
+    if (mobile) {
+      Widget activePage;
+      if (_tab == 0) {
+        activePage = _StockPage(magasin: magasin, produits: filteredProduits, internalScroll: false);
+      } else if (_tab == 1) {
+        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, internalScroll: false);
+      } else if (_tab == 2) {
+        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, internalScroll: false);
+      } else if (_tab == 3) {
+        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], internalScroll: false);
+      } else {
+        activePage = _FournisseursPage(magasin: magasin, internalScroll: false);
+      }
+
+      return ColoredBox(
+        color: kBg,
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              navBar,
+              activePage,
+            ],
+          ),
+        ),
+      );
+    }
+
     final screenH = MediaQuery.sizeOf(context).height;
     return SizedBox(
       height: screenH,
@@ -912,50 +985,7 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
         color: kBg,
         child: Column(
           children: [
-            _TopNavBar(
-              tab: _tab,
-              onTap: (i) => setState(() {
-                _tab = i;
-                _tabCtrl.animateTo(i);
-              }),
-              onExport: () => _exportExcel(context, filteredProduits, filteredEntrees, filteredSorties),
-              statChips: [
-                if (_tab == 0) ...[
-                  if (rupt > 0) _AlertChipButton(
-                    label: '$rupt rupture${rupt > 1 ? "s" : ""} EPI',
-                    col: kRed,
-                    icon: Icons.remove_shopping_cart_rounded,
-                    onTap: () => _showStockAlert(
-                      context,
-                      filteredProduits.where((p) => p.rupture && p.categorie == 'EPI').toList(),
-                      'Ruptures de Stock — EPI', kRed, kRedLt,
-                      isRupture: true,
-                    ),
-                  ),
-                  if (bas > 0) _AlertChipButton(
-                    label: '$bas stock bas EPI',
-                    col: kOrange,
-                    icon: Icons.warning_amber_rounded,
-                    onTap: () => _showStockAlert(
-                      context,
-                      filteredProduits.where((p) => p.bas && p.categorie == 'EPI').toList(),
-                      'Stock Bas — EPI', kOrange, kOrangeLt,
-                      isRupture: false,
-                    ),
-                  ),
-                ],
-                if (_tab == 1) ...[
-                  _StatChip('${filteredEntrees.length} entrée${filteredEntrees.length != 1 ? "s" : ""}', kGreenLt, kGreen),
-                  _StatChip('$totalE unités', kBlueLt, kBlue),
-                ],
-                if (_tab == 2) ...[
-                  _StatChip('${filteredSorties.length} sortie${filteredSorties.length != 1 ? "s" : ""}', kOrangeLt, kOrange),
-                  _StatChip('$totalS unités', kBlueLt, kBlue),
-                ],
-                if (_tab == 3) _StatChip('$totalH opérations', kPurpleLt, kPurple),
-                if (_tab == 4) _StatChip('${magasin.fournisseurs.length} fournisseur${magasin.fournisseurs.length != 1 ? "s" : ""}', kTealLt, kTeal),
-              ],
-            ),
+            navBar,
             Expanded(
               child: TabBarView(
                 controller: _tabCtrl,
@@ -1602,7 +1632,8 @@ class _StockAlertDialogState extends State<_StockAlertDialog> {
 class _StockPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Produit> produits;
-  const _StockPage({required this.magasin, required this.produits});
+  final bool internalScroll;
+  const _StockPage({required this.magasin, required this.produits, this.internalScroll = true});
   @override
   State<_StockPage> createState() => _StockPageState();
 }
@@ -1692,8 +1723,9 @@ class _StockPageState extends State<_StockPage> {
           ]),
         ),
         const SizedBox(height: 8),
-        Expanded(
-          child: list.isEmpty
+        if (widget.internalScroll)
+          Expanded(
+            child: list.isEmpty
               ? _EmptyState(message: 'Aucun produit trouvé', color: kBlue)
               : mobile
               ? ListView.separated(
@@ -1756,8 +1788,75 @@ class _StockPageState extends State<_StockPage> {
                 ]);
               }).toList(),
             ),
-          ),
-        ),
+            ),
+          )
+        else
+          (list.isEmpty
+              ? _EmptyState(message: 'Aucun produit trouvé', color: kBlue)
+              : mobile
+              ? ListView.separated(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  itemCount: list.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) => _ProduitCard(
+                    produit: list[i],
+                    fournisseur: widget.magasin.fournisseurById(list[i].fournisseurId),
+                    onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel))),
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  child: _DataTable(
+                    empty: false,
+                    accentColor: kBlue,
+                    columns: const [
+                      _Col('PRODUIT', flex: 3),
+                      _Col('RÉFÉRENCE', flex: 2),
+                      _Col('CATÉGORIE', flex: 2),
+                      _Col('MAGASIN', flex: 2),
+                      _Col('MODULAIRE', flex: 2),
+                      _Col('STOCK', flex: 1),
+                      _Col('', flex: 1),
+                    ],
+                    rows: list.map((p) {
+                      final g = groupeByLabel(p.groupeUniteLabel);
+                      final stockColor = p.rupture ? kRed : p.bas ? kOrange : kGreen;
+                      final stockBg = p.rupture ? kRedLt : p.bas ? kOrangeLt : kGreenLt;
+                      return _DataTableRow(cells: [
+                        Row(children: [
+                          Container(
+                            width: 34, height: 34,
+                            decoration: BoxDecoration(color: kBlueLt, borderRadius: BorderRadius.circular(8)),
+                            child: Center(child: Text(g?.emoji ?? '📦', style: const TextStyle(fontSize: 16))),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                            Text(p.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1),
+                            Text(p.categorie, style: _muted.copyWith(fontSize: 10), overflow: TextOverflow.ellipsis, maxLines: 1),
+                          ])),
+                        ]),
+                        Text(p.reference, style: _mono, overflow: TextOverflow.ellipsis, maxLines: 1),
+                        _PillBadge(p.categorie, kBlueLt, kBlue),
+                        p.magasin.isNotEmpty
+                            ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
+                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        p.modulaireNom != null
+                            ? _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown)
+                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        Center(child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(color: stockBg, borderRadius: BorderRadius.circular(20)),
+                          child: Text('${p.total}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: stockColor)),
+                        )),
+                        Center(child: _IconBtn(Icons.visibility_outlined, 'Détails', kBlueLt, kBlue, () {
+                          _showDialog(context, _DetailsDialog(produit: p, groupe: g));
+                        })),
+                      ]);
+                    }).toList(),
+                  ),
+                )),
       ],
     );
   }
@@ -1818,18 +1917,36 @@ class _ProduitCard extends StatelessWidget {
                 ),
               ]),
               const SizedBox(height: 8),
-              Row(children: [
-                _PillBadge(p.categorie, kBlueLt, kBlue),
-                const SizedBox(width: 6),
-                if (p.magasin.isNotEmpty) _PillBadge(p.magasin, kIndigoLt, kIndigo),
-                if (p.modulaireNom != null) ...[const SizedBox(width: 6), _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown)],
-                const Spacer(),
-                Flexible(child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Flexible(child: Text('Voir détails', style: TextStyle(fontSize: 11, color: kBlue.withOpacity(0.8), fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
-                  const SizedBox(width: 3),
-                  Icon(Icons.arrow_forward_ios_rounded, size: 10, color: kBlue.withOpacity(0.8)),
-                ])),
-              ]),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _PillBadge(p.categorie, kBlueLt, kBlue),
+                  if (p.magasin.isNotEmpty) _PillBadge(p.magasin, kIndigoLt, kIndigo),
+                  if (p.modulaireNom != null) _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Voir détails',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: kBlue.withOpacity(0.8),
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(width: 3),
+                      Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 10,
+                        color: kBlue.withOpacity(0.8),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -1845,7 +1962,8 @@ class _ProduitCard extends StatelessWidget {
 class _EntreesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> entrees;
-  const _EntreesPage({required this.magasin, required this.entrees});
+  final bool internalScroll;
+  const _EntreesPage({required this.magasin, required this.entrees, this.internalScroll = true});
   @override
   State<_EntreesPage> createState() => _EntreesPageState();
 }
@@ -1932,8 +2050,9 @@ class _EntreesPageState extends State<_EntreesPage> {
           ),
         ),
         const SizedBox(height: 10),
-        Expanded(
-          child: list.isEmpty
+        if (widget.internalScroll)
+          Expanded(
+            child: list.isEmpty
               ? _EmptyState(message: 'Aucune entrée — cliquez sur « Nouvelle entrée »', color: kGreen)
               : mobile
               ? ListView.separated(
@@ -1960,8 +2079,37 @@ class _EntreesPageState extends State<_EntreesPage> {
                 onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
-          ),
-        ),
+            ),
+          )
+        else
+          (list.isEmpty
+              ? _EmptyState(message: 'Aucune entrée — cliquez sur « Nouvelle entrée »', color: kGreen)
+              : mobile
+              ? ListView.separated(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  itemCount: list.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) => _MouvCard(
+                    m: list[i], color: kGreen, bgColor: kGreenLt,
+                    fournisseurNom: list[i].fournisseurNom,
+                    modulaireNom: list[i].modulaireNom,
+                    onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  child: _DataTable(
+                    empty: false, accentColor: kGreen,
+                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 1)],
+                    rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true, showModulaire: true,
+                      onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
+                      onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                    )).toList(),
+                  ),
+                )),
       ],
     );
   }
@@ -1974,7 +2122,8 @@ class _EntreesPageState extends State<_EntreesPage> {
 class _SortiesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> sorties;
-  const _SortiesPage({required this.magasin, required this.sorties});
+  final bool internalScroll;
+  const _SortiesPage({required this.magasin, required this.sorties, this.internalScroll = true});
   @override
   State<_SortiesPage> createState() => _SortiesPageState();
 }
@@ -2061,8 +2210,9 @@ class _SortiesPageState extends State<_SortiesPage> {
           ),
         ),
         const SizedBox(height: 10),
-        Expanded(
-          child: list.isEmpty
+        if (widget.internalScroll)
+          Expanded(
+            child: list.isEmpty
               ? _EmptyState(message: 'Aucune sortie — cliquez sur « Nouvelle sortie »', color: kOrange)
               : mobile
               ? ListView.separated(
@@ -2088,8 +2238,36 @@ class _SortiesPageState extends State<_SortiesPage> {
                 onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
-          ),
-        ),
+            ),
+          )
+        else
+          (list.isEmpty
+              ? _EmptyState(message: 'Aucune sortie — cliquez sur « Nouvelle sortie »', color: kOrange)
+              : mobile
+              ? ListView.separated(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  itemCount: list.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) => _MouvCard(
+                    m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
+                    modulaireNom: list[i].modulaireNom,
+                    onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  child: _DataTable(
+                    empty: false, accentColor: kOrange,
+                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
+                    rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
+                      onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
+                      onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                    )).toList(),
+                  ),
+                )),
       ],
     );
   }
@@ -2409,7 +2587,8 @@ class _BanniereAction extends StatelessWidget {
 class _HistoriquePage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> mouvements;
-  const _HistoriquePage({required this.magasin, required this.mouvements});
+  final bool internalScroll;
+  const _HistoriquePage({required this.magasin, required this.mouvements, this.internalScroll = true});
   @override
   State<_HistoriquePage> createState() => _HistoriquePageState();
 }
@@ -2589,8 +2768,9 @@ class _HistoriquePageState extends State<_HistoriquePage> {
         const SizedBox(height: 10),
 
         // ── Liste / Table ─────────────────────────────────────────────────
-        Expanded(
-          child: list.isEmpty
+        if (widget.internalScroll)
+          Expanded(
+            child: list.isEmpty
               ? _EmptyState(message: 'Aucune opération pour ces filtres', color: kPurple)
               : mobile
               ? ListView.separated(
@@ -2665,8 +2845,87 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                 ]);
               }).toList(),
             ),
-          ),
-        ),
+            ),
+          )
+        else
+          (list.isEmpty
+              ? _EmptyState(message: 'Aucune opération pour ces filtres', color: kPurple)
+              : mobile
+              ? ListView.separated(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  itemCount: list.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) {
+                    final m = list[i];
+                    final isE = m.type == 'entree';
+                    return _MouvCard(
+                      m: m, color: isE ? kGreen : kOrange, bgColor: isE ? kGreenLt : kOrangeLt,
+                      showPreneur: false,
+                      fournisseurNom: isE ? m.fournisseurNom : null,
+                      modulaireNom: m.modulaireNom,
+                      onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: isE ? 'Supprimer cette entrée ?' : 'Supprimer cette sortie ?', onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                      onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                    );
+                  },
+                )
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  child: _DataTable(
+                    empty: false, accentColor: kPurple,
+                    columns: const [
+                      _Col('TYPE', flex: 1), _Col('DATE', flex: 2), _Col('PRODUIT', flex: 3),
+                      _Col('CATÉGORIE', flex: 2), _Col('MAGASIN', flex: 2),
+                      _Col('QTÉ', flex: 1), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('', flex: 1),
+                    ],
+                    rows: list.map((m) {
+                      final isE = m.type == 'entree';
+                      final color = isE ? kGreen : kOrange;
+                      final bg = isE ? kGreenLt : kOrangeLt;
+                      return _DataTableRow(cells: [
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(7), border: Border.all(color: color.withOpacity(0.3))),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(isE ? Icons.south_rounded : Icons.north_rounded, size: 10, color: color),
+                              const SizedBox(width: 3),
+                              Text(isE ? 'Entrée' : 'Sortie', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: color)),
+                            ]),
+                          ),
+                        ),
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                          Text(_fmtDate(m.date), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kText)),
+                          Text(_fmtTime(m.date), style: _muted.copyWith(fontSize: 10)),
+                        ]),
+                        Text(m.nomProduit, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1),
+                        _PillBadge(m.categorie, kBlueLt, kBlue),
+                        m.magasin.isNotEmpty
+                            ? _PillBadge(m.magasin, kIndigoLt, kIndigo)
+                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+                          child: Text('${m.totalQte}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
+                        ),
+                        isE && m.fournisseurNom != null
+                            ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal)
+                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        m.modulaireNom != null
+                            ? _PillBadge('📦 ${m.modulaireNom!}', kBrownLt, kBrown)
+                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m))),
+                          const SizedBox(width: 6),
+                          _IconBtn(Icons.visibility_outlined, 'Détails', kPurpleLt, kPurple, () => _showDialog(context, _DetailsOperationDialog(m: m))),
+                        ])),
+                      ]);
+                    }).toList(),
+                  ),
+                )),
       ],
     );
   }
@@ -2681,7 +2940,8 @@ class _HistoriquePageState extends State<_HistoriquePage> {
 
 class _FournisseursPage extends StatefulWidget {
   final MagasinProvider magasin;
-  const _FournisseursPage({required this.magasin});
+  final bool internalScroll;
+  const _FournisseursPage({required this.magasin, this.internalScroll = true});
   @override
   State<_FournisseursPage> createState() => _FournisseursPageState();
 }
@@ -2766,8 +3026,9 @@ class _FournisseursPageState extends State<_FournisseursPage> {
         const SizedBox(height: 8),
 
         // Liste
-        Expanded(
-          child: list.isEmpty
+        if (widget.internalScroll)
+          Expanded(
+            child: list.isEmpty
               ? _EmptyState(message: 'Aucun fournisseur — cliquez sur « Nouveau fournisseur »', color: kTeal)
               : mobile
               ? ListView.separated(
@@ -2811,8 +3072,56 @@ class _FournisseursPageState extends State<_FournisseursPage> {
                 ])),
               ])).toList(),
             ),
-          ),
-        ),
+            ),
+          )
+        else
+          (list.isEmpty
+              ? _EmptyState(message: 'Aucun fournisseur — cliquez sur « Nouveau fournisseur »', color: kTeal)
+              : mobile
+              ? ListView.separated(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  itemCount: list.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) => _FournisseurCard(
+                    f: list[i],
+                    onEdit: () => _showDialog(ctx, _FournisseurForm(magasin: widget.magasin, scaffoldContext: context, fournisseur: list[i])),
+                    onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nom, msg: 'Supprimer ce fournisseur ?', onConfirm: () { widget.magasin.deleteFournisseur(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
+                  child: _DataTable(
+                    empty: false, accentColor: kTeal,
+                    columns: const [_Col('FOURNISSEUR', flex: 3), _Col('TÉLÉPHONE', flex: 2), _Col('EMAIL', flex: 3), _Col('ADRESSE', flex: 3), _Col('', flex: 1)],
+                    rows: list.map((f) => _DataTableRow(cells: [
+                      Row(children: [
+                        Container(
+                          width: 36, height: 36,
+                          decoration: BoxDecoration(color: kTealLt, borderRadius: BorderRadius.circular(9)),
+                          child: const Center(child: Icon(Icons.business_rounded, color: kTeal, size: 18)),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(child: Text(f.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1)),
+                      ]),
+                      Row(children: [
+                        const Icon(Icons.phone_outlined, size: 12, color: kMuted),
+                        const SizedBox(width: 4),
+                        Flexible(child: Text(f.telephone, style: _mono.copyWith(fontSize: 11), overflow: TextOverflow.ellipsis, maxLines: 1)),
+                      ]),
+                      f.telephone2 != null && f.telephone2!.isNotEmpty
+                          ? Row(children: [const Icon(Icons.phone_outlined, size: 12, color: kMuted), const SizedBox(width: 4), Flexible(child: Text(f.telephone2!, style: _muted.copyWith(fontSize: 11), overflow: TextOverflow.ellipsis, maxLines: 1))])
+                          : Text('—', style: _muted.copyWith(fontSize: 11)),
+                      Flexible(child: Text(f.adresse, style: _muted.copyWith(fontSize: 11), overflow: TextOverflow.ellipsis, maxLines: 2)),
+                      Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _FournisseurForm(magasin: widget.magasin, scaffoldContext: context, fournisseur: f))),
+                        const SizedBox(width: 6),
+                        _IconBtn(Icons.delete_outline_rounded, 'Supprimer', kRedLt, kRed, () => _showDialog(context, _ConfirmDel(nom: f.nom, msg: 'Supprimer ce fournisseur ?', onConfirm: () { widget.magasin.deleteFournisseur(f.id); Navigator.of(context, rootNavigator: true).pop(); }))),
+                      ])),
+                    ])).toList(),
+                  ),
+                )),
       ],
     );
   }
@@ -3395,28 +3704,28 @@ class _MouvFormState extends State<_MouvForm> {
           _SectionHdr('2. Fournisseur *', Icons.business_rounded, _col),
           const SizedBox(height: 10),
           _StyledDrop<String>(
-              value: _selFournisseurId,
-              hint: 'Sélectionner un fournisseur',
-              items: [
-                const DropdownMenuItem(
-                  value: '__NA__',
-                  child: Row(children: [
-                    Icon(Icons.remove_circle_outline_rounded, size: 14, color: kMuted),
-                    SizedBox(width: 8),
-                    Text('N.A', style: TextStyle(color: kMuted, fontStyle: FontStyle.italic)),
-                  ]),
-                ),
-                ...fournisseurs.map((f) => DropdownMenuItem(
-                  value: f.id,
-                  child: Row(children: [
-                    const Icon(Icons.business_outlined, size: 14, color: kTeal),
-                    const SizedBox(width: 8),
-                    Flexible(child: Text(f.nom, overflow: TextOverflow.ellipsis)),
-                  ]),
-                )),
-              ],
-              onChanged: (v) => setState(() => _selFournisseurId = v),
-            ),
+            value: _selFournisseurId,
+            hint: 'Sélectionner un fournisseur',
+            items: [
+              const DropdownMenuItem(
+                value: '__NA__',
+                child: Row(children: [
+                  Icon(Icons.remove_circle_outline_rounded, size: 14, color: kMuted),
+                  SizedBox(width: 8),
+                  Text('N.A', style: TextStyle(color: kMuted, fontStyle: FontStyle.italic)),
+                ]),
+              ),
+              ...fournisseurs.map((f) => DropdownMenuItem(
+                value: f.id,
+                child: Row(children: [
+                  const Icon(Icons.business_outlined, size: 14, color: kTeal),
+                  const SizedBox(width: 8),
+                  Flexible(child: Text(f.nom, overflow: TextOverflow.ellipsis)),
+                ]),
+              )),
+            ],
+            onChanged: (v) => setState(() => _selFournisseurId = v),
+          ),
           const SizedBox(height: 20),
 
           // ── 3. Site ──────────────────────────────────────────────────

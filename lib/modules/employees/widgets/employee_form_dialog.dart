@@ -40,6 +40,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _emailCtrl = TextEditingController();
   final _salaireCtrl = TextEditingController();
   final _dateDebutCtrl = TextEditingController();
+  final _leaveExtraCtrl = TextEditingController(text: '0');
   final _finContratCtrl = TextEditingController();
   final _cnssCtrl = TextEditingController();
   final _dateCnssCtrl = TextEditingController();
@@ -53,6 +54,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   bool _siteIdInitialized = false;
   bool _badgeActif = false;
   final _badgeExpiryCtrl = TextEditingController();
+  String _ocpExcelSegment = OcpExcelSegmentCode.auto;
+  bool _ocpForceSalleControle = false;
   
   // Photo de profil
   String? _photoPath;
@@ -183,13 +186,36 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                         _dateField(_dateDebutCtrl, 'Date début *', required: true),
                       ),
                       const SizedBox(height: 12),
-                      _row2(
-                        _contrat != 'CDI'
-                            ? _dateField(_finContratCtrl, 'Fin contrat *')
-                            : const SizedBox(),
-                        _dropdownEmploye(),
+                      _field(
+                        _leaveExtraCtrl,
+                        'Solde congé additionnel / reporté (jours)',
+                        isNumber: true,
                       ),
                       const SizedBox(height: 12),
+                        _row2(
+                          _contrat != 'CDI'
+                              ? _dateField(_finContratCtrl, 'Fin contrat *')
+                              : const SizedBox(),
+                          _dropdownEmploye(),
+                        ),
+                        const SizedBox(height: 12),
+                        _sectionTitle('Export pointage OCP'),
+                        const SizedBox(height: 8),
+                        _dropdownOcpSegment(),
+                        const SizedBox(height: 4),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: _ocpForceSalleControle,
+                          onChanged: (v) => setState(() => _ocpForceSalleControle = v ?? false),
+                          title: const Text('Salle de contrôle (P1)'),
+                          subtitle: Text(
+                            'Cocher si le libellé du poste ne contient pas « salle de contrôle » mais l’export Excel doit classer en P1.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                          ),
+                          controlAffinity: ListTileControlAffinity.leading,
+                        ),
+                        const SizedBox(height: 12),
                       // STATUT
                       const Text('Statut *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                       const SizedBox(height: 8),
@@ -388,6 +414,10 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         documents: documents,
         photoUrl: photoUrl ?? '',
         siteId: _siteId,
+        ocpExcelSegment: OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment.trim())
+            ? _ocpExcelSegment.trim()
+            : OcpExcelSegmentCode.auto,
+        ocpForceSalleControle: _ocpForceSalleControle,
       );
       
       debugPrint('EmployeeFormDialog: Saving employee with photoUrl: ${newEmployee.photoUrl}');
@@ -506,13 +536,37 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         : (posteNames.isNotEmpty ? posteNames.first : items.first);
     return DropdownButtonFormField<String>(
       value: value,
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: 'Poste *',
         border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         isDense: true,
       ),
-      items: items.map((i) => DropdownMenuItem(value: i, child: Text(i))).toList(),
+      items: items
+          .map(
+            (i) => DropdownMenuItem(
+              value: i,
+              child: Text(
+                i,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      selectedItemBuilder: (context) => items
+          .map(
+            (i) => Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                i,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
       onChanged: (v) => setState(() => _poste = v ?? ''),
     );
   }
@@ -520,13 +574,37 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   Widget _dropdown(String label, String value, List<String> items, void Function(String?) onChanged) =>
       DropdownButtonFormField<String>(
         value: value.isEmpty && items.isNotEmpty ? items.first : value,
+        isExpanded: true,
         decoration: InputDecoration(
           labelText: label,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           isDense: true,
         ),
-        items: items.map((i) => DropdownMenuItem(value: i, child: Text(i))).toList(),
+        items: items
+            .map(
+              (i) => DropdownMenuItem(
+                value: i,
+                child: Text(
+                  i,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
+            .toList(),
+        selectedItemBuilder: (context) => items
+            .map(
+              (i) => Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  i,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
+            .toList(),
         onChanged: onChanged,
       );
 
@@ -536,6 +614,34 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     return p.contains('chef') || p == 'shef';
   }
 
+  Widget _dropdownOcpSegment() {
+    final effective = OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment)
+        ? _ocpExcelSegment
+        : OcpExcelSegmentCode.auto;
+    return DropdownButtonFormField<String>(
+      value: effective,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Bloc OCP (tri Excel)',
+        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: [
+        for (final code in OcpExcelSegmentCode.allCodes)
+          DropdownMenuItem<String>(
+            value: code,
+            child: Text(
+              OcpExcelSegmentCode.labelFr(code),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (v) => setState(() => _ocpExcelSegment = v ?? OcpExcelSegmentCode.auto),
+    );
+  }
+
   Widget _dropdownEmploye() {
     final chefCandidates = widget.employes.where((e) => _isChefPoste(e.poste)).toList();
     final value = _chefId.isEmpty || !chefCandidates.any((e) => e.id == _chefId)
@@ -543,6 +649,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         : _chefId;
     return DropdownButtonFormField<String>(
       value: value,
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: 'Chef direct',
         border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
@@ -550,8 +657,33 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         isDense: true,
       ),
       items: [
-        const DropdownMenuItem(value: '', child: Text('— Aucun —')),
-        ...chefCandidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
+        const DropdownMenuItem(value: '', child: Text('— Aucun —', maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ...chefCandidates.map(
+          (e) => DropdownMenuItem(
+            value: e.id,
+            child: Text(
+              '${e.nom} — ${e.poste}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+      selectedItemBuilder: (context) => [
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text('— Aucun —', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        ...chefCandidates.map(
+          (e) => Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${e.nom} — ${e.poste}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
       ],
       onChanged: (v) => setState(() => _chefId = v ?? ''),
     );

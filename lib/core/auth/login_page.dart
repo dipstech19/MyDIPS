@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
+import '../firebase_bootstrap.dart';
 import '../utils/responsive.dart';
 import '../widgets/dips_brand_logo.dart';
 import 'auth_provider.dart';
@@ -30,9 +32,13 @@ class _LoginPageState extends State<LoginPage> {
     final ok = await auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
     
     if (!ok && mounted) {
+      final firebaseUnavailable = Firebase.apps.isEmpty;
       setState(() {
         _loading = false;
-        _error = 'Nom d\'utilisateur ou mot de passe incorrect';
+        _error = firebaseUnavailable
+            ? 'Connexion Firebase indisponible. Vérifiez Internet puis réessayez.'
+                '${firebaseBootstrapLastError != null ? '\nDétail: $firebaseBootstrapLastError' : ''}'
+            : 'Nom d\'utilisateur ou mot de passe incorrect';
       });
     } else if (mounted) {
       setState(() => _loading = false);

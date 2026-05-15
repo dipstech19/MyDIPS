@@ -6,6 +6,8 @@ class Groupe {
   final int startMinute;
   final int endHour;
   final int endMinute;
+  /// Jour de repos hebdomadaire (DateTime.monday..DateTime.sunday).
+  final int weeklyRestWeekday;
 
   Groupe({
     required this.id,
@@ -15,6 +17,7 @@ class Groupe {
     this.startMinute = 0,
     this.endHour = 16,
     this.endMinute = 0,
+    this.weeklyRestWeekday = DateTime.sunday,
   });
 
   Map<String, dynamic> toMap() {
@@ -25,6 +28,7 @@ class Groupe {
       'startMinute': startMinute,
       'endHour': endHour,
       'endMinute': endMinute,
+      'weeklyRestWeekday': weeklyRestWeekday,
     };
   }
 
@@ -38,6 +42,7 @@ class Groupe {
       startMinute: (map['startMinute'] as num?)?.toInt() ?? 0,
       endHour: (map['endHour'] as num?)?.toInt() ?? 16,
       endMinute: (map['endMinute'] as num?)?.toInt() ?? 0,
+      weeklyRestWeekday: (map['weeklyRestWeekday'] as num?)?.toInt() ?? DateTime.sunday,
     );
   }
 
@@ -49,6 +54,7 @@ class Groupe {
     int? startMinute,
     int? endHour,
     int? endMinute,
+    int? weeklyRestWeekday,
   }) {
     return Groupe(
       id: id ?? this.id,
@@ -58,6 +64,7 @@ class Groupe {
       startMinute: startMinute ?? this.startMinute,
       endHour: endHour ?? this.endHour,
       endMinute: endMinute ?? this.endMinute,
+      weeklyRestWeekday: weeklyRestWeekday ?? this.weeklyRestWeekday,
     );
   }
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/locale/app_locale.dart';
@@ -29,6 +31,29 @@ class DriverPointagePage extends StatefulWidget {
 class _DriverPointagePageState extends State<DriverPointagePage> {
   String? _selectedEquipeId;
   bool _nonWorkingLoadRequested = false;
+  bool _wasDriverSyncPending = false;
+  Timer? _clockRefreshTimer;
+  final Set<String> _driverArrivalReportLocks = <String>{};
+  final Set<String> _driverDepartureReportLocks = <String>{};
+  final Map<String, DriverPointageStatus> _driverDraftStatus = <String, DriverPointageStatus>{};
+  final Map<String, DepartureStatus> _driverDraftDeparture = <String, DepartureStatus>{};
+  final Map<String, int?> _driverDraftOvertimeMinutes = <String, int?>{};
+  final Map<String, int?> _driverDraftWorkedMinutes = <String, int?>{};
+  final Map<String, String?> _driverDraftIncompleteReason = <String, String?>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _clockRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockRefreshTimer?.cancel();
+    super.dispose();
+  }
 
   bool _isProtectedHigherPoste(String poste) {
     final p = poste.trim().toLowerCase();
@@ -94,7 +119,82 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     }
   }
 
-  Future<void> _sendReport(PointageHoursConfig? pointageConfig, {required String equipeId}) async {
+  Future<void> _offerMobileShare(
+    BuildContext context,
+    String filePath, {
+    String? text,
+  }) async {
+    if (!isMobile(context)) return;
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Fichier généré',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.grey.shade900),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                filePath,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final ok = await launchUrl(
+                    Uri.file(filePath),
+                    mode: LaunchMode.externalApplication,
+                  );
+                  if (!ok && ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('Impossible d\'ouvrir le fichier automatiquement.'),
+                        behavior: SnackBarBehavior.fixed,
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.folder_open),
+                label: const Text('Ouvrir le fichier'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () async {
+                  await SharePlus.instance.share(
+                    ShareParams(
+                      files: <XFile>[XFile(filePath)],
+                      text: text ?? 'Partager le fichier',
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.share),
+                label: const Text('Partager / WhatsApp'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(MaterialLocalizations.of(ctx).closeButtonLabel),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendReport(
+    PointageHoursConfig? pointageConfig, {
+    required String equipeId,
+    required bool departurePhase,
+    required String departureLockKey,
+  }) async {
     final pointageProvider = context.read<PointageProvider>();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -115,6 +215,12 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     );
     if (!mounted || confirmed != true) return;
 
+    // Immediate lock in UI (no wait for network).
+    if (departurePhase) {
+      setState(() => _driverDepartureReportLocks.add(departureLockKey));
+    } else {
+      setState(() => _driverArrivalReportLocks.add(departureLockKey));
+    }
     pointageProvider.applyOptimisticDriverReportLock();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -126,40 +232,70 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       ),
     );
 
-    unawaited(() async {
-      try {
-        final ok = await pointageProvider.submitDriverReportToFirestore(
-          equipeId: equipeId,
-          configOverride: pointageConfig,
-        );
-        if (!mounted) return;
-        if (ok) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(trOf(context, 'report_sent')),
-              backgroundColor: AppColors.green,
-              behavior: SnackBarBehavior.fixed,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.fixed,
-            ),
+    // Flush local draft before final submit.
+    final emp = context.read<EmployeesProvider>();
+    final auth = context.read<AuthProvider>();
+    final team = getAllTeamsWithWorkers(emp.equipes, emp.employes)
+        .where((t) => t.equipeId == equipeId)
+        .toList();
+    if (team.isNotEmpty) {
+      final t = team.first;
+      for (final w in t.workers) {
+        final s = _driverDraftStatus[w.id];
+        if (s != null) {
+          await pointageProvider.markDriverAttendance(
+            employeId: w.id,
+            employeNom: w.nom,
+            employeCin: w.cin ?? '',
+            equipeId: t.equipeId,
+            equipeName: t.equipeName,
+            chefName: t.chefName,
+            driverStatus: s,
+            driverId: auth.currentUser?.id,
+            configOverride: pointageConfig ?? PointageHoursConfig.instance,
+            bypassTimeWindows: true,
           );
         }
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(trOf(context, 'pointage_hours_cannot_mark')),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.fixed,
-          ),
-        );
+        final dep = _driverDraftDeparture[w.id];
+        if (dep != null && dep != DepartureStatus.unset) {
+          final record = pointageProvider.getRecordForEmployee(w.id);
+          if (record != null) {
+            await pointageProvider.setDepartureStatus(
+              record: record,
+              status: dep,
+              overtimeMinutes: _driverDraftOvertimeMinutes[w.id],
+              workedMinutesBeforeStop: _driverDraftWorkedMinutes[w.id],
+              incompleteShiftReason: _driverDraftIncompleteReason[w.id],
+              configOverride: pointageConfig ?? PointageHoursConfig.instance,
+              bypassTimeWindows: true,
+            );
+          }
+        }
       }
+      _driverDraftStatus.clear();
+      _driverDraftDeparture.clear();
+      _driverDraftOvertimeMinutes.clear();
+      _driverDraftWorkedMinutes.clear();
+      _driverDraftIncompleteReason.clear();
+    }
+
+    unawaited(() async {
+      final accepted = await pointageProvider.submitDriverReportWithRetry(
+        equipeId: equipeId,
+        configOverride: pointageConfig ?? PointageHoursConfig.instance,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accepted
+                ? trOf(context, 'report_sent')
+                : trOf(context, 'pointage_hours_cannot_mark'),
+          ),
+          backgroundColor: accepted ? AppColors.green : Colors.orange,
+          behavior: SnackBarBehavior.fixed,
+        ),
+      );
     }());
   }
 
@@ -182,7 +318,15 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final shiftsProvider = context.watch<ShiftsProvider>();
     final today = DateTime.now();
     if (shiftsProvider.hasConfig) {
-      teams = teams.where((t) => shiftsProvider.getShiftForEquipe(t.equipeId, today) != ShiftType.rest).toList();
+      final logicalToday = DateTime(today.year, today.month, today.day);
+      final logicalYesterday = logicalToday.subtract(const Duration(days: 1));
+      teams = teams.where((t) {
+        final shiftToday = shiftsProvider.getShiftForEquipe(t.equipeId, logicalToday);
+        final shiftYesterday = shiftsProvider.getShiftForEquipe(t.equipeId, logicalYesterday);
+        final useYesterdayNight = today.hour < 7 && shiftYesterday == ShiftType.night;
+        final effectiveShift = useYesterdayNight ? shiftYesterday : shiftToday;
+        return effectiveShift != ShiftType.rest;
+      }).toList();
     }
     if (_selectedEquipeId != null && !teams.any((t) => t.equipeId == _selectedEquipeId)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -202,25 +346,83 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final padding = pagePadding(context);
     final selectedEquipeList = emp.equipes.where((e) => e.id == _selectedEquipeId).toList();
     final selectedEquipe = selectedEquipeList.isEmpty ? null : selectedEquipeList.first;
-    final shiftForEquipe = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, today) : null;
-    final config = getConfigForEquipeAndDate(selectedEquipe, today, shiftForEquipe);
     final now = DateTime.now();
-    // Chauffeur: toujours les vraies fenêtres horaires (pas de mode test).
-    final hoursStatus = getPointageHoursStatus(now, config);
-    final isWithinArrival = config.canMarkArrivalNow(now);
-    final isWithinDeparture = config.canMarkDepartureNow(now);
-    final isNightShiftBefore7 = shiftForEquipe == ShiftType.night && now.hour < 7;
-    final yesterday = today.subtract(const Duration(days: 1));
+    final logicalToday = DateTime(today.year, today.month, today.day);
+    final logicalYesterday = logicalToday.subtract(const Duration(days: 1));
+    final shiftToday = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, logicalToday) : null;
+    final shiftYesterday = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, logicalYesterday) : null;
+    final useYesterdayNight = now.hour < 7 && shiftYesterday == ShiftType.night;
+    final shiftForEquipe = useYesterdayNight ? shiftYesterday : shiftToday;
+    final configDay = useYesterdayNight ? logicalYesterday : logicalToday;
+    final config = getConfigForEquipeAndDate(selectedEquipe, configDay, shiftForEquipe);
+    if (pointageProvider.ignoreTimeWindowsForTest && !pointageProvider.hasActiveTestCycle) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<PointageProvider>().startTestCycle(arrivalMinutes: 5);
+      });
+    }
+    final inTestCycle = pointageProvider.ignoreTimeWindowsForTest && pointageProvider.hasActiveTestCycle;
+    final hoursStatus = inTestCycle ? PointageHoursStatus.open : getPointageHoursStatus(now, config);
+    final isWithinArrival = inTestCycle ? pointageProvider.isInTestArrivalPhase : config.canMarkArrivalNow(now);
+    final isWithinDeparture = inTestCycle ? pointageProvider.isInTestDeparturePhase : config.canMarkDepartureNow(now);
+    final lockTeamId = _selectedEquipeId ?? '';
+    final dayKey = '${today.year}-${today.month}-${today.day}';
+    final departureLockKey = '${lockTeamId}_$dayKey';
+    // Verrou arrivée : uniquement après envoi chauffeur (pas après rapport chef).
+    final arrivalReportLocked = _driverArrivalReportLocks.contains(departureLockKey);
+    final departureReportLocked = _driverDepartureReportLocks.contains(departureLockKey);
+    final isNightShiftBefore7 = useYesterdayNight;
+    final yesterday = logicalYesterday;
 
     // canSendReport: tous les travailleurs affichés (hors congé/formation) ont un statut
+    DriverPointageStatus effectiveDriverStatusFor(Employe e) {
+      final draft = _driverDraftStatus[e.id];
+      if (draft != null) return draft;
+      final r = pointageProvider.getRecordForEmployee(e.id);
+      return r?.driverStatus ?? DriverPointageStatus.unset;
+    }
+    DepartureStatus effectiveDepartureFor(Employe e) {
+      final draft = _driverDraftDeparture[e.id];
+      if (draft != null) return draft;
+      final r = pointageProvider.getRecordForEmployee(e.id);
+      return r?.departureStatus ?? DepartureStatus.unset;
+    }
     final canSendReport = workersDisplay.isNotEmpty && workersDisplay.every((e) {
       final r = pointageProvider.getRecordForEmployee(e.id);
-      if (r == null) return false;
-      if (r.driverStatus == DriverPointageStatus.unset) return false;
-      final isPresent = r.driverStatus == DriverPointageStatus.present || r.driverStatus == DriverPointageStatus.enVehicule;
+      final s = effectiveDriverStatusFor(e);
+      if (s == DriverPointageStatus.unset) return false;
+      final isPresent = s == DriverPointageStatus.present || s == DriverPointageStatus.enVehicule;
       if (!isPresent) return true; // absent doesn't require departure
-      return r.arrivalMarkedAt != null && r.departureStatus == DepartureStatus.finished;
+      if (!isWithinDeparture) return true; // arrival phase: present is enough
+      return (r?.arrivalMarkedAt != null || isWithinDeparture) &&
+          effectiveDepartureFor(e) == DepartureStatus.finished;
     });
+    final pendingDepartureCount = workersDisplay.where((e) {
+      final s = effectiveDriverStatusFor(e);
+      final isPresent = s == DriverPointageStatus.present || s == DriverPointageStatus.enVehicule;
+      if (!isPresent) return false;
+      return effectiveDepartureFor(e) != DepartureStatus.finished;
+    }).length;
+    final unmarkedCount = workersDisplay.where((e) {
+      return effectiveDriverStatusFor(e) == DriverPointageStatus.unset;
+    }).length;
+    final unmarkedWorkers = workersDisplay.where((e) {
+      return effectiveDriverStatusFor(e) == DriverPointageStatus.unset;
+    }).toList();
+    final lockAfterSend = isWithinDeparture ? departureReportLocked : arrivalReportLocked;
+    if (_wasDriverSyncPending && !pointageProvider.driverReportSyncPending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(trOf(context, 'report_sent')),
+            backgroundColor: AppColors.green,
+            behavior: SnackBarBehavior.fixed,
+          ),
+        );
+      });
+    }
+    _wasDriverSyncPending = pointageProvider.driverReportSyncPending;
 
     Widget buildBody(PointageRecord? Function(String)? getRecordOverride) {
       return Directionality(
@@ -241,12 +443,54 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             ),
             const SizedBox(height: 12),
             _PointageHoursBanner(context: context, status: hoursStatus, config: config),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: isWithinDeparture ? Colors.orange.shade50 : Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: isWithinDeparture ? Colors.orange.shade200 : Colors.green.shade200),
+              ),
+              child: Text(
+                isWithinDeparture ? 'Mode actuel: Confirmation sortie' : 'Mode actuel: Pointage entrée',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: isWithinDeparture ? Colors.orange.shade800 : Colors.green.shade800,
+                ),
+              ),
+            ),
+            if (pointageProvider.driverReportSyncPending) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.sync, size: 18, color: Colors.orange.shade800),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        tr(context, 'pointage_sync_pending'),
+                        style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             if (mobile) _buildMobileChefSelector(context, teams),
             if (mobile) const SizedBox(height: 12),
             Expanded(
               child: mobile
-                  ? _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride)
+                  ? _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride, lockAfterSend)
                   : Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -302,7 +546,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   const SizedBox(width: 16),
                   Expanded(
                     flex: 2,
-                    child: _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride),
+                    child: _buildMobileWorkersSection(context, team, workersDisplay, borderColor, pointageProvider, auth, isWithinArrival, isWithinDeparture, config, getRecordOverride, lockAfterSend),
                   ),
                 ],
               ),
@@ -369,6 +613,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                         duration: const Duration(seconds: 5),
                       ),
                     );
+                    await _offerMobileShare(context, filePath, text: 'Rapport pointage chauffeur');
                   }
                 },
                 icon: const Icon(Icons.download, size: 20),
@@ -381,17 +626,73 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                 width: double.infinity,
                 child: PrimaryButton(
                   label: tr(context, 'send_report_btn'),
-                  onTap: (isWithinDeparture &&
-                          canSendReport &&
-                          !pointageProvider.optimisticDriverReportLocked &&
-                          !pointageProvider.hasDriverReportBeenSubmittedGlobally)
-                      ? () => _sendReport(config, equipeId: _selectedEquipeId ?? '')
-                      : () {
-                          if (!canSendReport && context.mounted) {
+                  onTap: (canSendReport &&
+                          !lockAfterSend &&
+                          !pointageProvider.driverReportSyncPending)
+                      ? () => _sendReport(
+                            config,
+                            equipeId: _selectedEquipeId ?? '',
+                            departurePhase: isWithinDeparture,
+                            departureLockKey: departureLockKey,
+                          )
+                      : () async {
+                          if (context.mounted && !canSendReport) {
+                            String msg = trOf(context, 'pointage_hours_cannot_mark');
+                            if (isWithinDeparture && pendingDepartureCount > 0) {
+                              msg = 'Veuillez confirmer la sortie de $pendingDepartureCount personne(s) avant l\'envoi.';
+                            } else if (unmarkedCount > 0) {
+                              msg = 'Veuillez pointer tous les travailleurs avant l\'envoi ($unmarkedCount non pointé(s)).';
+                              await showDialog<void>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Travailleurs non pointés'),
+                                  content: SizedBox(
+                                    width: 420,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '$unmarkedCount personne(s) sans pointage:',
+                                          style: const TextStyle(fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Flexible(
+                                          child: SingleChildScrollView(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: unmarkedWorkers
+                                                  .map((w) => Padding(
+                                                        padding: const EdgeInsets.only(bottom: 4),
+                                                        child: Text('• ${w.nom}'),
+                                                      ))
+                                                  .toList(),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  actions: [
+                                    FilledButton(
+                                      onPressed: () => Navigator.pop(ctx),
+                                      child: const Text('Compris'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text(trOf(context, 'pointage_hours_cannot_mark')),
+                                content: Text(msg),
                                 backgroundColor: Colors.orange,
+                                behavior: SnackBarBehavior.fixed,
+                              ),
+                            );
+                          } else if (context.mounted && lockAfterSend) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Rapport déjà envoyé pour cette phase.'),
                                 behavior: SnackBarBehavior.fixed,
                               ),
                             );
@@ -456,6 +757,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     bool isWithinDeparture,
     PointageHoursConfig pointageConfig,
     PointageRecord? Function(String)? getRecordOverride,
+    bool lockAfterSendForSelectedTeam,
   ) {
     if (team == null) {
       return Center(child: Text(tr(context, 'select_chef'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
@@ -491,15 +793,29 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   date: DateTime.now(),
                   createdAt: DateTime.now(),
                 );
-            final driverStatus = record.driverStatus;
+            final driverStatus = _driverDraftStatus[e.id] ?? record.driverStatus;
             final state = _driverStatusToState(driverStatus);
-            final locked = pointageProvider.isDriverLockedForEmployee(e.id);
+            final draftDep = _driverDraftDeparture[e.id];
+            final recordForUi = draftDep == null
+                ? record
+                : record.copyWith(
+                    departureStatus: draftDep,
+                    overtimeMinutes: _driverDraftOvertimeMinutes[e.id] ?? record.overtimeMinutes,
+                    workedMinutesBeforeStop: _driverDraftWorkedMinutes[e.id] ?? record.workedMinutesBeforeStop,
+                    incompleteShiftReason: _driverDraftIncompleteReason[e.id] ?? record.incompleteShiftReason,
+                  );
+            final rawLocked = pointageProvider.isDriverLockedForEmployee(e.id);
             final isDriverPresent = state == AttendanceState.present;
+            final locked = lockAfterSendForSelectedTeam
+                ? true
+                : (isWithinDeparture
+                    ? (isDriverPresent ? false : rawLocked)
+                    : false);
             // Dans la fenêtre de départ: afficher les chips départ si le travailleur est présent
             // (qu'il ait déjà une valeur ou non — pour permettre l'annulation aussi).
             final showDepartureChips = isWithinDeparture && !locked && isDriverPresent;
             // Dans la fenêtre d'arrivée uniquement (pas encore de départ): afficher Présent/Absent.
-            final showArrivalChips = !showDepartureChips && isWithinArrival && !locked;
+            final showArrivalChips = !isWithinDeparture && isWithinArrival && !locked;
             // Fenêtre de départ + travailleur non-marqué (driverStatus = unset): bouton "Non pointé"
             final showUnsetDepartureChip = isWithinDeparture && !locked &&
                 driverStatus == DriverPointageStatus.unset;
@@ -508,37 +824,30 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
 
             if (showDepartureChips) {
               chipsWidget = _DepartureChips(
-                record: record,
+                record: recordForUi,
                 config: pointageConfig,
                 onStillWorking: (int? workedMinutesBeforeStop, String? incompleteShiftReason) async {
-                  final ok = await pointageProvider.setDepartureStatus(
-                    record: record,
-                    status: DepartureStatus.stillWorking,
-                    workedMinutesBeforeStop: workedMinutesBeforeStop,
-                    incompleteShiftReason: incompleteShiftReason,
-                    configOverride: pointageConfig,
-                  );
-                  if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                    );
-                  }
+                  setState(() {
+                    _driverDraftDeparture[e.id] = DepartureStatus.stillWorking;
+                    _driverDraftWorkedMinutes[e.id] = workedMinutesBeforeStop;
+                    _driverDraftIncompleteReason[e.id] = incompleteShiftReason;
+                  });
                 },
                 onFinished: (int? overtimeMinutes) async {
-                  final ok = await pointageProvider.setDepartureStatus(
-                    record: record,
-                    status: DepartureStatus.finished,
-                    overtimeMinutes: overtimeMinutes,
-                    configOverride: pointageConfig,
-                  );
-                  if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                    );
-                  }
+                  setState(() {
+                    _driverDraftDeparture[e.id] = DepartureStatus.finished;
+                    _driverDraftOvertimeMinutes[e.id] = overtimeMinutes;
+                    _driverDraftWorkedMinutes.remove(e.id);
+                    _driverDraftIncompleteReason.remove(e.id);
+                  });
                 },
                 onCancel: () async {
-                  await pointageProvider.resetDepartureStatus(record);
+                  setState(() {
+                    _driverDraftDeparture[e.id] = DepartureStatus.unset;
+                    _driverDraftOvertimeMinutes.remove(e.id);
+                    _driverDraftWorkedMinutes.remove(e.id);
+                    _driverDraftIncompleteReason.remove(e.id);
+                  });
                 },
                 stillLabel: 'N\'a pas terminé',
                 finishedLabel: tr(context, 'departure_finished'),
@@ -548,40 +857,14 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
               // le chauffeur peut l'enregistrer absent ou confirmer qu'il n'a pas pointé.
               chipsWidget = _UnsetDepartureChip(
                 onMarkAbsent: () async {
-                  await pointageProvider.markDriverAttendance(
-                    employeId: e.id,
-                    employeNom: e.nom,
-                    employeCin: e.cin ?? '',
-                    equipeId: team.equipeId,
-                    equipeName: team.equipeName,
-                    chefName: team.chefName,
-                    driverStatus: DriverPointageStatus.absent,
-                    driverId: auth.currentUser?.id,
-                    configOverride: pointageConfig,
-                    bypassTimeWindows: true,
-                  );
+                  setState(() => _driverDraftStatus[e.id] = DriverPointageStatus.absent);
                 },
               );
             } else if (showArrivalChips) {
               chipsWidget = DriverStatusChips(
                 current: state,
                 onSelect: (s) async {
-                  final ok = await pointageProvider.markDriverAttendance(
-                    employeId: e.id,
-                    employeNom: e.nom,
-                    employeCin: e.cin ?? '',
-                    equipeId: team.equipeId,
-                    equipeName: team.equipeName,
-                    chefName: team.chefName,
-                    driverStatus: _stateToDriverStatus(s),
-                    driverId: auth.currentUser?.id,
-                    configOverride: pointageConfig,
-                  );
-                  if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                    );
-                  }
+                  setState(() => _driverDraftStatus[e.id] = _stateToDriverStatus(s));
                 },
                 presentLabel: tr(context, 'present'),
                 absentLabel: tr(context, 'absent'),
@@ -617,25 +900,25 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                    if (_departureStatusLabel(context, record) != null)
+                                    if (_departureStatusLabel(context, recordForUi) != null)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 2),
                                         child: Text(
-                                          _departureStatusLabel(context, record)!,
+                                          _departureStatusLabel(context, recordForUi)!,
                                           style: TextStyle(
                                             fontSize: 11,
-                                            color: record.departureStatus == DepartureStatus.finished
+                                            color: recordForUi.departureStatus == DepartureStatus.finished
                                                 ? Colors.green.shade700
                                                 : Colors.orange.shade700,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
                                       ),
-                                    if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
+                                    if (recordForUi.departureStatus != DepartureStatus.unset && recordForUi.overtimeMinutes != null && recordForUi.overtimeMinutes! > 0)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 2),
                                         child: Text(
-                                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(record.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                                          '${tr(context, 'pointage_analysis_overtime_h')}: ${(recordForUi.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
                                           style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                                         ),
                                       ),
@@ -665,25 +948,25 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                              if (_departureStatusLabel(context, record) != null)
+                              if (_departureStatusLabel(context, recordForUi) != null)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 2),
                                   child: Text(
-                                    _departureStatusLabel(context, record)!,
+                                    _departureStatusLabel(context, recordForUi)!,
                                     style: TextStyle(
                                       fontSize: 11,
-                                      color: record.departureStatus == DepartureStatus.finished
+                                      color: recordForUi.departureStatus == DepartureStatus.finished
                                           ? Colors.green.shade700
                                           : Colors.orange.shade700,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
-                              if (record.departureStatus != DepartureStatus.unset && record.overtimeMinutes != null && record.overtimeMinutes! > 0)
+                              if (recordForUi.departureStatus != DepartureStatus.unset && recordForUi.overtimeMinutes != null && recordForUi.overtimeMinutes! > 0)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 2),
                                   child: Text(
-                                    '${tr(context, 'pointage_analysis_overtime_h')}: ${(record.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
+                                    '${tr(context, 'pointage_analysis_overtime_h')}: ${(recordForUi.overtimeMinutes! / 60).toStringAsFixed(1).replaceAll('.', ',')}',
                                     style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                                   ),
                                 ),

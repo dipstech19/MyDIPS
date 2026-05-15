@@ -202,9 +202,13 @@ class PointageRepository {
       'markedByChefId': chefId,
       'absenceReason': isPresent ? null : absenceReason,
       'arrivalMarkedAt': isPresent ? (arrivalAt ?? existing?.arrivalMarkedAt ?? DateTime.now()).toIso8601String() : null,
-      'departureStatus': isPresent ? DepartureStatus.finished.name : DepartureStatus.unset.name,
+      'departureStatus': isPresent
+          ? (departureAt != null ? DepartureStatus.finished.name : (existing?.departureStatus.name ?? DepartureStatus.unset.name))
+          : DepartureStatus.unset.name,
       'departureMarkedAt': isPresent
-          ? (departureAt ?? existing?.departureMarkedAt ?? DateTime.now()).toIso8601String()
+          ? (departureAt != null
+              ? departureAt.toIso8601String()
+              : existing?.departureMarkedAt?.toIso8601String())
           : null,
     };
     if (existing != null) {
@@ -215,8 +219,10 @@ class PointageRepository {
         markedByChefId: chefId,
         absenceReason: isPresent ? null : absenceReason,
         arrivalMarkedAt: isPresent ? (arrivalAt ?? DateTime.now()) : null,
-        departureStatus: isPresent ? DepartureStatus.finished : DepartureStatus.unset,
-        departureMarkedAt: isPresent ? (departureAt ?? DateTime.now()) : null,
+        departureStatus: isPresent
+            ? (departureAt != null ? DepartureStatus.finished : DepartureStatus.unset)
+            : DepartureStatus.unset,
+        departureMarkedAt: isPresent ? departureAt : null,
       ).toMap();
       await _firestore.collection(_pointageCollection).doc(docId).set(map);
     }
@@ -266,13 +272,14 @@ class PointageRepository {
     int? overtimeMinutes,
     String? incompleteShiftReason,
     int? workedMinutesBeforeStop,
+    DateTime? departureAt,
   }) async {
     final docId = record.id.isNotEmpty ? record.id : _docId(record.employeId, record.date);
     final existing = record.id.isNotEmpty
         ? await _firestore.collection(_pointageCollection).doc(docId).get().then(
             (d) => d.exists ? PointageRecord.fromMap({...d.data()!, 'id': d.id}) : null)
         : await getByEmployeAndDate(record.employeId, record.date);
-    final now = DateTime.now();
+    final now = departureAt ?? DateTime.now();
     final updates = <String, dynamic>{
       'departureStatus': status.name,
       'departureMarkedAt': now.toIso8601String(),
@@ -342,6 +349,36 @@ class PointageRepository {
   }
 
   static const int _maxBatchOps = 450;
+
+  /// Remarques chef d'équipe pour shift de nuit (22h→6h), par employé et jour logique de pointage.
+  Future<void> updateNightShiftSupervisorNotes({
+    required Map<String, String> employeIdToNote,
+    required DateTime date,
+  }) async {
+    if (employeIdToNote.isEmpty) return;
+    final day = DateTime(date.year, date.month, date.day);
+    final noteAt = DateTime.now().toIso8601String();
+    final refs = <DocumentReference>[];
+    final payloads = <Map<String, dynamic>>[];
+    for (final e in employeIdToNote.entries) {
+      final text = e.value.trim();
+      if (text.isEmpty) continue;
+      final docId = _docId(e.key, day);
+      refs.add(_firestore.collection(_pointageCollection).doc(docId));
+      payloads.add({
+        'nightShiftSupervisorNote': text,
+        'nightShiftSupervisorNoteAt': noteAt,
+      });
+    }
+    for (var i = 0; i < refs.length; i += _maxBatchOps) {
+      final batch = _firestore.batch();
+      final end = (i + _maxBatchOps < refs.length) ? i + _maxBatchOps : refs.length;
+      for (var j = i; j < end; j++) {
+        batch.update(refs[j], payloads[j]);
+      }
+      await batch.commit();
+    }
+  }
 
   Future<void> _commitBatchedFieldUpdates(
     List<DocumentReference> refs,
@@ -634,6 +671,53 @@ class PointageRepository {
     );
 
     await deleteQueryDocs(
+      _firestore
+          .collection(_reportsCollection)
+          .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
+          .where('date', isLessThan: end.toIso8601String()),
+    );
+  }
+
+  /// Supprime les pointages/rapports d'un seul jour, avec option de scope par equipe.
+  /// - [equipeId] null/empty => tout le jour.
+  /// - [equipeId] renseigné => seulement ce scope.
+  Future<void> clearPointageAndReportsForDay(
+    DateTime day, {
+    String? equipeId,
+  }) async {
+    final start = DateTime(day.year, day.month, day.day);
+    final end = start.add(const Duration(days: 1));
+    final scopedEquipeId = (equipeId ?? '').trim();
+
+    Future<void> deleteWithOptionalScope(Query<Map<String, dynamic>> query) async {
+      final snap = await query.get();
+      if (snap.docs.isEmpty) return;
+      final docs = scopedEquipeId.isEmpty
+          ? snap.docs
+          : snap.docs.where((d) => (d.data()['equipeId'] as String? ?? '') == scopedEquipeId).toList();
+      if (docs.isEmpty) return;
+      WriteBatch batch = _firestore.batch();
+      int ops = 0;
+      for (final doc in docs) {
+        batch.delete(doc.reference);
+        ops++;
+        if (ops >= 400) {
+          await batch.commit();
+          batch = _firestore.batch();
+          ops = 0;
+        }
+      }
+      if (ops > 0) await batch.commit();
+    }
+
+    await deleteWithOptionalScope(
+      _firestore
+          .collection(_pointageCollection)
+          .where('date', isGreaterThanOrEqualTo: start.toIso8601String())
+          .where('date', isLessThan: end.toIso8601String()),
+    );
+
+    await deleteWithOptionalScope(
       _firestore
           .collection(_reportsCollection)
           .where('date', isGreaterThanOrEqualTo: start.toIso8601String())

@@ -1,6 +1,8 @@
 import 'dart:io' as dart_io;
+import 'dart:math';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/auth/app_permissions.dart';
@@ -54,10 +56,26 @@ class _ParamChefEquipe {
   _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
 }
 
-/// فقط الموظفون الذين منصبهم "Chef d'équipe" (بدون Chef de zone أو أعلى)
+/// Collaborateurs « chef d’équipe » ou libellé type SHEF (sans Chef de zone / atelier).
 bool _isChefEquipePoste(String poste) {
   final p = poste.trim().toLowerCase();
-  return p == "chef d'équipe" || p == "chef d’equipe" || p == "chef d'equipe" || p == "chef d equipe";
+  if (p == 'shef' || p.contains('shef')) return true;
+  return p == "chef d'équipe" ||
+      p == "chef d’equipe" ||
+      p == "chef d'equipe" ||
+      p == "chef d equipe";
+}
+
+/// Membres des groupes Distribution + chefs d’équipe / SHEF (même non listés dans membreIds).
+Set<String> _distributionComptePickerEmployeIds(
+  List<DistributionGroup> sourceGroups,
+  List<emp.Employe> employes,
+) {
+  final ids = <String>{for (final g in sourceGroups) ...g.membreIds};
+  for (final e in employes) {
+    if (_isChefEquipePoste(e.poste)) ids.add(e.id);
+  }
+  return ids;
 }
 
 /// قائمة Chef (employé) — تظهر فقط من عندهم منصب Chef/Shef
@@ -173,6 +191,10 @@ class _ParametresPageState extends State<ParametresPage> {
 
   bool _canAccessSection(AuthProvider auth, int index) {
     if (!auth.isDirecteur) return true;
+    // Chef d'atelier : pas de création / comptes Distribution ni onglet Sécurité.
+    if (auth.isChefAtelierAdmin && (index == 6 || index == 7 || index == 15)) {
+      return false;
+    }
     switch (index) {
       case 0:
         return auth.hasPermission(AppPermissions.adminsManage);
@@ -291,12 +313,7 @@ class _ParametresPageState extends State<ParametresPage> {
     if (!visibleSectionIndices.contains(_selectedSectionIndex)) {
       _selectedSectionIndex = visibleSectionIndices.first;
     }
-    return Column(
-      children: [
-        // ══════════════════════════════════════════
-        //  NAV BAR — blanc, accent #328EEE, moderne
-        // ══════════════════════════════════════════
-        Container(
+    final navHeader = Container(
           width: double.infinity,
           decoration: BoxDecoration(
             color: Colors.white,
@@ -489,7 +506,26 @@ class _ParametresPageState extends State<ParametresPage> {
               ),
             ],
           ),
+        );
+
+    if (mobile) {
+      return NestedScrollView(
+        headerSliverBuilder: (_, __) => [
+          SliverToBoxAdapter(child: navHeader),
+        ],
+        body: Container(
+          color: const Color(0xFFF4F7FC),
+          child: _buildSection(_selectedSectionIndex),
         ),
+      );
+    }
+
+    return Column(
+      children: [
+        // ══════════════════════════════════════════
+        //  NAV BAR — blanc, accent #328EEE, moderne
+        // ══════════════════════════════════════════
+        navHeader,
         // ══════════════════════════════════════════
         //  CONTENT
         // ══════════════════════════════════════════
@@ -1444,7 +1480,7 @@ class _AdminTableRowState extends State<_AdminTableRow> {
     showDialog(
       context: context,
       barrierColor: Colors.black45,
-      builder: (_) => Dialog(
+      builder: (dialogContext) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
         child: ConstrainedBox(
@@ -1493,7 +1529,7 @@ class _AdminTableRowState extends State<_AdminTableRow> {
                       ]),
                     ]),
                   ),
-                  IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => Navigator.pop(context)),
+                  IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => Navigator.pop(dialogContext)),
                 ]),
               ),
               // ── Body ──
@@ -1547,6 +1583,39 @@ class _AdminTableRowState extends State<_AdminTableRow> {
                           ]),
                         )).toList(),
                       ),
+                      if (a.role.toLowerCase().contains('zone')) ...[
+                        const SizedBox(height: 24),
+                        Row(children: [
+                          Container(
+                              width: 3,
+                              height: 14,
+                              decoration: BoxDecoration(color: _kAccent, borderRadius: BorderRadius.circular(2))),
+                          const SizedBox(width: 8),
+                          const Text('GROUPES DISTRIBUTION',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.7,
+                                  color: Color(0xFF6B7A99))),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Divider(color: _kBorder)),
+                        ]),
+                        const SizedBox(height: 10),
+                        Builder(
+                          builder: (ctx) {
+                            final names = ctx
+                                .watch<DistributionGroupsProvider>()
+                                .groups
+                                .where((g) => a.distributionGroupIds.contains(g.id))
+                                .map((g) => g.nom)
+                                .join(', ');
+                            final text = a.distributionGroupIds.isEmpty
+                                ? 'Tous les groupes (filtre zone)'
+                                : (names.isEmpty ? a.distributionGroupIds.join(', ') : names);
+                            return Text(text, style: TextStyle(fontSize: 13, color: Colors.grey[800]));
+                          },
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1579,6 +1648,9 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   /// Zone: 'all' = الكل، 'jadida' أو 'safi' = موقع واحد
   String _siteId = SiteId.all;
   String _selectedPreset = 'custom';
+  /// Groupes Distribution rattachés au compte « Chef de zone » (pointage + congés).
+  final Set<String> _chefZoneDistributionGroupIds = {};
+  final Random _pwdRandom = Random.secure();
 
   final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage', 'Chef d\'atelier', 'Chef de zone'];
   final _allPerms = AppPermissions.allDetailed;
@@ -1635,7 +1707,6 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       AppPermissions.absenceReasonsManage,
       AppPermissions.generalManage,
       AppPermissions.notificationsManage,
-      AppPermissions.securityManage,
       AppPermissions.databaseManage,
       AppPermissions.aboutView,
       AppPermissions.demandesView,
@@ -1710,6 +1781,9 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     } else {
       _siteId = SiteId.all;
     }
+    _chefZoneDistributionGroupIds
+      ..clear()
+      ..addAll(e?.distributionGroupIds ?? const <String>[]);
   }
 
   @override
@@ -1719,11 +1793,36 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     super.dispose();
   }
 
+  String _buildGeneratedPassword({int length = 12}) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#\$%';
+    return List.generate(length, (_) => chars[_pwdRandom.nextInt(chars.length)]).join();
+  }
+
+  void _generatePassword() {
+    setState(() {
+      _pwdCtrl.text = _buildGeneratedPassword();
+      _showPwd = true;
+    });
+  }
+
+  Future<void> _copyPassword() async {
+    final v = _pwdCtrl.text.trim();
+    if (v.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: v));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Mot de passe copié')),
+    );
+  }
+
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     final isNew = widget.existing == null;
     final siteIds = _siteId == SiteId.all ? [SiteId.all] : [_siteId];
-    final pwd = isNew ? _pwdCtrl.text : (widget.existing!.password);
+    final typedPwd = _pwdCtrl.text.trim();
+    final pwd = isNew
+        ? typedPwd
+        : (typedPwd.isNotEmpty ? typedPwd : widget.existing!.password);
     widget.onSave(AdminUser(
       id: isNew ? '' : widget.existing!.id,
       nom: _nomCtrl.text.trim(),
@@ -1736,6 +1835,9 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       siteIds: siteIds,
       password: pwd,
       dateCreation: widget.existing?.dateCreation ?? DateTime.now(),
+      distributionGroupIds: _role.toLowerCase().contains('zone')
+          ? _chefZoneDistributionGroupIds.toList()
+          : const <String>[],
     ));
     Navigator.of(context).pop();
   }
@@ -1844,6 +1946,61 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               ],
               onChanged: (v) => setState(() => _siteId = v ?? SiteId.all),
             ),
+            if (_role.toLowerCase().contains('zone')) ...[
+              const SizedBox(height: 12),
+              Builder(
+                builder: (context) {
+                  final groupsProv = context.watch<DistributionGroupsProvider>();
+                  final groups = groupsProv.groups;
+                  if (groups.isEmpty) {
+                    return Text(
+                      'Aucun groupe Distribution. Définissez des groupes dans la section Distribution.',
+                      style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Groupes Distribution gérés *',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF4A5568)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Pointage (confirmation), export Excel et demandes de congé : uniquement ces groupes. Laissez vide pour autoriser tous les groupes Distribution de la zone.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: _kBorder),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: groups.map((g) {
+                            final checked = _chefZoneDistributionGroupIds.contains(g.id);
+                            return CheckboxListTile(
+                              dense: true,
+                              title: Text(g.nom, style: const TextStyle(fontSize: 12)),
+                              value: checked,
+                              onChanged: (v) => setState(() {
+                                if (v == true) {
+                                  _chefZoneDistributionGroupIds.add(g.id);
+                                } else {
+                                  _chefZoneDistributionGroupIds.remove(g.id);
+                                }
+                              }),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
             if (!isEdit) ...[
               const SizedBox(height: 12),
               // Password with eye toggle
@@ -1890,6 +2047,87 @@ class _AdminDrawerState extends State<_AdminDrawer> {
                     ),
                     validator: (v) =>
                     (v == null || v.isEmpty) ? 'Requis' : null,
+                  ),
+                ],
+              ),
+            ] else ...[
+              const SizedBox(height: 12),
+              _DrawerSection(label: 'SÉCURITÉ'),
+              const SizedBox(height: 6),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Nouveau mot de passe (optionnel)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF4A5568),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  TextFormField(
+                    controller: _pwdCtrl,
+                    obscureText: !_showPwd,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Laisser vide pour conserver le mot de passe actuel',
+                      hintStyle: TextStyle(color: Colors.grey[500], fontSize: 12),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kAccent, width: 1.5),
+                      ),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _showPwd
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          size: 17,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () => setState(() => _showPwd = !_showPwd),
+                      ),
+                    ),
+                    validator: (v) {
+                      final val = (v ?? '').trim();
+                      if (val.isEmpty) return null;
+                      if (val.length < 4) return 'Min. 4 caractères';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _generatePassword,
+                        icon: const Icon(Icons.auto_fix_high, size: 16),
+                        label: const Text('Générer mot de passe'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _copyPassword,
+                        icon: const Icon(Icons.copy, size: 16),
+                        label: const Text('Copier'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Si vous remplissez ce champ, le mot de passe du compte sera réinitialisé.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                   ),
                 ],
               ),
@@ -3528,6 +3766,15 @@ class _GroupesSection extends StatefulWidget {
 
 class _GroupesSectionState extends State<_GroupesSection> {
   String _q = '';
+  static const Map<int, String> _weekdayLabels = <int, String>{
+    DateTime.monday: 'Lundi',
+    DateTime.tuesday: 'Mardi',
+    DateTime.wednesday: 'Mercredi',
+    DateTime.thursday: 'Jeudi',
+    DateTime.friday: 'Vendredi',
+    DateTime.saturday: 'Samedi',
+    DateTime.sunday: 'Dimanche',
+  };
 
   void _showGroupeDialog(BuildContext context, GroupesProvider prov, EmployeesProvider emps, Groupe? existing) {
     final nameCtrl = TextEditingController(text: existing?.nom ?? '');
@@ -3535,6 +3782,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
     int sm = existing?.startMinute ?? 0;
     int eh = existing?.endHour ?? 16;
     int em = existing?.endMinute ?? 0;
+    int restWeekday = existing?.weeklyRestWeekday ?? DateTime.sunday;
     final selectedIds = <String>{...(existing?.membreIds ?? const [])};
 
     final employees = emps.employes.toList()..sort((a, b) => a.nom.compareTo(b.nom));
@@ -3622,6 +3870,18 @@ class _GroupesSectionState extends State<_GroupesSection> {
                       ],
                     ),
                     const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      value: restWeekday,
+                      decoration: const InputDecoration(
+                        labelText: 'Jour de repos hebdomadaire',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _weekdayLabels.entries
+                          .map((e) => DropdownMenuItem<int>(value: e.key, child: Text(e.value)))
+                          .toList(),
+                      onChanged: (v) => setStateD(() => restWeekday = v ?? DateTime.sunday),
+                    ),
+                    const SizedBox(height: 12),
                     const Text('Membres', style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 6),
                     Text(
@@ -3683,6 +3943,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
                     startMinute: sm,
                     endHour: eh,
                     endMinute: em,
+                    weeklyRestWeekday: restWeekday,
                   );
                   if (existing == null) {
                     await prov.addGroupe(g);
@@ -4245,7 +4506,8 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
         builder: (ctx, setStateD) {
           final selectedGroups = groups.where((g) => selected.contains(g.id)).toList();
           final sourceGroups = selectedGroups.isNotEmpty ? selectedGroups : groups;
-          final allowedEmployeeIds = <String>{for (final g in sourceGroups) ...g.membreIds};
+          final allowedEmployeeIds =
+              _distributionComptePickerEmployeIds(sourceGroups, empsProv.employes);
           final candidates = empsProv.employes
               .where((e) => allowedEmployeeIds.contains(e.id))
               .toList()
@@ -4296,7 +4558,7 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Astuce: aucun groupe sélectionné -> la recherche couvre tous les groupes Distribution.',
+                        'Astuce: sans groupe coché, la liste couvre tous les groupes Distribution. Les chefs d’équipe / SHEF sont proposés même s’ils ne figurent pas dans les membres du groupe.',
                         style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                       ),
                     ),
@@ -4322,11 +4584,10 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
                             } else {
                               selected.remove(g.id);
                             }
-                            // If selected employee no longer belongs to selected groups, clear it.
-                            final allowed = <String>{
-                              for (final gx in groups)
-                                if (selected.contains(gx.id)) ...gx.membreIds,
-                            };
+                            // Si le collaborateur choisi n’est plus éligible (membre ou chef/SHEF).
+                            final scope = groups.where((gx) => selected.contains(gx.id)).toList();
+                            final source = scope.isNotEmpty ? scope : groups;
+                            final allowed = _distributionComptePickerEmployeIds(source, empsProv.employes);
                             if (selectedEmployeId != null && !allowed.contains(selectedEmployeId)) {
                               selectedEmployeId = null;
                               nomCtrl.text = '';

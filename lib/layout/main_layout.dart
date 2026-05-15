@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/app_permissions.dart';
@@ -7,13 +9,12 @@ import '../core/site/site_model.dart';
 import '../core/site/site_provider.dart';
 import '../core/utils/responsive.dart';
 import '../core/widgets/dips_brand_logo.dart';
+import '../core/notifications/push_notifications_service.dart';
 import '../modules/Paramètres/paramètres.dart';
 import '../modules/Demandes/leave_demandes_page.dart';
 import '../modules/logistique/logistique_page.dart';
 import '../modules/employees/employees_page.dart';
-import '../modules/employees/employees_provider.dart';
 import '../modules/magasin/gestion_magasin.dart';
-import '../modules/magasin/magasin_provider.dart';
 import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
 import '../modules/pointage/driver_pointage_page.dart';
@@ -21,9 +22,16 @@ import '../modules/pointage/report_page.dart';
 import '../modules/Rapports_factures/rapports_factures_page.dart';
 import '../modules/overtime/overtime_page.dart';
 import '../modules/overtime/overtime_provider.dart';
+import '../modules/overtime/models/overtime_model.dart';
 import '../modules/groupes/groupe_pointage_page.dart';
 import '../modules/distribution/distribution_pointage_page.dart';
+import '../modules/distribution/distribution_groups_provider.dart';
+import '../modules/distribution/distribution_shifts_provider.dart';
+import '../modules/distribution/distribution_shifts_page.dart';
+import '../modules/employees/employees_provider.dart';
 import '../modules/shifts/shifts_page.dart';
+import '../modules/shifts/models/shift_models.dart';
+import 'director_dashboard_page.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -42,9 +50,22 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
   // Pages pré-construites et mises en cache par pageKey+userId.
   // On les recrée uniquement quand l'utilisateur change de compte.
   final Map<String, Widget> _pageCache = {};
+  List<_NavItem> _effectiveItemsCurrent = const [];
+  late final VoidCallback _leaveBadgeListener;
+
+  @override
+  void initState() {
+    super.initState();
+    _leaveBadgeListener = () {
+      if (!mounted) return;
+      setState(() {});
+    };
+    PushNotificationsService.instance.leaveUnreadCount.addListener(_leaveBadgeListener);
+  }
 
   @override
   void dispose() {
+    PushNotificationsService.instance.leaveUnreadCount.removeListener(_leaveBadgeListener);
     _mobileTabController?.dispose();
     super.dispose();
   }
@@ -73,8 +94,10 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     bool isChefEquipe,
     bool isGroupe, {
     int overtimeBadgeCount = 0,
+    int demandesBadgeCount = 0,
   }) {
     final auth = context.read<AuthProvider>();
+    final isZoneAdmin = auth.isChefZoneAdmin;
     if (isChauffeur) {
       return [
         _NavItem(key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
@@ -100,7 +123,36 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             badgeCount: overtimeBadgeCount),
         _NavItem(
             key: 'settings', icon: Icons.settings, label: tr(context, 'nav_settings')),
-        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes'),
+        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes', badgeCount: demandesBadgeCount),
+      ];
+    }
+    if (isZoneAdmin) {
+      return [
+        _NavItem(key: 'dashboard', icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
+        if (auth.hasPermission(AppPermissions.pointageView))
+          _NavItem(
+              key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+        if (auth.hasPermission(AppPermissions.employeesView))
+          _NavItem(key: 'employees', icon: Icons.people, label: tr(context, 'nav_employees')),
+        if (auth.hasPermission(AppPermissions.overtimeView))
+          _NavItem(
+              key: 'overtime', icon: Icons.access_time_filled, label: 'Heures Sup.'),
+        if (auth.hasPermission(AppPermissions.shiftsView))
+          _NavItem(
+              key: 'shifts', icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+        if (auth.hasPermission(AppPermissions.stockView))
+          _NavItem(
+              key: 'stock', icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
+        if (auth.hasPermission(AppPermissions.reportsView))
+          _NavItem(
+              key: 'reports', icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
+        if (auth.hasPermission(AppPermissions.settingsView))
+          _NavItem(
+              key: 'settings', icon: Icons.settings, label: tr(context, 'nav_settings')),
+        if (auth.hasPermission(AppPermissions.demandesView))
+          _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes', badgeCount: demandesBadgeCount),
+        if (auth.hasPermission(AppPermissions.logistiqueView))
+          _NavItem(key: 'logistique', icon: Icons.local_shipping, label: 'Logistique'),
       ];
     }
     return [
@@ -110,9 +162,6 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       if (auth.hasPermission(AppPermissions.pointageView))
         _NavItem(
             key: 'pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
-      if (auth.isChefAtelierAdmin)
-        _NavItem(
-            key: 'distribution_review', icon: Icons.fact_check, label: 'Distribution (hier)'),
       if (auth.hasPermission(AppPermissions.overtimeView))
         _NavItem(
             key: 'overtime', icon: Icons.access_time_filled, label: 'Heures Sup.'),
@@ -129,10 +178,89 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
         _NavItem(
             key: 'settings', icon: Icons.settings, label: tr(context, 'nav_settings')),
       if (auth.hasPermission(AppPermissions.demandesView))
-        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes'),
+        _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes', badgeCount: demandesBadgeCount),
       if (auth.hasPermission(AppPermissions.logistiqueView))
         _NavItem(key: 'logistique', icon: Icons.local_shipping, label: 'Logistique'),
     ];
+  }
+
+  Future<void> _handleNavIndexChange(
+    BuildContext context,
+    int newIndex,
+    List<_NavItem> effectiveItems, {
+    required bool isChefEquipe,
+    required bool isGroupe,
+    required bool isDistribution,
+    TabController? mobileTabController,
+  }) async {
+    if (isGroupe || isDistribution) {
+      _applyNavIndex(newIndex, mobileTabController);
+      final targetKey = effectiveItems[newIndex.clamp(0, effectiveItems.length - 1)].key;
+      if (targetKey == 'demandes' || targetKey == 'distribution_demandes') {
+        PushNotificationsService.instance.markLeaveNotificationsRead();
+      }
+      return;
+    }
+    final safeIndex = _selectedIndex.clamp(0, effectiveItems.length - 1);
+    if (newIndex == safeIndex) return;
+    if (!isChefEquipe || effectiveItems[safeIndex].key != 'pointage') {
+      _applyNavIndex(newIndex, mobileTabController);
+      final targetKey = effectiveItems[newIndex.clamp(0, effectiveItems.length - 1)].key;
+      if (targetKey == 'demandes' || targetKey == 'distribution_demandes') {
+        PushNotificationsService.instance.markLeaveNotificationsRead();
+      }
+      return;
+    }
+    final equipeId = context.read<AuthProvider>().equipeId ?? '';
+    final pointage = context.read<PointageProvider>();
+    final reportSubmitted =
+        equipeId.isNotEmpty && pointage.hasEquipeDailyReportSubmittedToday(equipeId);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr(ctx, 'pointage_leave_nav_title')),
+        content: Text(
+          reportSubmitted ? tr(ctx, 'pointage_leave_nav_body_sent') : tr(ctx, 'pointage_leave_nav_body_unsent'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr(ctx, 'pointage_leave_nav_stay')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr(ctx, 'pointage_leave_nav_leave')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      _applyNavIndex(newIndex, mobileTabController);
+      final targetKey = effectiveItems[newIndex.clamp(0, effectiveItems.length - 1)].key;
+      if (targetKey == 'demandes' || targetKey == 'distribution_demandes') {
+        PushNotificationsService.instance.markLeaveNotificationsRead();
+      }
+    }
+  }
+
+  void _applyNavIndex(int newIndex, TabController? mobileTabController) {
+    if (mobileTabController != null) {
+      mobileTabController.animateTo(newIndex);
+    } else {
+      setState(() => _selectedIndex = newIndex);
+    }
+  }
+
+  void _openPageByKeyFromDashboard(String pageKey) {
+    if (_effectiveItemsCurrent.isEmpty) return;
+    final index = _effectiveItemsCurrent.indexWhere((i) => i.key == pageKey);
+    if (index < 0) return;
+    _applyNavIndex(index, _mobileTabController);
+    if (pageKey == 'demandes' || pageKey == 'distribution_demandes') {
+      PushNotificationsService.instance.markLeaveNotificationsRead();
+    }
   }
 
   Widget _buildSidebarContent(
@@ -141,8 +269,10 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       List<_NavItem> items, {
         VoidCallback? onItemTap,
         TabController? mobileTabController,
+        required Future<void> Function(int index) onNavTap,
       }) {
     final locale = context.watch<LocaleProvider>();
+    final compactHeight = MediaQuery.sizeOf(context).height < 640;
     return Container(
       width: 220,
       color: const Color(0xFF1565C0),
@@ -277,12 +407,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                         ],
                       ],
                     ),
-                    onTap: () {
-                      setState(() => _selectedIndex = index);
-                      if (mobileTabController != null &&
-                          mobileTabController.index != index) {
-                        mobileTabController.animateTo(index);
-                      }
+                    onTap: () async {
+                      await onNavTap(index);
                       onItemTap?.call();
                     },
                   ),
@@ -292,14 +418,15 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
           ),
 
           // ── Footer ─────────────────────────────────────────────────────────
-          const Divider(color: Colors.white24),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          if (!compactHeight) ...[
+            const Divider(color: Colors.white24),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -358,7 +485,11 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                                   BorderRadius.circular(4),
                                 ),
                                 child: Text(
-                                  auth.isDirecteur
+                                  auth.isChefZoneAdmin
+                                      ? 'Chef de zone'
+                                      : auth.isChefAtelierAdmin
+                                      ? 'Chef d\'atelier'
+                                      : auth.isDirecteur
                                       ? tr(context, 'role_directeur')
                                       : auth.isChauffeur
                                       ? tr(context,
@@ -433,10 +564,11 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                   const Text('v1.0.0',
                       style: TextStyle(
                           color: Colors.white38, fontSize: 11)),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -474,19 +606,25 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     }
     final overtimeBadgeCount =
         isChefEquipe ? context.watch<OvertimeProvider>().todayAssignments.length : 0;
+    final demandesBadgeCount = PushNotificationsService.instance.leaveUnreadCount.value;
     final items = _navItems(
       context,
       isChauffeur,
       isChefEquipe,
       isGroupe,
       overtimeBadgeCount: overtimeBadgeCount,
+      demandesBadgeCount: demandesBadgeCount,
     );
     final effectiveItems = isDistribution
         ? <_NavItem>[
+            _NavItem(key: 'distribution_dashboard', icon: Icons.dashboard, label: tr(context, 'nav_dashboard')),
             _NavItem(key: 'distribution_pointage', icon: Icons.access_time, label: tr(context, 'nav_pointage')),
+            _NavItem(key: 'distribution_shifts', icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
+            _NavItem(key: 'distribution_demandes', icon: Icons.inbox, label: 'Demandes', badgeCount: demandesBadgeCount),
           ]
         : items;
     final mobile = isMobile(context);
+    _effectiveItemsCurrent = effectiveItems;
 
     // Clamp index in case item list changes between role switches
     final safeIndex = _selectedIndex.clamp(0, effectiveItems.length - 1);
@@ -523,6 +661,19 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
               alignment: Alignment.centerLeft,
               child: TabBar(
                 controller: _mobileTabController!,
+                onTap: (index) {
+                  unawaited(
+                    _handleNavIndexChange(
+                      context,
+                      index,
+                      effectiveItems,
+                      isChefEquipe: isChefEquipe,
+                      isGroupe: isGroupe,
+                      isDistribution: isDistribution,
+                      mobileTabController: _mobileTabController,
+                    ),
+                  );
+                },
                 isScrollable: true,
                 labelColor: Colors.white,
                 unselectedLabelColor: Colors.white70,
@@ -594,6 +745,15 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
               auth,
               effectiveItems,
               mobileTabController: _mobileTabController,
+              onNavTap: (index) => _handleNavIndexChange(
+                context,
+                index,
+                effectiveItems,
+                isChefEquipe: isChefEquipe,
+                isGroupe: isGroupe,
+                isDistribution: isDistribution,
+                mobileTabController: _mobileTabController,
+              ),
               onItemTap: () => Navigator.of(ctx).pop(),
             ),
           ),
@@ -608,14 +768,35 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     return Scaffold(
       body: Row(
         children: [
-          _buildSidebarContent(context, auth, effectiveItems),
-          Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1200),
-                child: IndexedStack(index: safeIndex, children: pages),
-              ),
+          _buildSidebarContent(
+            context,
+            auth,
+            effectiveItems,
+            onNavTap: (index) => _handleNavIndexChange(
+              context,
+              index,
+              effectiveItems,
+              isChefEquipe: isChefEquipe,
+              isGroupe: isGroupe,
+              isDistribution: isDistribution,
+              mobileTabController: null,
             ),
+          ),
+          Expanded(
+            child: () {
+              final currentKey = effectiveItems[safeIndex].key;
+              final fullWidthPages = {'shifts'};
+              final useFullWidth = fullWidthPages.contains(currentKey);
+              if (useFullWidth) {
+                return IndexedStack(index: safeIndex, children: pages);
+              }
+              return Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: IndexedStack(index: safeIndex, children: pages),
+                ),
+              );
+            }(),
           ),
         ],
       ),
@@ -661,7 +842,17 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
       return const GroupePointagePage();
     }
     if (isDistribution) {
-      return const DistributionPointagePage();
+      switch (pageKey) {
+        case 'distribution_dashboard':
+          return const _DistributionDashboardPage();
+        case 'distribution_demandes':
+          return const DemandesPage(role: UserRole.demandeur);
+        case 'distribution_shifts':
+          return const DistributionShiftsPage();
+        case 'distribution_pointage':
+        default:
+          return const DistributionPointagePage();
+      }
     }
     if (isChefEquipe) {
       switch (pageKey) {
@@ -689,6 +880,8 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
         return const PointagePage();
       case 'distribution_review':
         return const DistributionPointagePage(reviewOnly: true);
+      case 'distribution_pointage':
+        return const DistributionPointagePage();
       case 'overtime':
         return const OvertimePage();
       case 'shifts':
@@ -789,132 +982,7 @@ class _DashboardPage extends StatelessWidget {
   const _DashboardPage();
 
   @override
-  Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
-    final site = context.watch<SiteProvider>();
-    final emp = context.watch<EmployeesProvider>();
-    final pointage = context.watch<PointageProvider>();
-    final magasin = context.watch<MagasinProvider>();
-    final mobile = isMobile(context);
-    final padding = pagePadding(context);
-
-    final filteredEmployes = SiteId.filterBySite(
-      emp.employes,
-      auth.currentUser?.allowedSiteIds,
-      auth.currentUser?.isSuperAdmin == true
-          ? site.selectedSiteId
-          : null,
-          (e) => e.siteId,
-    );
-    final filteredProduits = SiteId.filterBySite(
-      magasin.produits,
-      auth.currentUser?.allowedSiteIds,
-      auth.currentUser?.isSuperAdmin == true
-          ? site.selectedSiteId
-          : null,
-          (p) => p.siteId,
-    );
-
-    final employesCount = filteredEmployes.length;
-    final stockTotal =
-    filteredProduits.fold<int>(0, (s, p) => s + p.total);
-    final presentLabel = '${pointage.todayPresentCount}';
-    final stockLabel = '$stockTotal';
-    final rapportsLabel = '${pointage.monthlyReportsCount}';
-
-    final cards = [
-      _StatCard(
-          title: 'Collaborateurs',
-          value: '$employesCount',
-          icon: Icons.people,
-          color: Colors.blue),
-      _StatCard(
-          title: "Présents aujourd'hui",
-          value: presentLabel,
-          icon: Icons.check_circle,
-          color: Colors.green),
-      _StatCard(
-          title: 'Produits en stock',
-          value: stockLabel,
-          icon: Icons.inventory_2,
-          color: Colors.orange),
-      _StatCard(
-          title: 'Rapports ce mois',
-          value: rapportsLabel,
-          icon: Icons.bar_chart,
-          color: Colors.purple),
-    ];
-
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Greeting — never overflows
-          Text(
-            'Bonjour, ${auth.currentUser?.nom ?? ''} 👋',
-            style: TextStyle(
-              fontSize: mobile ? 20 : 26,
-              fontWeight: FontWeight.bold,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Bienvenue dans le système de gestion DIPS',
-            style: TextStyle(
-                fontSize: mobile ? 12 : 14, color: Colors.grey[600]),
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 20),
-
-          // Stat cards — wrap on narrow screens, row on wide
-          LayoutBuilder(builder: (ctx, constraints) {
-            // Below 520 px: 2 × 2 grid
-            if (constraints.maxWidth < 520) {
-              return Column(
-                children: [
-                  Row(children: [
-                    Expanded(child: cards[0]),
-                    const SizedBox(width: 12),
-                    Expanded(child: cards[1]),
-                  ]),
-                  const SizedBox(height: 12),
-                  Row(children: [
-                    Expanded(child: cards[2]),
-                    const SizedBox(width: 12),
-                    Expanded(child: cards[3]),
-                  ]),
-                ],
-              );
-            }
-            // 520 – 900 px: 2 × 2 with larger gap
-            if (constraints.maxWidth < 900) {
-              return Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                children: cards
-                    .map((c) => SizedBox(
-                    width:
-                    (constraints.maxWidth - 16) / 2,
-                    child: c))
-                    .toList(),
-              );
-            }
-            // Wide: single row
-            return Row(
-              children: [
-                for (int i = 0; i < cards.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 16),
-                  Expanded(child: cards[i]),
-                ],
-              ],
-            );
-          }),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const DirectorDashboardPage();
 }
 
 class _ChefDashboardPage extends StatelessWidget {
@@ -984,73 +1052,151 @@ class _ChefDashboardPage extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// StatCard — overflow-safe
-// ─────────────────────────────────────────────────────────────────────────────
-class _StatCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color color;
+class _DistributionDashboardPage extends StatelessWidget {
+  const _DistributionDashboardPage();
 
-  const _StatCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
+  String _shiftLabel(ShiftType shift) {
+    switch (shift) {
+      case ShiftType.morning:
+        return 'P1 (${shift.timeRange.replaceAll('–', '-')})';
+      case ShiftType.evening:
+        return 'P2 (${shift.timeRange.replaceAll('–', '-')})';
+      case ShiftType.night:
+        return 'P3 (${shift.timeRange.replaceAll('–', '-')})';
+      case ShiftType.rest:
+        return 'RH';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Icon badge — fixed size, never shrinks
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(width: 12),
-          // Text column — takes remaining space, clips gracefully
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value,
-                    style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: color),
+    final layoutState = context.findAncestorStateOfType<_MainLayoutState>();
+    final auth = context.watch<AuthProvider>();
+    final mobile = isMobile(context);
+    final padding = pagePadding(context);
+    final groupsProv = context.watch<DistributionGroupsProvider>();
+    final shiftsProv = context.watch<DistributionShiftsProvider>();
+    final employeesProv = context.watch<EmployeesProvider>();
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+
+    final allowedIds = auth.distributionGroupIds;
+    final availableGroups = allowedIds.isEmpty
+        ? groupsProv.groups
+        : groupsProv.groups.where((g) => allowedIds.contains(g.id)).toList();
+    final group = availableGroups.isEmpty ? null : availableGroups.first;
+    final shift = (group != null && shiftsProv.hasRotationSlotForGroup(group.id))
+        ? shiftsProv.getShiftForGroup(group.id, day)
+        : ShiftType.rest;
+    final shiftText = _shiftLabel(shift);
+    final memberIds = group?.membreIds.toSet() ?? <String>{};
+    final membersById = {
+      for (final e in employeesProv.employes) e.id: e,
+    };
+
+    return FutureBuilder(
+      future: context.read<OvertimeProvider>().getForDateRange(day, day),
+      builder: (context, snap) {
+        final assignments = (snap.data ?? const [])
+            .where((a) => memberIds.contains(a.employeId))
+            .toList()
+          ..sort((a, b) => a.employeNom.compareTo(b.employeNom));
+
+        return SingleChildScrollView(
+          padding: EdgeInsets.all(padding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Dashboard Distribution',
+                        style: TextStyle(
+                          fontSize: mobile ? 18 : 21,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text('Responsable: ${auth.currentUser?.nom ?? '-'}'),
+                      Text('Groupe: ${group?.nom ?? '-'}'),
+                      Text('Shift aujourd\'hui: $shiftText'),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              layoutState?._openPageByKeyFromDashboard('distribution_demandes');
+                            },
+                            icon: const Icon(Icons.event_note),
+                            label: const Text('Envoyer demande congé'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              layoutState?._openPageByKeyFromDashboard('distribution_pointage');
+                            },
+                            icon: const Icon(Icons.access_time),
+                            label: const Text('Ouvrir pointage'),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  title,
-                  style: const TextStyle(
-                      color: Colors.grey, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Salariés programmés en heures supplémentaires',
+                        style: TextStyle(
+                          fontSize: mobile ? 15 : 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (group == null)
+                        Text('Aucun groupe Distribution lié.', style: TextStyle(color: Colors.grey[700]))
+                      else if (assignments.isEmpty)
+                        Text('Aucun salarié HS pour aujourd\'hui.', style: TextStyle(color: Colors.grey[700]))
+                      else
+                        ...assignments.map((a) {
+                          final emp = membersById[a.employeId];
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.person_outline),
+                            title: Text(a.employeNom),
+                            subtitle: Text(
+                              'CIN: ${emp?.cin ?? '-'}  •  Équipe cible: ${a.targetEquipeName}',
+                            ),
+                            trailing: Text(
+                              a.attendanceStatus == OvertimeAttendanceStatus.absent
+                                  ? 'Absent'
+                                  : a.finished
+                                      ? 'Terminé'
+                                      : 'Prévu',
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

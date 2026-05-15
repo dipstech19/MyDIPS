@@ -122,6 +122,11 @@ class AuthProvider extends ChangeNotifier {
             final adminPermissions = rawPermissions is List<dynamic>
                 ? rawPermissions.map((e) => e.toString()).toList()
                 : <String>[];
+            final rawDistributionIds = data['distributionGroupIds'];
+            final distributionIds = rawDistributionIds is List<dynamic>
+                ? rawDistributionIds.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList()
+                : <String>[];
+            final distributionGroupId = (data['distributionGroupId'] as String? ?? '').trim();
             _currentUser = AppUser(
               id: adminSnap.docs.first.id,
               nom: '${data['prenom'] ?? ''} ${data['nom'] ?? ''}'.trim(),
@@ -131,6 +136,8 @@ class AuthProvider extends ChangeNotifier {
               siteIds: siteIds,
               permissions: adminPermissions,
               adminRole: (data['role'] as String? ?? '').trim(),
+              distributionGroupId: distributionGroupId.isNotEmpty ? distributionGroupId : null,
+              distributionGroupIds: distributionIds,
             );
             notifyListeners();
             return true;

@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_provider.dart';
+import '../../core/utils/responsive.dart';
 import '../employees/conges_provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
@@ -18,6 +19,9 @@ import '../employees/models/equipe_model.dart';
 import '../employees/utils/leave_days_utils.dart';
 import '../pointage/pointage_provider.dart';
 import '../pointage/models/pointage_model.dart';
+import '../distribution/distribution_groups_provider.dart';
+import '../groupes/groupes_provider.dart';
+import '../groupes/models/groupe_model.dart';
 
 enum UserRole { demandeur, administrateur }
 
@@ -219,6 +223,8 @@ class _AdminRecipient {
   const _AdminRecipient({required this.id, required this.name, required this.email, required this.role});
 }
 
+enum _LeaveRequestBlockReason { pendingExists, approvedSameMonthExists }
+
 class _LeaveRepository {
   static const _collection = 'leave_requests';
   final _db = FirebaseFirestore.instance;
@@ -267,6 +273,34 @@ class _LeaveRepository {
     }
     return false;
   }
+
+  /// Business rule for new leave request of same employee:
+  /// - Block if any pending request exists (until approved/rejected).
+  /// - Block if an approved request exists in the same month range.
+  Future<_LeaveRequestBlockReason?> blockReasonForEmployeeNewRequest({
+    required String employeeId,
+    required DateTime startAt,
+    required DateTime endAt,
+    String? excludeRequestId,
+  }) async {
+    final snap = await _db.collection(_collection).where('employeeId', isEqualTo: employeeId).get();
+    final startMonth = DateTime(startAt.year, startAt.month, 1);
+    final endMonth = DateTime(endAt.year, endAt.month, 1);
+    for (final d in snap.docs) {
+      if (excludeRequestId != null && d.id == excludeRequestId) continue;
+      final req = LeaveRequest.fromDoc(d);
+      if (req.status == LeaveStatus.pending) {
+        return _LeaveRequestBlockReason.pendingExists;
+      }
+      if (req.status == LeaveStatus.rejected) continue;
+      if (req.status != LeaveStatus.approved) continue;
+      final reqStartMonth = DateTime(req.startDate.year, req.startDate.month, 1);
+      final reqEndMonth = DateTime(req.endDate.year, req.endDate.month, 1);
+      final overlap = !(reqEndMonth.isBefore(startMonth) || reqStartMonth.isAfter(endMonth));
+      if (overlap) return _LeaveRequestBlockReason.approvedSameMonthExists;
+    }
+    return null;
+  }
 }
 
 class DemandesPage extends StatefulWidget {
@@ -297,10 +331,29 @@ class _DemandesPageState extends State<DemandesPage>
   bool get wantKeepAlive => true;
 
   bool _canEditDecision(LeaveRequest req) {
+    final auth = context.read<AuthProvider>();
+    if (auth.isDirecteur) return true;
     if (req.status == LeaveStatus.pending) return true;
     final decidedAt = req.decidedAt;
     if (decidedAt == null) return false;
     return DateTime.now().difference(decidedAt) <= _decisionEditWindow;
+  }
+
+  _LeaveRequestBlockReason? _blockReasonFromCachedRequests(LeaveRequest req) {
+    final startMonth = DateTime(req.startDate.year, req.startDate.month, 1);
+    final endMonth = DateTime(req.endDate.year, req.endDate.month, 1);
+    for (final r in _cachedRequests) {
+      if (r.employeeId != req.employeeId) continue;
+      if (r.status == LeaveStatus.pending) {
+        return _LeaveRequestBlockReason.pendingExists;
+      }
+      if (r.status != LeaveStatus.approved) continue;
+      final rs = DateTime(r.startDate.year, r.startDate.month, 1);
+      final re = DateTime(r.endDate.year, r.endDate.month, 1);
+      final overlap = !(re.isBefore(startMonth) || rs.isAfter(endMonth));
+      if (overlap) return _LeaveRequestBlockReason.approvedSameMonthExists;
+    }
+    return null;
   }
 
   @override
@@ -324,9 +377,11 @@ class _DemandesPageState extends State<DemandesPage>
         final requests = snap.data ?? const <LeaveRequest>[];
         final filtered = isAdmin
             ? _adminViewRequests(auth, requests)
-            : (auth.equipeId == null || auth.equipeId!.isEmpty)
-                ? const <LeaveRequest>[]
-                : requests.where((r) => r.equipeId == auth.equipeId).toList();
+            : requests.where((r) {
+                final own = auth.userId != null && auth.userId!.isNotEmpty && r.submittedByUserId == auth.userId;
+                final sameEquipe = auth.equipeId != null && auth.equipeId!.isNotEmpty && r.equipeId == auth.equipeId;
+                return own || sameEquipe;
+              }).toList();
 
         return Column(
           children: [
@@ -389,8 +444,15 @@ class _DemandesPageState extends State<DemandesPage>
         final p = r.employeePoste.trim().toLowerCase();
         final isZoneOrRh =
             p.contains('chef de zone') || p.contains('chef zone') || p == 'rh' || p.contains('ressource');
-        return !isZoneOrRh;
+        final isDistribution = p.contains('distribution') || p.contains('distri') || p.contains('livreur');
+        return !isZoneOrRh && !isDistribution;
       }).toList();
+    }
+    if (auth.isChefZoneAdmin) {
+      final uid = auth.userId;
+      if (uid == null || uid.isEmpty) return const <LeaveRequest>[];
+      // Chef de zone should only see requests explicitly assigned to him.
+      return all.where((r) => r.assignedAdminId == uid).toList();
     }
     final uid = auth.userId;
     if (uid == null || uid.isEmpty) return all;
@@ -445,6 +507,23 @@ class _DemandesPageState extends State<DemandesPage>
     return direct.isNotEmpty ? direct.first.nom : 'Équipe non définie';
   }
 
+  /// Identifiant « équipe » pour congés / pointage : id d’[Equipe] ou `groupe:<id>` pour un [Groupe] (ex. équipe normale).
+  String _deriveLeaveEquipeIdForEmployee(Employe e, List<Equipe> equipes, List<Groupe> groupes) {
+    final direct = equipes.where((q) => q.chefId == e.id || q.membreIds.contains(e.id)).toList();
+    if (direct.isNotEmpty) return direct.first.id;
+    final g = groupes.where((gr) => gr.membreIds.contains(e.id)).toList();
+    if (g.isNotEmpty) return 'groupe:${g.first.id}';
+    return '';
+  }
+
+  String _deriveLeaveEquipeNameForEmployee(Employe e, List<Equipe> equipes, List<Groupe> groupes) {
+    final direct = equipes.where((q) => q.chefId == e.id || q.membreIds.contains(e.id)).toList();
+    if (direct.isNotEmpty) return direct.first.nom;
+    final g = groupes.where((gr) => gr.membreIds.contains(e.id)).toList();
+    if (g.isNotEmpty) return g.first.nom;
+    return 'Équipe non définie';
+  }
+
   Future<void> _createAndApproveByAdmin(
     BuildContext context, {
     required Employe employee,
@@ -458,11 +537,14 @@ class _DemandesPageState extends State<DemandesPage>
     final auth = context.read<AuthProvider>();
     final empProv = context.read<EmployeesProvider>();
     final conges = context.read<CongesProvider>();
+    final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
+    final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
     final pointageProvider = context.read<PointageProvider>();
     final requestedDays = _requestedLeaveDays(start, end);
     final acquired = leaveDaysAcquired(employee.dateDebut);
+    final extra = employee.leaveDaysExtra;
     final taken = await conges.getDaysTaken(employee.id, refresh: true);
-    final remaining = (acquired - taken).clamp(0.0, double.infinity);
+    final remaining = (acquired + extra - taken).clamp(0.0, double.infinity);
     if (requestedDays > remaining) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -474,18 +556,9 @@ class _DemandesPageState extends State<DemandesPage>
 
     final startAt = DateTime(start.year, start.month, start.day, 0, 0);
     final endAt = DateTime(end.year, end.month, end.day, 23, 59);
-    final equipeId = _deriveEquipeIdForEmployee(employee, empProv.equipes);
-    final equipeName = _deriveEquipeNameForEmployee(employee, empProv.equipes);
-
-    final hasConflict = await _repo.hasTeamConflict(equipeId: equipeId, startAt: startAt, endAt: endAt);
-    if (hasConflict) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Conflit détecté pour cette équipe sur la période demandée.')),
-        );
-      }
-      return;
-    }
+    final groupes = context.read<GroupesProvider>().groupes;
+    final equipeId = _deriveLeaveEquipeIdForEmployee(employee, empProv.equipes, groupes);
+    final equipeName = _deriveLeaveEquipeNameForEmployee(employee, empProv.equipes, groupes);
 
     final adminName = auth.currentUser?.nom ?? 'Administrateur';
     final baseReq = LeaveRequest(
@@ -571,44 +644,38 @@ class _DemandesPageState extends State<DemandesPage>
   }
 
   Future<void> _createPendingByChef(BuildContext context, LeaveRequest req) async {
-    final empProv = context.read<EmployeesProvider>();
-    final chefName = _resolveChefNameForPdf(req, empProv.equipes, empProv.employes);
-    final pdf = await _buildApprovedLeavePdf(
-      req,
-      req.assignedAdminName.isEmpty ? 'Administrateur' : req.assignedAdminName,
-      decisionStatus: LeaveStatus.pending,
-      resolvedChefName: chefName,
-    );
-    final withPdf = LeaveRequest(
-      id: req.id,
-      employeeId: req.employeeId,
-      employeeName: req.employeeName,
-      employeeCin: req.employeeCin,
-      employeePoste: req.employeePoste,
-      equipeId: req.equipeId,
-      equipeName: req.equipeName,
-      chefName: chefName,
-      leaveTypeId: req.leaveTypeId,
-      leaveTypeLabel: req.leaveTypeLabel,
-      startDate: req.startDate,
-      endDate: req.endDate,
-      startAt: req.startAt,
-      endAt: req.endAt,
-      reason: req.reason,
-      professionalDetails: req.professionalDetails,
-      submittedByUserId: req.submittedByUserId,
-      submittedByName: req.submittedByName,
-      assignedAdminId: req.assignedAdminId,
-      assignedAdminName: req.assignedAdminName,
-      createdAt: req.createdAt,
-      status: req.status,
-      adminComment: req.adminComment,
-      decidedAt: req.decidedAt,
-      decidedByAdminId: req.decidedByAdminId,
-      decidedByAdminName: req.decidedByAdminName,
-      approvedPdf: pdf,
-    );
-    await _repo.create(withPdf);
+    // Fast path: local cache check (no network).
+    _LeaveRequestBlockReason? blockReason = _blockReasonFromCachedRequests(req);
+    // Fallback: if no local data available, query backend.
+    if (blockReason == null && _cachedRequests.isEmpty) {
+      blockReason = await _repo.blockReasonForEmployeeNewRequest(
+        employeeId: req.employeeId,
+        startAt: req.startDate,
+        endAt: req.endDate,
+      );
+    }
+    if (blockReason != null) {
+      if (context.mounted) {
+        final msg = blockReason == _LeaveRequestBlockReason.pendingExists
+            ? 'Impossible: une demande de ce collaborateur est déjà en attente.'
+            : 'Impossible: ce collaborateur a déjà une demande approuvée dans ce mois.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    // Optimistic UI insert for instant feedback on weak networks.
+    if (mounted) {
+      setState(() {
+        _cachedRequests = [req, ..._cachedRequests];
+      });
+    }
+    // Pending request should be saved immediately; PDF is only needed on decision.
+    await _repo.create(req);
   }
 
   Future<void> _approveRequest(BuildContext context, LeaveRequest req, String comment) async {
@@ -624,33 +691,27 @@ class _DemandesPageState extends State<DemandesPage>
     final empProv = context.read<EmployeesProvider>();
     if (req.status == LeaveStatus.approved) return;
     final employee = empProv.employes.where((e) => e.id == req.employeeId).toList();
-    if (employee.isNotEmpty) {
-      final requestedDays = _requestedLeaveDays(req.startDate, req.endDate);
-      final acquired = leaveDaysAcquired(employee.first.dateDebut);
-      final conges = context.read<CongesProvider>();
-      final taken = await conges.getDaysTaken(req.employeeId, refresh: true);
-      final remaining = (acquired - taken).clamp(0.0, double.infinity);
-      if (requestedDays > remaining && context.mounted) {
+    if (employee.isEmpty) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Solde insuffisant pour ${employee.first.nom}: restant ${remaining.toStringAsFixed(1)}j, demandé ${requestedDays.toStringAsFixed(1)}j.',
-            ),
-          ),
+          const SnackBar(content: Text('Employé introuvable. Vérifiez la demande avant approbation.')),
         );
-        return;
       }
+      return;
     }
-
-    final hasConflict = await _repo.hasTeamConflict(
-      equipeId: req.equipeId,
-      startAt: req.startAt,
-      endAt: req.endAt,
-      excludeRequestId: req.id,
-    );
-    if (hasConflict && context.mounted) {
+    final requestedDays = _requestedLeaveDays(req.startDate, req.endDate);
+    final acquired = leaveDaysAcquired(employee.first.dateDebut);
+    final extra = employee.first.leaveDaysExtra;
+    final congesProvider = context.read<CongesProvider>();
+    final taken = await congesProvider.getDaysTaken(req.employeeId, refresh: true);
+    final remaining = (acquired + extra - taken).clamp(0.0, double.infinity);
+    if (requestedDays > remaining && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Conflit détecté: une autre demande existe déjà pour cette équipe et période.')),
+        SnackBar(
+          content: Text(
+            'Solde insuffisant pour ${employee.first.nom}: restant ${remaining.toStringAsFixed(1)}j, demandé ${requestedDays.toStringAsFixed(1)}j.',
+          ),
+        ),
       );
       return;
     }
@@ -675,26 +736,24 @@ class _DemandesPageState extends State<DemandesPage>
       // so it's counted as present with special (dark blue) styling.
       final pointageProvider = context.read<PointageProvider>();
 
-      if (employee.isNotEmpty) {
-        final equipe = empProv.equipes.where((e) => e.id == req.equipeId).toList();
-        final chefId = equipe.isNotEmpty ? equipe.first.chefId : '';
-        final chef = empProv.employes.where((e) => e.id == chefId).toList();
-        final chefName = chef.isNotEmpty ? chef.first.nom : req.submittedByName;
+      final equipe = empProv.equipes.where((e) => e.id == req.equipeId).toList();
+      final chefId = equipe.isNotEmpty ? equipe.first.chefId : '';
+      final chef = empProv.employes.where((e) => e.id == chefId).toList();
+      final chefName = chef.isNotEmpty ? chef.first.nom : req.submittedByName;
 
-        for (DateTime d = req.startDate;
-            !d.isAfter(req.endDate);
-            d = d.add(const Duration(days: 1))) {
-          await pointageProvider.setAdminOverrideForEmployee(
-            employeId: employee.first.id,
-            employeNom: employee.first.nom,
-            employeCin: employee.first.cin,
-            equipeId: req.equipeId,
-            equipeName: req.equipeName,
-            chefName: chefName,
-            status: AttendanceStatus.leave,
-            viewDate: d,
-          );
-        }
+      for (DateTime d = req.startDate;
+          !d.isAfter(req.endDate);
+          d = d.add(const Duration(days: 1))) {
+        await pointageProvider.setAdminOverrideForEmployee(
+          employeId: employee.first.id,
+          employeNom: employee.first.nom,
+          employeCin: employee.first.cin,
+          equipeId: req.equipeId,
+          equipeName: req.equipeName,
+          chefName: chefName,
+          status: AttendanceStatus.leave,
+          viewDate: d,
+        );
       }
 
       final days = req.endDate.difference(req.startDate).inDays + 1;
@@ -1430,6 +1489,98 @@ class _AdminLeaveView extends StatelessWidget {
         .toList();
     final sortedAll = [...filteredRequests]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+    final mobile = isMobile(context);
+    if (mobile) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: ListView(
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Vue calendrier',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                DropdownButton<int>(
+                  value: selectedYear,
+                  items: List.generate(5, (i) => selectedYear - 2 + i)
+                      .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) onYearChanged(v);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                IconButton(
+                  tooltip: 'Types de congé (Admin)',
+                  icon: const Icon(Icons.category_outlined),
+                  onPressed: () => _showLeaveTypeManagerDialog(context),
+                ),
+                if (canCreateAndApprove)
+                  IconButton(
+                    tooltip: 'Créer et approuver (Admin)',
+                    icon: const Icon(Icons.add_task_outlined),
+                    onPressed: () => _showAdminCreateApproveDialog(context),
+                  ),
+                if (canCreatePersonalPending)
+                  IconButton(
+                    tooltip: 'Demande personnelle (en attente)',
+                    icon: const Icon(Icons.person_add_alt_1_outlined),
+                    onPressed: () => _showCreatePersonalPendingDialog(context),
+                  ),
+                IconButton(
+                  tooltip: 'Réinitialiser soldes congé (Test)',
+                  icon: const Icon(Icons.restart_alt, color: Colors.orange),
+                  onPressed: () => _showResetLeaveDaysDialog(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: _LargeLeaveCalendar(
+                  year: selectedYear,
+                  month: monthForView,
+                  selectedDate: selectedDate,
+                  requests: monthRequestsExact,
+                  onDateChanged: onDateChanged,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Demandes (toutes) • En attente: ${pending.length}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            if (sortedAll.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('Aucune demande')),
+              )
+            else
+              ...sortedAll.map(
+                (r) => _LeaveRequestCard(
+                  req: r,
+                  isAdmin: true,
+                  onApprove: onApprove,
+                  onReject: onReject,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.all(14),
       child: Row(
@@ -1896,6 +2047,11 @@ class _AdminLeaveView extends StatelessWidget {
     List<_LeaveType> leaveTypes = const [];
 
     final auth = context.read<AuthProvider>();
+    final empProv = context.read<EmployeesProvider>();
+    final conges = context.read<CongesProvider>();
+    final groupes = context.read<GroupesProvider>().groupes;
+    final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
+    final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
     bool isZoneOrRh(String poste) {
       final p = poste.trim().toLowerCase();
       return p.contains('chef de zone') ||
@@ -1907,33 +2063,101 @@ class _AdminLeaveView extends StatelessWidget {
       final p = poste.trim().toLowerCase();
       return p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier');
     }
+    bool isDistribution(String poste) {
+      final p = poste.trim().toLowerCase();
+      return p.contains('distribution') || p.contains('distri') || p.contains('livreur');
+    }
+
+    var loadingShown = false;
+    if (context.mounted) {
+      loadingShown = true;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+              SizedBox(width: 12),
+              Text('Préparation du formulaire...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Map<String, double> takenByEmployee = const {};
+    QuerySnapshot<Map<String, dynamic>>? leaveTypesSnap;
+    try {
+      final results = await Future.wait<dynamic>([
+        conges.loadDaysTakenForEmployees(
+          employees.map((e) => e.id).toList(),
+          // Avoid forcing a fresh network fetch on every tap.
+          forceRefresh: false,
+        ),
+        FirebaseFirestore.instance
+            .collection('leave_types')
+            .where('actif', isEqualTo: true)
+            .get(),
+      ]);
+      takenByEmployee = Map<String, double>.from(results[0] as Map);
+      leaveTypesSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
+    } finally {
+      if (loadingShown && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+
     String? teamIdForEmployee(String employeId) {
       final team = equipes.where((q) => q.chefId == employeId || q.membreIds.contains(employeId)).toList();
-      return team.isNotEmpty ? team.first.id : null;
+      if (team.isNotEmpty) return team.first.id;
+      final gr = groupes.where((g) => g.membreIds.contains(employeId)).toList();
+      if (gr.isNotEmpty) return 'groupe:${gr.first.id}';
+      return null;
     }
     String teamNameForEmployee(String employeId) {
       final team = equipes.where((q) => q.chefId == employeId || q.membreIds.contains(employeId)).toList();
-      return team.isNotEmpty ? team.first.nom : 'Sans équipe';
+      if (team.isNotEmpty) return team.first.nom;
+      final gr = groupes.where((g) => g.membreIds.contains(employeId)).toList();
+      if (gr.isNotEmpty) return gr.first.nom;
+      return 'Sans équipe';
+    }
+    final extraByEmployee = <String, double>{
+      for (final e in employees) e.id: e.leaveDaysExtra,
+    };
+    double remainingForEmploye(Employe e) {
+      final acquired = leaveDaysAcquired(e.dateDebut);
+      final extra = extraByEmployee[e.id] ?? e.leaveDaysExtra;
+      final taken = takenByEmployee[e.id] ?? e.leaveDaysTaken;
+      return (acquired + extra - taken).clamp(0.0, double.infinity);
     }
     final activeEmployees = employees.where((e) {
-      final acquired = leaveDaysAcquired(e.dateDebut);
-      final remaining = (acquired - e.leaveDaysTaken).clamp(0.0, double.infinity);
+      if (auth.isDirecteur && !hasAllSites && !adminSiteIds.contains(e.siteId)) return false;
+      final remaining = remainingForEmploye(e);
       if (remaining <= 0) return false;
       if (auth.isChefAtelierAdmin) {
         // Chef d'atelier can auto-approve only for chefs d'équipe/workers, not himself/atelier, not zone/rh.
-        if (isZoneOrRh(e.poste) || isAtelier(e.poste)) return false;
+        if (isZoneOrRh(e.poste) || isAtelier(e.poste) || isDistribution(e.poste)) return false;
         // Also must be attached to a real team (no "Sans équipe" / unrelated people).
         if (teamIdForEmployee(e.id) == null) return false;
+      }
+      if (auth.isChefZoneAdmin) {
+        return true;
       }
       return true;
     }).toList();
     if (activeEmployees.isNotEmpty) {
       employeeId = activeEmployees.first.id;
-      selectedTeamId = teamIdForEmployee(employeeId) ?? '__no_team__';
+      final tk = teamIdForEmployee(employeeId);
+      selectedTeamId = auth.isChefAtelierAdmin ? tk : (tk ?? '__no_team__');
     }
 
-    final snap = await FirebaseFirestore.instance.collection('leave_types').where('actif', isEqualTo: true).get();
-    leaveTypes = snap.docs
+    leaveTypes = (leaveTypesSnap?.docs ?? const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
         .map((d) {
           final data = d.data();
           return _LeaveType(
@@ -1973,12 +2197,15 @@ class _AdminLeaveView extends StatelessWidget {
           }
           final remaining = selected == null
               ? 0.0
-              : (leaveDaysAcquired(selected.dateDebut) - selected.leaveDaysTaken).clamp(0.0, double.infinity);
+              : remainingForEmploye(selected);
+          final selectedExtra = selected == null ? 0.0 : (extraByEmployee[selected.id] ?? selected.leaveDaysExtra);
           final selectedTeamName = selected == null ? '-' : teamNameForEmployee(selected.id);
+          final dialogWidth = MediaQuery.of(ctx).size.width * 0.94;
+          final compact = MediaQuery.of(ctx).size.width < 520;
           return AlertDialog(
             title: const Text('Créer et approuver un congé'),
             content: SizedBox(
-              width: 560,
+              width: dialogWidth > 560 ? 560 : dialogWidth,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1989,14 +2216,28 @@ class _AdminLeaveView extends StatelessWidget {
                       items: [
                         const DropdownMenuItem<String?>(value: null, child: Text('Toutes les équipes')),
                         ...(() {
-                          final source = auth.isChefAtelierAdmin
-                              ? equipes
-                                  .where((q) => activeEmployees.any((e) => (teamIdForEmployee(e.id) ?? '') == q.id))
-                                  .toList()
-                              : equipes;
-                          return source
-                              .map((q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom)))
-                              .toList();
+                          if (auth.isChefAtelierAdmin) {
+                            final items = <DropdownMenuItem<String?>>[];
+                            for (final q in equipes.where(
+                              (q) => activeEmployees.any((e) => teamIdForEmployee(e.id) == q.id),
+                            )) {
+                              items.add(DropdownMenuItem(value: q.id, child: Text(q.nom)));
+                            }
+                            for (final g in groupes.where(
+                              (g) => activeEmployees.any((e) => teamIdForEmployee(e.id) == 'groupe:${g.id}'),
+                            )) {
+                              items.add(DropdownMenuItem(value: 'groupe:${g.id}', child: Text(g.nom)));
+                            }
+                            return items;
+                          }
+                          return [
+                            ...equipes.map(
+                              (q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom)),
+                            ),
+                            ...groupes.map(
+                              (g) => DropdownMenuItem<String?>(value: 'groupe:${g.id}', child: Text(g.nom)),
+                            ),
+                          ];
                         })(),
                         if (!auth.isChefAtelierAdmin)
                           const DropdownMenuItem<String?>(value: '__no_team__', child: Text('Sans équipe')),
@@ -2009,7 +2250,7 @@ class _AdminLeaveView extends StatelessWidget {
                       decoration: const InputDecoration(labelText: 'Collaborateur', border: OutlineInputBorder()),
                       items: filteredEmployees
                           .map((e) {
-                            final rem = (leaveDaysAcquired(e.dateDebut) - e.leaveDaysTaken).clamp(0.0, double.infinity);
+                            final rem = remainingForEmploye(e);
                             return DropdownMenuItem<String?>(value: e.id, child: Text('${e.nom} (${rem.toStringAsFixed(1)}j restant)'));
                           })
                           .toList(),
@@ -2019,47 +2260,142 @@ class _AdminLeaveView extends StatelessWidget {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Équipe: $selectedTeamName  •  Solde restant: ${remaining.toStringAsFixed(1)}j',
+                        'Équipe: $selectedTeamName  •  Solde reporté: ${selectedExtra.toStringAsFixed(1)}j  •  Solde restant: ${remaining.toStringAsFixed(1)}j',
                         style: TextStyle(color: Colors.blue.shade800, fontWeight: FontWeight.w600),
                       ),
                     ),
+                    if (selected != null) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final addCtrl = TextEditingController();
+                            final added = await showDialog<double>(
+                              context: ctx,
+                              builder: (dCtx) => AlertDialog(
+                                title: Text('Ajouter solde reporté - ${selected!.nom}'),
+                                content: TextField(
+                                  controller: addCtrl,
+                                  autofocus: true,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Jours à ajouter',
+                                    hintText: 'Ex: 12',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(dCtx),
+                                    child: const Text('Annuler'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () {
+                                      final parsed = double.tryParse(addCtrl.text.trim().replaceFirst(',', '.'));
+                                      if (parsed == null || parsed <= 0) return;
+                                      Navigator.pop(dCtx, parsed);
+                                    },
+                                    child: const Text('Ajouter'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            addCtrl.dispose();
+                            if (added == null || added <= 0) return;
+
+                            final current = extraByEmployee[selected!.id] ?? selected!.leaveDaysExtra;
+                            final next = (current + added).clamp(0.0, double.infinity).toDouble();
+                            await empProv.updateEmploye(selected!.copyWith(leaveDaysExtra: next));
+                            extraByEmployee[selected!.id] = next;
+                            if (!ctx.mounted) return;
+                            setS(() {});
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(
+                                content: Text('Solde reporté de ${selected!.nom}: ${next.toStringAsFixed(1)}j'),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.add_circle_outline, size: 18),
+                          label: const Text('Ajouter solde reporté'),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: ctx,
-                                initialDate: start,
-                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
-                                lastDate: DateTime.now().add(const Duration(days: 730)),
-                              );
-                              if (d != null) setS(() {
-                                start = DateTime(d.year, d.month, d.day);
-                                if (end.isBefore(start)) end = start;
-                              });
-                            },
-                            child: Text('Du: ${start.day}/${start.month}/${start.year}'),
-                          ),
+                    if (compact) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: start,
+                              // Admin-only creation/approval: allow backfilling historical leave data.
+                              firstDate: DateTime(2020, 1, 1),
+                              lastDate: DateTime.now().add(const Duration(days: 730)),
+                            );
+                            if (d != null) setS(() {
+                              start = DateTime(d.year, d.month, d.day);
+                              if (end.isBefore(start)) end = start;
+                            });
+                          },
+                          child: Text('Du: ${start.day}/${start.month}/${start.year}'),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: ctx,
-                                initialDate: end.isBefore(start) ? start : end,
-                                firstDate: start,
-                                lastDate: DateTime.now().add(const Duration(days: 730)),
-                              );
-                              if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
-                            },
-                            child: Text('Au: ${end.day}/${end.month}/${end.year}'),
-                          ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: end.isBefore(start) ? start : end,
+                              firstDate: start,
+                              lastDate: DateTime.now().add(const Duration(days: 730)),
+                            );
+                            if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                          },
+                          child: Text('Au: ${end.day}/${end.month}/${end.year}'),
                         ),
-                      ],
-                    ),
+                      ),
+                    ] else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final d = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: start,
+                                  // Admin-only creation/approval: allow backfilling historical leave data.
+                                  firstDate: DateTime(2020, 1, 1),
+                                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                                );
+                                if (d != null) setS(() {
+                                  start = DateTime(d.year, d.month, d.day);
+                                  if (end.isBefore(start)) end = start;
+                                });
+                              },
+                              child: Text('Du: ${start.day}/${start.month}/${start.year}'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final d = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: end.isBefore(start) ? start : end,
+                                  firstDate: start,
+                                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                                );
+                                if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                              },
+                              child: Text('Au: ${end.day}/${end.month}/${end.year}'),
+                            ),
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 6),
                     // ── Compteur de jours ──
                     Builder(builder: (_) {
@@ -2203,16 +2539,23 @@ class _AdminLeaveView extends StatelessWidget {
         })
         .toList();
     String? adminId = approvers.isNotEmpty ? approvers.first.id : null;
+    final today = DateTime.now();
+    final tomorrow = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
+    final earliestAllowedDate = auth.isChefZoneAdmin
+        ? DateTime(2020, 1, 1)
+        : tomorrow;
 
     if (!context.mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) {
+          final dialogWidth = MediaQuery.of(ctx).size.width * 0.94;
+          final compact = MediaQuery.of(ctx).size.width < 520;
           return AlertDialog(
             title: const Text('Créer demande personnelle (en attente)'),
             content: SizedBox(
-              width: 560,
+              width: dialogWidth > 560 ? 560 : dialogWidth,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -2229,42 +2572,78 @@ class _AdminLeaveView extends StatelessWidget {
                       onChanged: (v) => setS(() => adminId = v),
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: ctx,
-                                initialDate: start,
-                                firstDate: DateTime.now().subtract(const Duration(days: 1)),
-                                lastDate: DateTime.now().add(const Duration(days: 730)),
-                              );
-                              if (d != null) setS(() {
-                                start = DateTime(d.year, d.month, d.day);
-                                if (end.isBefore(start)) end = start;
-                              });
-                            },
-                            child: Text('Du: ${start.day}/${start.month}/${start.year}'),
-                          ),
+                    if (compact) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: start,
+                              firstDate: earliestAllowedDate,
+                              lastDate: DateTime.now().add(const Duration(days: 730)),
+                            );
+                            if (d != null) setS(() {
+                              start = DateTime(d.year, d.month, d.day);
+                              if (end.isBefore(start)) end = start;
+                            });
+                          },
+                          child: Text('Du: ${start.day}/${start.month}/${start.year}'),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: ctx,
-                                initialDate: end.isBefore(start) ? start : end,
-                                firstDate: start,
-                                lastDate: DateTime.now().add(const Duration(days: 730)),
-                              );
-                              if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
-                            },
-                            child: Text('Au: ${end.day}/${end.month}/${end.year}'),
-                          ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: end.isBefore(start) ? start : end,
+                              firstDate: start,
+                              lastDate: DateTime.now().add(const Duration(days: 730)),
+                            );
+                            if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                          },
+                          child: Text('Au: ${end.day}/${end.month}/${end.year}'),
                         ),
-                      ],
-                    ),
+                      ),
+                    ] else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final d = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: start,
+                                  firstDate: earliestAllowedDate,
+                                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                                );
+                                if (d != null) setS(() {
+                                  start = DateTime(d.year, d.month, d.day);
+                                  if (end.isBefore(start)) end = start;
+                                });
+                              },
+                              child: Text('Du: ${start.day}/${start.month}/${start.year}'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final d = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: end.isBefore(start) ? start : end,
+                                  firstDate: start,
+                                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                                );
+                                if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                              },
+                              child: Text('Au: ${end.day}/${end.month}/${end.year}'),
+                            ),
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 6),
                     // ── Compteur de jours ──
                     Builder(builder: (_) {
@@ -2337,6 +2716,14 @@ class _AdminLeaveView extends StatelessWidget {
               FilledButton(
                 onPressed: () async {
                   if (adminId == null || leaveTypeId == null || end.isBefore(start) || reasonCtrl.text.trim().isEmpty) return;
+                  if (!auth.isChefZoneAdmin && start.isBefore(tomorrow)) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(content: Text('La demande de congé doit commencer à partir de demain.')),
+                      );
+                    }
+                    return;
+                  }
                   final approver = approvers.firstWhere((a) => a.id == adminId);
                   final lt = leaveTypes.firstWhere((t) => t.id == leaveTypeId);
                   final req = LeaveRequest(
@@ -2528,28 +2915,35 @@ class _LargeLeaveCalendar extends StatelessWidget {
               border: Border.all(color: selected ? Colors.blue : Colors.grey.shade300),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$d', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11)),
-                const SizedBox(height: 1),
-                if (dayReq.isNotEmpty)
-                  Expanded(
-                    child: Text(
-                      '${dayReq.first.employeeName} (${dayReq.first.startDate.day}/${dayReq.first.startDate.month}-${dayReq.first.endDate.day}/${dayReq.first.endDate.month})',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 8.5, height: 1.05),
-                    ),
-                  ),
-                if (dayReq.length > 1)
-                  Text(
-                    '+${dayReq.length - 1}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700),
-                  ),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxHeight < 56;
+                final veryCompact = constraints.maxHeight < 32;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('$d', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11)),
+                    if (!veryCompact) const SizedBox(height: 1),
+                    if (!compact && !veryCompact && dayReq.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          '${dayReq.first.employeeName} (${dayReq.first.startDate.day}/${dayReq.first.startDate.month}-${dayReq.first.endDate.day}/${dayReq.first.endDate.month})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 8.5, height: 1.05),
+                        ),
+                      ),
+                    if (!veryCompact && dayReq.length > 1)
+                      Text(
+                        '+${dayReq.length - 1}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -2596,6 +2990,8 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   String? _leaveTypeId;
   bool _loadingLeaveTypes = true;
   bool _saving = false;
+  final TextEditingController _employeeFilterCtrl = TextEditingController();
+  String _employeeFilter = '';
 
   bool _isAtelierPoste(String poste) {
     final p = poste.trim().toLowerCase();
@@ -2612,10 +3008,17 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     return p == 'rh' || p.contains('ressource') || p.contains('rh');
   }
 
+  bool _isDistributionPoste(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('distribution') || p.contains('distri') || p.contains('livreur');
+  }
+
   bool _isTopAdminRole(String role) {
     final r = role.trim().toLowerCase();
     return r.contains('général') || r.contains('general') || r.contains('directeur');
   }
+
+  bool _canBackdateLeave(AuthProvider auth) => auth.isChefZoneAdmin;
 
   List<_AdminRecipient> _eligibleAdminsForPoste(
     AuthProvider auth,
@@ -2625,6 +3028,10 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     if (admins.isEmpty) return const [];
     // Regular demandeur (ex: Chef d'équipe) sends to Chef d'atelier.
     if (!auth.isDirecteur) {
+      if (_isDistributionPoste(poste)) {
+        final zoneTargets = admins.where((a) => a.role.toLowerCase().contains('zone')).toList();
+        return zoneTargets;
+      }
       final atelierTargets = admins.where((a) => a.role.toLowerCase().contains('atelier')).toList();
       if (atelierTargets.isNotEmpty) return atelierTargets;
       return admins;
@@ -2661,6 +3068,18 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     super.initState();
     _loadAdmins();
     _loadLeaveTypes();
+    _employeeFilterCtrl.addListener(() {
+      if (!mounted) return;
+      setState(() => _employeeFilter = _employeeFilterCtrl.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _employeeFilterCtrl.dispose();
+    _reasonCtrl.dispose();
+    _detailsCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAdmins() async {
@@ -2716,18 +3135,33 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final empProv = context.watch<EmployeesProvider>();
+    final distGroupsProv = context.watch<DistributionGroupsProvider>();
+    final conges = context.watch<CongesProvider>();
     final equipe = _resolveEquipe(auth, empProv);
-    final employeesRaw = _resolveTeamEmployees(equipe, empProv, auth);
+    final employeesRaw = _resolveTeamEmployees(equipe, empProv, auth, distGroupsProv);
     final employeesUnique = <String, Employe>{for (final e in employeesRaw) e.id: e}.values.toList();
+    final employeeIds = employeesUnique.map((e) => e.id).toList();
+    if (employeeIds.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        conges.loadDaysTakenForEmployees(employeeIds);
+      });
+    }
     final employeesEligible = employeesUnique.where((e) {
-      final acquired = leaveDaysAcquired(e.dateDebut);
-      final remaining = (acquired - e.leaveDaysTaken).clamp(0.0, double.infinity);
+      final acquired = leaveDaysAcquired(e.dateDebut) + e.leaveDaysExtra;
+      final taken = conges.getCachedDaysTaken(e.id) ?? e.leaveDaysTaken;
+      final remaining = (acquired - taken).clamp(0.0, double.infinity);
       return remaining > 0;
     }).toList();
+    final employeesFiltered = _employeeFilter.isEmpty
+        ? employeesEligible
+        : employeesEligible
+            .where((e) => e.nom.toLowerCase().contains(_employeeFilter))
+            .toList();
     if (employeesEligible.isEmpty) {
       _employeeId = null;
-    } else if (_employeeId == null || !employeesEligible.any((e) => e.id == _employeeId)) {
-      _employeeId = employeesEligible.first.id;
+    } else if (_employeeId == null || !employeesFiltered.any((e) => e.id == _employeeId)) {
+      _employeeId = employeesFiltered.isNotEmpty ? employeesFiltered.first.id : null;
     }
 
     final adminsUnique = <String, _AdminRecipient>{for (final a in _admins) a.id: a}.values.toList();
@@ -2758,20 +3192,34 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownButtonFormField<String?>(
-                        value: _employeeId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(labelText: 'Collaborateur concerné', border: OutlineInputBorder()),
-                        items: employeesEligible
-                            .map((e) {
-                              final rem = (leaveDaysAcquired(e.dateDebut) - e.leaveDaysTaken).clamp(0.0, double.infinity);
-                              return DropdownMenuItem<String?>(
-                                value: e.id,
-                                child: Text('${e.nom} (${rem.toStringAsFixed(1)}j)', overflow: TextOverflow.ellipsis),
-                              );
-                            })
-                            .toList(),
-                        onChanged: (v) => setState(() => _employeeId = v),
+                      child: Column(
+                        children: [
+                          TextFormField(
+                            controller: _employeeFilterCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Filtrer par nom',
+                              prefixIcon: Icon(Icons.search),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<String?>(
+                            value: _employeeId,
+                            isExpanded: true,
+                            decoration: const InputDecoration(labelText: 'Collaborateur concerné', border: OutlineInputBorder()),
+                            items: employeesFiltered
+                                .map((e) {
+                                  final rem = (leaveDaysAcquired(e.dateDebut) + e.leaveDaysExtra - e.leaveDaysTaken)
+                                      .clamp(0.0, double.infinity);
+                                  return DropdownMenuItem<String?>(
+                                    value: e.id,
+                                    child: Text('${e.nom} (${rem.toStringAsFixed(1)}j)', overflow: TextOverflow.ellipsis),
+                                  );
+                                })
+                                .toList(),
+                            onChanged: (v) => setState(() => _employeeId = v),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2826,6 +3274,21 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                       style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w600),
                     ),
                   ),
+                if (employeesEligible.isNotEmpty && employeesFiltered.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 10),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blueGrey.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.blueGrey.shade200),
+                    ),
+                    child: Text(
+                      'Aucun collaborateur trouvé avec ce filtre.',
+                      style: TextStyle(color: Colors.blueGrey.shade900, fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 if (selectedEmployee != null) ...[
                   const SizedBox(height: 10),
                   Builder(
@@ -2841,7 +3304,8 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                             return const LinearProgressIndicator();
                           }
                           final acquired = leaveDaysAcquired(emp.dateDebut);
-                          final remaining = (acquired - cachedTaken).clamp(0.0, double.infinity);
+                          final extra = emp.leaveDaysExtra;
+                          final remaining = (acquired + extra - cachedTaken).clamp(0.0, double.infinity);
                           return Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(10),
@@ -2851,7 +3315,7 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                               border: Border.all(color: Colors.blue.shade100),
                             ),
                             child: Text(
-                              'Solde congé (${emp.nom}) - Autorisé: ${acquired.toStringAsFixed(1)}j • Pris: ${cachedTaken.toStringAsFixed(1)}j • Restant: ${remaining.toStringAsFixed(1)}j',
+                              'Solde congé (${emp.nom}) - Autorisé: ${acquired.toStringAsFixed(1)}j + Extra: ${extra.toStringAsFixed(1)}j • Pris: ${cachedTaken.toStringAsFixed(1)}j • Restant: ${remaining.toStringAsFixed(1)}j',
                               style: TextStyle(color: Colors.blue.shade900, fontWeight: FontWeight.w600),
                             ),
                           );
@@ -2944,24 +3408,88 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     return null;
   }
 
-  List<Employe> _resolveTeamEmployees(Equipe? equipe, EmployeesProvider emps, AuthProvider auth) {
+  List<Employe> _resolveTeamEmployees(
+    Equipe? equipe,
+    EmployeesProvider emps,
+    AuthProvider auth,
+    DistributionGroupsProvider distGroupsProv,
+  ) {
+    if (equipe == null && auth.isDistributionResponsable) {
+      final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
+      final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
+      final allowedDist = auth.distributionGroupIds;
+      final memberIds = <String>{};
+      for (final g in distGroupsProv.groups) {
+        if (allowedDist.isNotEmpty && !allowedDist.contains(g.id)) continue;
+        memberIds.addAll(g.membreIds);
+      }
+      final members = emps.employes
+          .where((e) =>
+              e.statut == EmployeStatut.enService &&
+              memberIds.contains(e.id) &&
+              (hasAllSites || adminSiteIds.contains(e.siteId)))
+          .toList();
+      // Allow account holder to submit leave for himself even without linked employee record.
+      final selfId = auth.userId ?? 'self_distribution';
+      final hasSelfAsEmployee = members.any((e) => e.id == selfId);
+      if (!hasSelfAsEmployee) {
+        members.add(
+          Employe(
+            id: selfId,
+            nom: auth.currentUser?.nom ?? 'Responsable Distribution',
+            cin: '',
+            telephone: '',
+            dateNaissance: '',
+            adresse: '',
+            email: auth.currentUser?.username ?? '',
+            poste: 'Responsable Distribution',
+            magasin: '',
+            departement: '',
+            salaireBase: 0,
+            typeContrat: '',
+            dateDebut: '2020-01-01',
+            cnss: '',
+            dateCnss: '',
+            statut: EmployeStatut.enService,
+            leaveDaysExtra: 30,
+            leaveDaysTaken: 0,
+          ),
+        );
+      }
+      return members;
+    }
+
     // Admin role-based demandeur mode (Chef d'atelier / Chef de zone):
     // when no equipe link exists, resolve target employees by poste hierarchy.
     if (equipe == null && auth.isChefAtelierAdmin) {
+      final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
+      final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
       final list = emps.employes.where((e) {
         final p = e.poste.trim().toLowerCase();
+        final isZoneOrRh = _isZonePoste(p) || _isRhPoste(p);
         return e.statut == EmployeStatut.enService &&
-            (p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier'));
+            (hasAllSites || adminSiteIds.contains(e.siteId)) &&
+            !isZoneOrRh &&
+            !_isDistributionPoste(p) &&
+            !(p.contains('chef atelier') || p.contains('chef d\'atelier') || p.contains('chef datelier'));
       }).toList();
       if (list.isNotEmpty) return list;
     }
     if (equipe == null && auth.isChefZoneAdmin) {
-      final list = emps.employes.where((e) {
-        final p = e.poste.trim().toLowerCase();
-        return e.statut == EmployeStatut.enService &&
-            (p.contains('chef zone') || p.contains('chef de zone'));
-      }).toList();
-      if (list.isNotEmpty) return list;
+      final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
+      final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
+      final allowedDist = auth.distributionGroupIds;
+      final memberIds = <String>{};
+      for (final g in distGroupsProv.groups) {
+        if (allowedDist.isNotEmpty && !allowedDist.contains(g.id)) continue;
+        memberIds.addAll(g.membreIds);
+      }
+      return emps.employes
+          .where((e) =>
+              e.statut == EmployeStatut.enService &&
+              memberIds.contains(e.id) &&
+              (hasAllSites || adminSiteIds.contains(e.siteId)))
+          .toList();
     }
 
     if (equipe == null) {
@@ -2987,16 +3515,27 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
       ];
     }
     final ids = <String>{equipe.chefId, ...equipe.membreIds};
-    return emps.employes.where((e) => ids.contains(e.id)).toList();
+    final base = emps.employes.where((e) => ids.contains(e.id)).toList();
+    if (auth.isChefAtelierAdmin) {
+      return base.where((e) => !_isDistributionPoste(e.poste)).toList();
+    }
+    return base;
   }
 
   Widget _dateField(BuildContext context, String label, DateTime value, ValueChanged<DateTime> onPick) {
+    final auth = context.read<AuthProvider>();
+    final today = DateTime.now();
+    final tomorrow = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
+    final earliestAllowedDate = _canBackdateLeave(auth)
+        ? DateTime(2020, 1, 1)
+        : tomorrow;
+    final initialDate = value.isBefore(earliestAllowedDate) ? earliestAllowedDate : value;
     return OutlinedButton.icon(
       onPressed: () async {
         final picked = await showDatePicker(
           context: context,
-          initialDate: value,
-          firstDate: DateTime.now().subtract(const Duration(days: 1)),
+          initialDate: initialDate,
+          firstDate: earliestAllowedDate,
           lastDate: DateTime.now().add(const Duration(days: 730)),
         );
         if (picked != null) onPick(DateTime(picked.year, picked.month, picked.day));
@@ -3014,10 +3553,42 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
       return;
     }
     final auth = context.read<AuthProvider>();
+    final today = DateTime.now();
+    final tomorrow = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
+    if (!_canBackdateLeave(auth) && _start.isBefore(tomorrow)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La demande de congé doit commencer à partir de demain.')),
+      );
+      return;
+    }
+    final distGroupsProv = context.read<DistributionGroupsProvider>();
     final employee = employees.firstWhere((e) => e.id == _employeeId);
     final admin = _admins.firstWhere((a) => a.id == _adminId);
-    final equipeId = equipe?.id ?? (auth.equipeId ?? '');
-    final equipeName = equipe?.nom ?? 'Équipe non définie';
+    String equipeId = equipe?.id ?? (auth.equipeId ?? '');
+    String equipeName = equipe?.nom ?? 'Équipe non définie';
+    if (auth.isDistributionResponsable) {
+      final allowedDist = auth.distributionGroupIds;
+      final linkedGroup = distGroupsProv.groups.where((g) {
+        final allowed = allowedDist.isEmpty || allowedDist.contains(g.id);
+        return allowed && g.membreIds.contains(employee.id);
+      }).toList();
+      if (linkedGroup.isNotEmpty) {
+        equipeId = 'distribution:${linkedGroup.first.id}';
+        equipeName = linkedGroup.first.nom;
+      } else if (allowedDist.isNotEmpty) {
+        final g = distGroupsProv.groups.where((x) => x.id == allowedDist.first).toList();
+        if (g.isNotEmpty) {
+          equipeId = 'distribution:${g.first.id}';
+          equipeName = g.first.nom;
+        } else {
+          equipeId = 'distribution:self';
+          equipeName = 'Distribution';
+        }
+      } else {
+        equipeId = 'distribution:self';
+        equipeName = 'Distribution';
+      }
+    }
     final chefName = auth.currentUser?.nom ?? '';
     if (_leaveTypeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Veuillez choisir un type de congé.')));
@@ -3041,8 +3612,8 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
             1)
         .toDouble();
     final conges = context.read<CongesProvider>();
-    final taken = await conges.getDaysTaken(employee.id, refresh: true);
-    final acquired = leaveDaysAcquired(employee.dateDebut);
+    final taken = conges.getCachedDaysTaken(employee.id) ?? employee.leaveDaysTaken;
+    final acquired = leaveDaysAcquired(employee.dateDebut) + employee.leaveDaysExtra;
     final remaining = (acquired - taken).clamp(0.0, double.infinity);
     if (requestedDays > remaining) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3057,19 +3628,6 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
 
     setState(() => _saving = true);
     final repo = _LeaveRepository();
-    final hasConflict = await repo.hasTeamConflict(
-      equipeId: equipeId,
-      startAt: startAt,
-      endAt: endAt,
-    );
-    if (hasConflict && mounted) {
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Conflit: un congé existe déjà sur cette période pour la même équipe.')),
-      );
-      return;
-    }
-
     final req = LeaveRequest(
       id: '',
       employeeId: employee.id,
@@ -3185,6 +3743,7 @@ class _LeaveRequestCardState extends State<_LeaveRequestCard> {
         (req.decidedAt != null &&
             DateTime.now().difference(req.decidedAt!) <= _decisionEditWindow);
     final auth = context.watch<AuthProvider>();
+    final canEditDecisionWithRole = auth.isDirecteur ? true : canEditDecision;
     final isOwnRequest = auth.userId != null && req.submittedByUserId == auth.userId;
     final canActAsAdmin = !(auth.isChefAtelierAdmin && isOwnRequest);
     final employeesProvider = context.watch<EmployeesProvider>();
@@ -3317,7 +3876,7 @@ class _LeaveRequestCardState extends State<_LeaveRequestCard> {
                           icon: const Icon(Icons.picture_as_pdf),
                           label: const Text('Télécharger PDF'),
                         ),
-                      if (widget.isAdmin && canEditDecision && canActAsAdmin) ...[
+                      if (widget.isAdmin && canEditDecisionWithRole && canActAsAdmin) ...[
                         if (req.status != LeaveStatus.approved)
                           FilledButton.icon(
                             onPressed: () async {

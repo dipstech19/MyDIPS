@@ -31,10 +31,12 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  provider: ^6.1.1
-  firebase_core: ^4.6.0
-  cloud_firestore: ^6.2.0
-  firebase_storage: ^13.2.0
+  provider: 
+  # Windows: placer le SDK C++ sous .firebase_cpp_sdk/ (voir scripts/setup_firebase_cpp_sdk.ps1) pour éviter le téléchargement dl.google.com.
+  firebase_core:
+  cloud_firestore:
+  firebase_storage:
+  firebase_messaging:
   pdf:
   printing:
   file_picker:
@@ -45,6 +47,7 @@ dependencies:
   http: any
   share_plus:
   url_launcher: ^6.3.2
+  fl_chart: ^1.2.0
 
 dev_dependencies:
   flutter_test:

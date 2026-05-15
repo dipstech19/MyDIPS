@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show max;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -9,6 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/pointage_model.dart';
 import '../models/absence_reason_config.dart';
+import '../../employees/models/employe_model.dart';
 import '../../overtime/models/overtime_model.dart';
 import '../data/daily_snapshot_repository.dart';
 
@@ -16,7 +19,11 @@ class PointageExportRow {
   final String employeId;
   final String employeCin;
   final String employeNom;
+  final String poste;
   final String equipeName;
+  final String? equipeId;
+  /// Équipe | Groupe | Distribution | Hors équipe
+  final String orgTypeLabel;
   final int daysWorked;
   /// Nombre total de shifts planifiés sur la période (hors repos).
   final int plannedShifts;
@@ -33,12 +40,18 @@ class PointageExportRow {
   final Map<DateTime, String> dayStatusByDay;
   /// لكل يوم غياب، معرف السبب (للتلوين في Excel).
   final Map<DateTime, String?> absenceReasonIdByDay;
+  /// Code [OcpExcelSegmentCode] copié depuis la fiche employé ; vide = déduction auto.
+  final String ocpExcelSegment;
+  final bool ocpForceSalleControle;
 
   const PointageExportRow({
     required this.employeId,
     required this.employeCin,
     required this.employeNom,
+    this.poste = 'Opérateur',
     required this.equipeName,
+    this.equipeId,
+    this.orgTypeLabel = 'Équipe',
     required this.daysWorked,
     required this.plannedShifts,
     required this.daysAbsent,
@@ -49,12 +62,121 @@ class PointageExportRow {
     required this.hoursByDay,
     this.dayStatusByDay = const {},
     this.absenceReasonIdByDay = const {},
+    this.ocpExcelSegment = '',
+    this.ocpForceSalleControle = false,
   });
 }
 
 class PointageExportService {
   static final _dateFormat = DateFormat('dd/MM/yyyy');
   static final _timeFormat = DateFormat('HH:mm');
+
+  /// Particules de patronyme (Maghreb) : rattachées au mot suivant dans la colonne Nom.
+  static bool _isOcpFamilyNamePrefix(String token) {
+    final t = _foldAccentsForMatch(token.trim().toLowerCase());
+    const prefixes = <String>{
+      'el',
+      'ben',
+      'bent',
+      'bin',
+      'bint',
+      'ibn',
+      'ait',
+      'ayt',
+      'ould',
+      'oul',
+    };
+    return prefixes.contains(t);
+  }
+
+  /// Sépare « Nom » / « Prénom » pour l’export OCP (évite « EL » seul quand le nom est « EL BATTACH », etc.).
+  static ({String nom, String prenom}) splitNomPrenomForExcel(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return (nom: '', prenom: '');
+    final parts = s.split(RegExp(r'\s+'));
+    if (parts.length < 2) return (nom: s, prenom: '');
+    if (parts.length == 2) {
+      if (_isOcpFamilyNamePrefix(parts[0])) {
+        // Ex. « EL MOSTAFA » : tout reste dans Nom.
+        return (nom: s, prenom: '');
+      }
+      return (nom: parts.first, prenom: parts.sublist(1).join(' '));
+    }
+    // 3+ mots : si le premier est une particule, les deux premiers tokens = nom de famille.
+    if (_isOcpFamilyNamePrefix(parts[0])) {
+      return (
+        nom: '${parts[0]} ${parts[1]}',
+        prenom: parts.sublist(2).join(' '),
+      );
+    }
+    return (nom: parts.first, prenom: parts.sublist(1).join(' '));
+  }
+
+  /// Largeur colonne Excel (unités approx. caractères) selon le texte le plus long.
+  static double ocpExcelColumnWidthForText(
+    String text, {
+    double min = 10,
+    double max = 52,
+  }) {
+    final len = text.trim().length;
+    if (len == 0) return min;
+    return (len * 1.12 + 2).clamp(min, max);
+  }
+
+  /// Gabarit feuille OCP (Excel) : cellule avec « 1 » ou vide — pas de G/F/A.
+  /// Présence, congé et formation → « 1 » ; absence / repos / sans travail → vide.
+  static String ocpExcelDayMarker(String status, String fallback) {
+    if (status == 'present' || status == 'leave' || status == 'formation') {
+      return '1';
+    }
+    if (status == 'paid_absence' ||
+        status == 'absent' ||
+        status == 'rest' ||
+        status == 'pending_exit') {
+      return '';
+    }
+    if (status.isEmpty) {
+      final t = fallback.trim();
+      final u = t.toUpperCase();
+      if (t == '1' ||
+          u == 'P' ||
+          u == 'G' ||
+          u == 'F' ||
+          t == '+' ||
+          u == 'X') {
+        return '1';
+      }
+      return '';
+    }
+    return '';
+  }
+
+  /// Normalisation sans accents pour matcher postes / équipes (P1/P2 OCP, shiftCodeForRow).
+  static String _foldAccentsForMatch(String s) {
+    return s
+        .replaceAll('à', 'a')
+        .replaceAll('á', 'a')
+        .replaceAll('â', 'a')
+        .replaceAll('ä', 'a')
+        .replaceAll('è', 'e')
+        .replaceAll('é', 'e')
+        .replaceAll('ê', 'e')
+        .replaceAll('ë', 'e')
+        .replaceAll('ì', 'i')
+        .replaceAll('í', 'i')
+        .replaceAll('î', 'i')
+        .replaceAll('ï', 'i')
+        .replaceAll('ò', 'o')
+        .replaceAll('ó', 'o')
+        .replaceAll('ô', 'o')
+        .replaceAll('ö', 'o')
+        .replaceAll('ù', 'u')
+        .replaceAll('ú', 'u')
+        .replaceAll('û', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ç', 'c')
+        .replaceAll('ñ', 'n');
+  }
 
   /// عدد ساعات العمل المعتمدة لكل يوم (لاحتساب Total heures في Excel).
   static const double hoursPerDay = 8.0;
@@ -520,215 +642,1761 @@ class PointageExportService {
       days.add(start.add(Duration(days: i)));
     }
 
-    final book = excel.Excel.createExcel();
+    String normalizePoste(String poste) => poste.trim().toLowerCase();
 
-    // تجميع الصفوف حسب اسم الفريق (أو ورقة واحدة لكل الشركة)
-    final grouped = <String, List<PointageExportRow>>{};
-    if (singleSheet) {
-      final name = singleSheetName.trim().isEmpty ? 'Société' : singleSheetName.trim();
-      final sorted = List<PointageExportRow>.from(rows)
-        ..sort((a, b) {
-          final c = a.equipeName.compareTo(b.equipeName);
-          if (c != 0) return c;
+    bool isChefPoste(String poste) {
+      final p = normalizePoste(poste);
+      return p.contains("chef d'équipe") ||
+          p.contains("chef d'equipe") ||
+          p.contains("chef d equipe") ||
+          p == 'chef equipe' ||
+          p.contains('chef atelier') ||
+          p.contains("chef d'atelier");
+    }
+
+    /// Chef d'équipe uniquement (pas chef d'atelier) — tri P1/P2 OCP.
+    bool isChefEquipePosteOnly(String poste) {
+      final p = normalizePoste(poste);
+      return p.contains("chef d'équipe") ||
+          p.contains("chef d'equipe") ||
+          p.contains("chef d equipe") ||
+          p == 'chef equipe';
+    }
+
+    /// Opérateur de nettoyage : toujours après les autres dans P1/P2.
+    bool isOperateurNettoyagePoste(String poste) {
+      final p = PointageExportService._foldAccentsForMatch(normalizePoste(poste));
+      return p.contains('operateur nettoyage') || p.contains('operateur de nettoyage');
+    }
+
+    /// Numéro d'équipe (1…n) pour tri ; sans chiffre → en dernier.
+    int ocpExtractEquipeNumber(String equipeName) {
+      final m = RegExp(r'(\d+)').firstMatch(equipeName.trim());
+      if (m != null) {
+        final n = int.tryParse(m.group(1)!);
+        if (n != null && n >= 1 && n <= 99) return n;
+      }
+      return 999;
+    }
+
+    int compareRowsP1P2ForOcpExport(PointageExportRow a, PointageExportRow b) {
+      final netA = isOperateurNettoyagePoste(a.poste) ? 1 : 0;
+      final netB = isOperateurNettoyagePoste(b.poste) ? 1 : 0;
+      if (netA != netB) return netA.compareTo(netB);
+      final chefA = isChefEquipePosteOnly(a.poste) ? 0 : 1;
+      final chefB = isChefEquipePosteOnly(b.poste) ? 0 : 1;
+      if (chefA != chefB) return chefA.compareTo(chefB);
+      final eqA = ocpExtractEquipeNumber(a.equipeName);
+      final eqB = ocpExtractEquipeNumber(b.equipeName);
+      if (eqA != eqB) return eqA.compareTo(eqB);
+      return a.employeNom.compareTo(b.employeNom);
+    }
+
+    bool isAllowedExportShift(String code) =>
+        code == 'P1' || code == 'P2' || code == 'P3' || code == 'P4' || code == 'P5' || code == 'P6';
+
+    /// Shift P1…P6 uniquement si un bloc OCP est défini dans la fiche employé.
+    String shiftCodeForRow(PointageExportRow row) {
+      if (!OcpExcelSegmentCode.hasExplicitPlacement(row.ocpExcelSegment)) {
+        return '';
+      }
+      return OcpExcelSegmentCode.shiftFromSegment(row.ocpExcelSegment);
+    }
+
+    bool isOcpExportEligibleRow(PointageExportRow row) {
+      if (!OcpExcelSegmentCode.hasExplicitPlacement(row.ocpExcelSegment)) {
+        return false;
+      }
+      return isAllowedExportShift(shiftCodeForRow(row));
+    }
+
+    int shiftSortRank(String code) {
+      switch (code) {
+        case 'P1':
+          return 1;
+        case 'P2':
+          return 2;
+        case 'P3':
+          return 3;
+        case 'P4':
+          return 4;
+        case 'P5':
+          return 5;
+        case 'P6':
+          return 6;
+        default:
+          final m = RegExp(r'^P(\d+)$').firstMatch(code);
+          if (m != null) {
+            final n = int.tryParse(m.group(1)!);
+            if (n != null && n >= 1 && n <= 6) return n;
+          }
+          return 99;
+      }
+    }
+
+    String ocpFoldTeamPoste(PointageExportRow r) {
+      final raw = '${r.equipeName} ${r.poste}'
+          .trim()
+          .toLowerCase()
+          .replaceAll("'", ' ')
+          .replaceAll('\u2019', ' ')
+          .replaceAll(RegExp(r'\s+'), ' ');
+      return PointageExportService._foldAccentsForMatch(raw);
+    }
+
+    String? ocpP1Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P1') return null;
+      final fromSeg = OcpExcelSegmentCode.toP1Bucket(r.ocpExcelSegment);
+      if (fromSeg != null) return fromSeg;
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains('sychem') && t.contains('ro') && t.contains('uf')) return 'p1_ro';
+      if (t.contains('remin') || t.contains('transfert')) return 'p1_remin';
+      if (t.contains(' qt') || t.contains('qt ') || t.endsWith(' qt') || t.contains('equipe qt')) {
+        return 'p1_qt';
+      }
+      return 'p1_autres';
+    }
+
+    int ocpP1BucketRank(String k) {
+      switch (k) {
+        case 'p1_ro':
+          return 0;
+        case 'p1_qt':
+          return 1;
+        case 'p1_remin':
+          return 2;
+        default:
+          return 3;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP1BucketHeader(String k) {
+      switch (k) {
+        case 'p1_ro':
+          return (label: 'Sychem RO & UF', ePrev: 4);
+        case 'p1_qt':
+          return (label: 'QT', ePrev: 4);
+        case 'p1_remin':
+          return (label: 'Sychem Remin & Transfert', ePrev: 4);
+        default:
+          return (label: 'Autres', ePrev: 0);
+      }
+    }
+
+    String? ocpP2Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P2') return null;
+      final fromSeg = OcpExcelSegmentCode.toP2Bucket(r.ocpExcelSegment);
+      if (fromSeg != null) return fromSeg;
+      final uparts = r.equipeName.toUpperCase().split(RegExp(r'[^A-Z0-9]+'));
+      if (uparts.contains('ION')) return 'p2_ion';
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains(' qt') || t.contains('qt ') || t.endsWith(' qt')) return 'p2_qt';
+      return 'p2_sychem';
+    }
+
+    int ocpP2BucketRank(String k) {
+      switch (k) {
+        case 'p2_sychem':
+          return 0;
+        case 'p2_ion':
+          return 1;
+        case 'p2_qt':
+          return 2;
+        default:
+          return 3;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP2BucketHeader(String k) {
+      switch (k) {
+        case 'p2_sychem':
+          return (label: 'Sychem', ePrev: 24);
+        case 'p2_ion':
+          return (label: 'ION', ePrev: 4);
+        case 'p2_qt':
+          return (label: 'QT', ePrev: 14);
+        default:
+          return (label: '', ePrev: 0);
+      }
+    }
+
+    String? ocpP3Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P3') return null;
+      final fromSeg = OcpExcelSegmentCode.toP3Bucket(r.ocpExcelSegment);
+      if (fromSeg != null) return fromSeg;
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains('logistique') || t.contains('logistic')) return 'p3_logistique';
+      if (t.contains(' qt') || t.contains('qt ') || t.endsWith(' qt') || t.contains('equipe qt')) {
+        return 'p3_qt';
+      }
+      if (t.contains('sychem')) return 'p3_sychem';
+      return 'p3_autres';
+    }
+
+    int ocpP3BucketRank(String k) {
+      switch (k) {
+        case 'p3_sychem':
+          return 0;
+        case 'p3_qt':
+          return 1;
+        case 'p3_logistique':
+          return 2;
+        default:
+          return 3;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP3BucketHeader(String k) {
+      switch (k) {
+        case 'p3_sychem':
+          return (label: 'Sychem', ePrev: 4);
+        case 'p3_qt':
+          return (label: 'QT', ePrev: 4);
+        case 'p3_logistique':
+          return (label: 'Logistique', ePrev: 1);
+        default:
+          return (label: 'Autres', ePrev: 0);
+      }
+    }
+
+    /// Tri P3 OCP : bucket (Sychem / QT / Log.) puis équipe 1…n puis nom.
+    int compareRowsP3ForOcpExport(PointageExportRow a, PointageExportRow b) {
+      final a3 = ocpP3Bucket(a);
+      final b3 = ocpP3Bucket(b);
+      if (a3 != null && b3 != null) {
+        final br = ocpP3BucketRank(a3).compareTo(ocpP3BucketRank(b3));
+        if (br != 0) return br;
+      } else if ((a3 == null) != (b3 == null)) {
+        return a3 == null ? 1 : -1;
+      }
+      final eqA = ocpExtractEquipeNumber(a.equipeName);
+      final eqB = ocpExtractEquipeNumber(b.equipeName);
+      if (eqA != eqB) return eqA.compareTo(eqB);
+      return a.employeNom.compareTo(b.employeNom);
+    }
+
+    String? ocpP4Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P4') return null;
+      final fromSeg = OcpExcelSegmentCode.toP4Bucket(r.ocpExcelSegment);
+      if (fromSeg != null) return fromSeg;
+      final t = ocpFoldTeamPoste(r);
+      if ((t.contains('animateur') || t.contains('animation')) && t.contains('hse')) {
+        return 'p4_animateur_hse';
+      }
+      return 'p4_autres';
+    }
+
+    int ocpP4BucketRank(String k) {
+      switch (k) {
+        case 'p4_animateur_hse':
+          return 0;
+        default:
+          return 1;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP4BucketHeader(String k) {
+      switch (k) {
+        case 'p4_animateur_hse':
+          return (label: 'Animation HSE', ePrev: 1);
+        default:
+          return (label: 'Autres', ePrev: 0);
+      }
+    }
+
+    /// Sous-segments P5 export OCP (ordre feuille : chef zone → suivi perf. → QHSE).
+    String? ocpP5SubBucketFromRow(PointageExportRow r) {
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains('suivi performance') || t.contains('responsable suivi performance')) {
+        return 'p5_suivi_performance';
+      }
+      if (t.contains('chef de zone') || t.contains('chef zone')) {
+        return 'p5_chef_zone';
+      }
+      if (t.contains('qhse')) {
+        return 'p5_qhse';
+      }
+      return null;
+    }
+
+    String? ocpP5Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P5') return null;
+      final fromSeg = OcpExcelSegmentCode.toP5Bucket(r.ocpExcelSegment);
+      if (fromSeg == 'p5_animation_hse' || fromSeg == 'p5_pilotage_process') {
+        return 'p5_autres';
+      }
+      if (fromSeg == 'p5_cadre') {
+        return ocpP5SubBucketFromRow(r) ?? 'p5_autres';
+      }
+      if (fromSeg != null) {
+        return 'p5_autres';
+      }
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains('pilotage') && t.contains('process')) return 'p5_autres';
+      if (t.contains('animation') && t.contains('hse')) return 'p5_autres';
+      return ocpP5SubBucketFromRow(r) ?? 'p5_autres';
+    }
+
+    int ocpP5BucketRank(String k) {
+      switch (k) {
+        case 'p5_chef_zone':
+          return 0;
+        case 'p5_suivi_performance':
+          return 1;
+        case 'p5_qhse':
+          return 2;
+        default:
+          return 3;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP5BucketHeader(String k) {
+      switch (k) {
+        case 'p5_chef_zone':
+          return (label: 'Chef de zone', ePrev: 1);
+        case 'p5_suivi_performance':
+          return (label: 'Responsable suivi performance', ePrev: 1);
+        case 'p5_qhse':
+          return (label: 'QHSE', ePrev: 1);
+        default:
+          return (label: 'Autres', ePrev: 0);
+      }
+    }
+
+    String? ocpP6Bucket(PointageExportRow r) {
+      if (shiftCodeForRow(r) != 'P6') return null;
+      final fromSeg = OcpExcelSegmentCode.toP6Bucket(r.ocpExcelSegment);
+      if (fromSeg == 'p6_autres') return 'p6_autres';
+      if (fromSeg != null) return 'p6_w2e';
+      final t = ocpFoldTeamPoste(r);
+      if (t.contains('remin') || t.contains('transfert')) return 'p6_w2e';
+      if (t.contains(' qt') || t.contains('qt ') || t.endsWith(' qt')) return 'p6_w2e';
+      if (t.contains('sychem')) return 'p6_w2e';
+      return 'p6_autres';
+    }
+
+    int ocpP6BucketRank(String k) {
+      switch (k) {
+        case 'p6_w2e':
+          return 0;
+        default:
+          return 1;
+      }
+    }
+
+    ({String label, int ePrev}) ocpP6BucketHeader(String k) {
+      switch (k) {
+        case 'p6_w2e':
+          return (label: 'W2E', ePrev: 1);
+        case 'p6_sychem':
+          return (label: 'Sychem', ePrev: 1);
+        case 'p6_qt':
+          return (label: 'QT', ePrev: 1);
+        case 'p6_remin':
+          return (label: 'Remin & Transfert', ePrev: 1);
+        default:
+          return (label: 'Autres', ePrev: 0);
+      }
+    }
+
+    final sortedRows = List<PointageExportRow>.from(
+      rows.where(isOcpExportEligibleRow),
+    )
+      ..sort((a, b) {
+        final byShift = shiftSortRank(shiftCodeForRow(a)).compareTo(shiftSortRank(shiftCodeForRow(b)));
+        if (byShift != 0) return byShift;
+        final scA = shiftCodeForRow(a);
+        if (scA == shiftCodeForRow(b) && (scA == 'P1' || scA == 'P2')) {
+          return compareRowsP1P2ForOcpExport(a, b);
+        }
+        if (shiftCodeForRow(a) == 'P3' && shiftCodeForRow(b) == 'P3') {
+          return compareRowsP3ForOcpExport(a, b);
+        }
+        final byPoste = normalizePoste(a.poste).compareTo(normalizePoste(b.poste));
+        if (byPoste != 0) return byPoste;
+        final aChef = isChefPoste(a.poste);
+        final bChef = isChefPoste(b.poste);
+        if (aChef != bChef) return aChef ? -1 : 1;
+        final byTeam = a.equipeName.compareTo(b.equipeName);
+        if (byTeam != 0) return byTeam;
+        return a.employeNom.compareTo(b.employeNom);
+      });
+
+    final exportRows = List<PointageExportRow>.from(sortedRows)
+      ..sort((a, b) {
+        final byShift = shiftSortRank(shiftCodeForRow(a)).compareTo(shiftSortRank(shiftCodeForRow(b)));
+        if (byShift != 0) return byShift;
+        final a1 = ocpP1Bucket(a);
+        final b1 = ocpP1Bucket(b);
+        if (a1 != null && b1 != null) {
+          final br = ocpP1BucketRank(a1).compareTo(ocpP1BucketRank(b1));
+          if (br != 0) return br;
+        }
+        final a2 = ocpP2Bucket(a);
+        final b2 = ocpP2Bucket(b);
+        if (a2 != null && b2 != null) {
+          final br = ocpP2BucketRank(a2).compareTo(ocpP2BucketRank(b2));
+          if (br != 0) return br;
+        }
+        if (shiftCodeForRow(a) == 'P3' && shiftCodeForRow(b) == 'P3') {
+          return compareRowsP3ForOcpExport(a, b);
+        }
+        final a4 = ocpP4Bucket(a);
+        final b4 = ocpP4Bucket(b);
+        if (shiftCodeForRow(a) == 'P4' && shiftCodeForRow(b) == 'P4' && a4 != null && b4 != null) {
+          final br = ocpP4BucketRank(a4).compareTo(ocpP4BucketRank(b4));
+          if (br != 0) return br;
+        }
+        final a5 = ocpP5Bucket(a);
+        final b5 = ocpP5Bucket(b);
+        if (shiftCodeForRow(a) == 'P5' && shiftCodeForRow(b) == 'P5' && a5 != null && b5 != null) {
+          final br = ocpP5BucketRank(a5).compareTo(ocpP5BucketRank(b5));
+          if (br != 0) return br;
+        }
+        final a6 = ocpP6Bucket(a);
+        final b6 = ocpP6Bucket(b);
+        if (shiftCodeForRow(a) == 'P6' && shiftCodeForRow(b) == 'P6' && a6 != null && b6 != null) {
+          final br = ocpP6BucketRank(a6).compareTo(ocpP6BucketRank(b6));
+          if (br != 0) return br;
+        }
+        final scBoth = shiftCodeForRow(a);
+        if (scBoth == shiftCodeForRow(b) && (scBoth == 'P1' || scBoth == 'P2')) {
+          return compareRowsP1P2ForOcpExport(a, b);
+        }
+        final byPoste = normalizePoste(a.poste).compareTo(normalizePoste(b.poste));
+        if (byPoste != 0) return byPoste;
+        final aChef = isChefPoste(a.poste);
+        final bChef = isChefPoste(b.poste);
+        if (aChef != bChef) return aChef ? -1 : 1;
+        final byTeam = a.equipeName.compareTo(b.equipeName);
+        if (byTeam != 0) return byTeam;
+        return a.employeNom.compareTo(b.employeNom);
+      });
+
+    bool ocpRowExcludedFromSheet(PointageExportRow r) {
+      final sc = shiftCodeForRow(r);
+      switch (sc) {
+        case 'P1':
+          return (ocpP1Bucket(r) ?? '') == 'p1_autres';
+        case 'P3':
+          return (ocpP3Bucket(r) ?? '') == 'p3_autres';
+        case 'P4':
+          return (ocpP4Bucket(r) ?? '') == 'p4_autres';
+        case 'P5':
+          return (ocpP5Bucket(r) ?? '') == 'p5_autres';
+        case 'P6':
+          return (ocpP6Bucket(r) ?? '') == 'p6_autres';
+        default:
+          return false;
+      }
+    }
+
+    var exportRowsForSheet =
+        exportRows.where((r) => !ocpRowExcludedFromSheet(r)).toList();
+
+    // Gabarit OCP : chaque segment (hors Autres) garde au moins « effectif prévu » lignes,
+    // même sans personnes — mêmes entêtes / fusions / colonnes que le modèle.
+    {
+      String? ocpBucketKeyForRow(PointageExportRow r) {
+        switch (shiftCodeForRow(r)) {
+          case 'P1':
+            return ocpP1Bucket(r);
+          case 'P2':
+            return ocpP2Bucket(r);
+          case 'P3':
+            return ocpP3Bucket(r);
+          case 'P4':
+            return ocpP4Bucket(r);
+          case 'P5':
+            return ocpP5Bucket(r);
+          case 'P6':
+            return ocpP6Bucket(r);
+          default:
+            return null;
+        }
+      }
+
+      ({String label, int ePrev}) ocpHeaderFor(String sc, String bk) {
+        switch (sc) {
+          case 'P1':
+            return ocpP1BucketHeader(bk);
+          case 'P2':
+            return ocpP2BucketHeader(bk);
+          case 'P3':
+            return ocpP3BucketHeader(bk);
+          case 'P4':
+            return ocpP4BucketHeader(bk);
+          case 'P5':
+            return ocpP5BucketHeader(bk);
+          case 'P6':
+            return ocpP6BucketHeader(bk);
+          default:
+            return (label: '', ePrev: 0);
+        }
+      }
+
+      String ocpSegmentForSlot(String sc, String bk) {
+        switch (sc) {
+          case 'P1':
+            switch (bk) {
+              case 'p1_ro':
+                return OcpExcelSegmentCode.p1SychemRoUf;
+              case 'p1_qt':
+                return OcpExcelSegmentCode.p1Qt;
+              case 'p1_remin':
+                return OcpExcelSegmentCode.p1SychemRemin;
+              default:
+                return '';
+            }
+          case 'P2':
+            switch (bk) {
+              case 'p2_sychem':
+                return OcpExcelSegmentCode.p2Sychem;
+              case 'p2_ion':
+                return OcpExcelSegmentCode.p2Ion;
+              case 'p2_qt':
+                return OcpExcelSegmentCode.p2Qt;
+              default:
+                return '';
+            }
+          case 'P3':
+            switch (bk) {
+              case 'p3_sychem':
+                return OcpExcelSegmentCode.p3Sychem;
+              case 'p3_qt':
+                return OcpExcelSegmentCode.p3Qt;
+              case 'p3_logistique':
+                return OcpExcelSegmentCode.p3Logistique;
+              default:
+                return '';
+            }
+          case 'P4':
+            return bk == 'p4_animateur_hse' ? OcpExcelSegmentCode.p4AnimateurHse : '';
+          case 'P5':
+            switch (bk) {
+              case 'p5_chef_zone':
+              case 'p5_suivi_performance':
+              case 'p5_qhse':
+                return OcpExcelSegmentCode.p5Cadre;
+              case 'p5_animation_hse':
+                return OcpExcelSegmentCode.p5AnimationHse;
+              case 'p5_pilotage_process':
+                return OcpExcelSegmentCode.p5PilotageProcess;
+              case 'p5_cadre':
+                return OcpExcelSegmentCode.p5Cadre;
+              default:
+                return '';
+            }
+          case 'P6':
+            switch (bk) {
+              case 'p6_w2e':
+                return OcpExcelSegmentCode.p6Sychem;
+              case 'p6_sychem':
+                return OcpExcelSegmentCode.p6Sychem;
+              case 'p6_qt':
+                return OcpExcelSegmentCode.p6Qt;
+              case 'p6_remin':
+                return OcpExcelSegmentCode.p6ReminTransfert;
+              default:
+                return '';
+            }
+          default:
+            return '';
+        }
+      }
+
+      String defaultPosteForOcpShift(String sc) {
+        switch (sc) {
+          case 'P1':
+            return 'Opérateur salle de contrôle';
+          case 'P2':
+            return 'Opérateur process';
+          case 'P3':
+            return 'Chef d\'équipe';
+          case 'P4':
+            return 'Animateur HSE';
+          case 'P5':
+            return 'QHSE';
+          case 'P6':
+            return 'Chef d\'atelier';
+          default:
+            return 'Opérateur';
+        }
+      }
+
+      PointageExportRow ocpSkeletonRow(
+        PointageExportRow? seed,
+        String sc,
+        String bk,
+        String segment,
+        int slotIndex,
+      ) {
+        // P5 : sans poste explicite, ne pas utiliser « QHSE » par défaut pour tout le bloc
+        // (sinon ocpP5Bucket reclasse chaque squelette en p5_qhse → doublon + slot suivi absent).
+        final String poste;
+        if (seed != null && seed.poste.trim().isNotEmpty) {
+          poste = seed.poste;
+        } else if (sc == 'P5') {
+          poste = ocpP5BucketHeader(bk).label;
+        } else {
+          poste = defaultPosteForOcpShift(sc);
+        }
+        final hoursByDay = <DateTime, String>{};
+        final dayStatusByDay = <DateTime, String>{};
+        for (final d in days) {
+          hoursByDay[d] = '';
+          dayStatusByDay[d] = '';
+        }
+        return PointageExportRow(
+          employeId: '__ocp_skeleton__${sc}_${bk}_$slotIndex',
+          employeCin: '',
+          employeNom: '',
+          poste: poste,
+          equipeName: seed?.equipeName ?? '',
+          equipeId: seed?.equipeId,
+          orgTypeLabel: seed?.orgTypeLabel ?? 'Équipe',
+          daysWorked: 0,
+          plannedShifts: days.length,
+          daysAbsent: 0,
+          totalHours: 0,
+          overtimeHours: 0,
+          salaireNet: seed?.salaireNet ?? 0,
+          salairePeriode: 0,
+          hoursByDay: hoursByDay,
+          dayStatusByDay: dayStatusByDay,
+          absenceReasonIdByDay: const {},
+          ocpExcelSegment: segment,
+          ocpForceSalleControle: sc == 'P1',
+        );
+      }
+
+      final byKey = <String, List<PointageExportRow>>{};
+      for (final r in exportRowsForSheet) {
+        final sc = shiftCodeForRow(r);
+        if (!isAllowedExportShift(sc)) continue;
+        final bk = ocpBucketKeyForRow(r);
+        if (bk == null || bk.endsWith('_autres')) continue;
+        byKey.putIfAbsent('$sc|$bk', () => []).add(r);
+      }
+      for (final list in byKey.values) {
+        list.sort((a, b) {
+          final sc = shiftCodeForRow(a);
+          if (shiftCodeForRow(b) == sc && (sc == 'P1' || sc == 'P2')) {
+            return compareRowsP1P2ForOcpExport(a, b);
+          }
+          if (shiftCodeForRow(b) == sc && sc == 'P3') {
+            return compareRowsP3ForOcpExport(a, b);
+          }
           return a.employeNom.compareTo(b.employeNom);
         });
-      grouped[name] = sorted;
-    } else {
-      for (final r in rows) {
-        grouped.putIfAbsent(r.equipeName, () => []).add(r);
-      }
-    }
-
-    bool isFirst = true;
-    final defaultName = book.getDefaultSheet() ?? 'Sheet1';
-
-    for (final entry in grouped.entries) {
-      final teamName = entry.key;
-      final teamRows = entry.value;
-
-      // اسم الورقة: 30 حرف كحد أقصى (قيد Excel)
-      String sheetName = teamName.length > 30
-          ? teamName.substring(0, 30)
-          : teamName;
-      // إزالة أحرف غير مسموحة في أسماء الأوراق
-      sheetName = sheetName.replaceAll(RegExp(r'[\\/*?\[\]:]'), '-');
-
-      if (isFirst) {
-        book.rename(defaultName, sheetName);
-        isFirst = false;
       }
 
-      final sheet = book[sheetName];
+      final ocpSlotOrder = <(String sc, List<String> buckets)>[
+        ('P1', ['p1_ro', 'p1_qt', 'p1_remin']),
+        ('P2', ['p2_sychem', 'p2_ion', 'p2_qt']),
+        ('P3', ['p3_sychem', 'p3_qt', 'p3_logistique']),
+        ('P4', ['p4_animateur_hse']),
+        ('P5', ['p5_chef_zone', 'p5_suivi_performance', 'p5_qhse']),
+        ('P6', ['p6_w2e']),
+      ];
 
-      // عنوان
-      sheet.updateCell(
-        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
-        excel.TextCellValue(
-            'Rapport pointage: $teamName'),
-      );
-      sheet.updateCell(
-        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 1),
-        excel.TextCellValue(
-            'Du ${_dateFormat.format(start)} au ${_dateFormat.format(end)}'),
-      );
+      final expanded = <PointageExportRow>[];
+      final emittedIds = <String>{};
+      final processedKeys = <String>{};
 
-      // رؤوس الأعمدة (منسّقة بشكل أوضح)
-      int col = 0;
-      const headerRow = 3;
-      final headerStyle = excel.CellStyle(
-        bold: true,
-        horizontalAlign: excel.HorizontalAlign.Center,
-        bottomBorder: excel.Border(
-          borderStyle: excel.BorderStyle.Thin,
-          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
-        ),
-        topBorder: excel.Border(
-          borderStyle: excel.BorderStyle.Thin,
-          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
-        ),
-        leftBorder: excel.Border(
-          borderStyle: excel.BorderStyle.Thin,
-          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
-        ),
-        rightBorder: excel.Border(
-          borderStyle: excel.BorderStyle.Thin,
-          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
-        ),
-      );
-
-      if (singleSheet && includeEquipeColumnInSingleSheet) {
-        final idxEquipe = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
-        sheet.updateCell(idxEquipe, excel.TextCellValue('Équipe'));
-        sheet.cell(idxEquipe).cellStyle = headerStyle;
-      }
-
-      final idxEmp = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
-      sheet.updateCell(idxEmp, excel.TextCellValue('Collaborateur'));
-      sheet.cell(idxEmp).cellStyle = headerStyle;
-
-      for (final d in days) {
-        final idx =
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
-        sheet.updateCell(idx, excel.TextCellValue(_dateFormat.format(d)));
-        sheet.cell(idx).cellStyle = headerStyle;
-      }
-      void setHeader(String label) {
-        final idx =
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
-        sheet.updateCell(idx, excel.TextCellValue(label));
-        sheet.cell(idx).cellStyle = headerStyle;
-      }
-
-      setHeader('Jours travailles');
-      setHeader('Jours absents');
-      setHeader('Total heures');
-      setHeader('Heures sup.');
-      setHeader('Temps total');
-      setHeader('Salaire net');
-      setHeader('Salaire periode');
-
-      // بيانات الموظفين + تنسيق خلايا الأيام
-      int rowIndex = headerRow + 1;
-      for (final r in teamRows) {
-        col = 0;
-        if (singleSheet && includeEquipeColumnInSingleSheet) {
-          sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.TextCellValue(r.equipeName),
-          );
-        }
-        sheet.updateCell(
-          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-          excel.TextCellValue(r.employeNom),
-        );
-        final firstDayCol = (singleSheet && includeEquipeColumnInSingleSheet) ? 2 : 1;
-        int dayCol = firstDayCol;
-        excel.CellStyle makeDayStyle({
-          String bg = '#FFFFFF',
-          String fg = '#000000',
-        }) {
-          return excel.CellStyle(
-            horizontalAlign: excel.HorizontalAlign.Center,
-            backgroundColorHex: excel.ExcelColor.fromHexString(bg),
-            fontColorHex: excel.ExcelColor.fromHexString(fg),
-            leftBorder: excel.Border(
-              borderStyle: excel.BorderStyle.Thin,
-              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-            ),
-            rightBorder: excel.Border(
-              borderStyle: excel.BorderStyle.Thin,
-              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-            ),
-            topBorder: excel.Border(
-              borderStyle: excel.BorderStyle.Thin,
-              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-            ),
-            bottomBorder: excel.Border(
-              borderStyle: excel.BorderStyle.Thin,
-              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
-            ),
-          );
-        }
-
-        for (final d in days) {
-          final val = r.hoursByDay[d] ?? '-';
-          final cellIndex = excel.CellIndex.indexByColumnRow(columnIndex: dayCol, rowIndex: rowIndex);
-          final dayStatus = r.dayStatusByDay[d] ?? '';
-          excel.CellStyle style;
-          if (dayStatus == 'present') {
-            style = makeDayStyle(bg: '#C8E6C9', fg: '#1B5E20');
-          } else if (dayStatus == 'absent') {
-            style = makeDayStyle(bg: '#FFCDD2', fg: '#B71C1C');
-          } else if (dayStatus == 'formation') {
-            style = makeDayStyle(bg: '#BBDEFB', fg: '#0D47A1');
-          } else if (dayStatus == 'leave') {
-            style = makeDayStyle(bg: '#0D47A1', fg: '#FFFFFF');
-          } else if (dayStatus == 'paid_absence') {
-            style = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
-          } else if (dayStatus == 'rest') {
-            style = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
-          } else if (dayStatus == 'pending_exit') {
-            style = makeDayStyle(bg: '#FFE082', fg: '#E65100');
-          } else {
-            style = makeDayStyle(bg: '#FFFFFF', fg: '#000000');
+      for (final slot in ocpSlotOrder) {
+        final sc = slot.$1;
+        for (final bk in slot.$2) {
+          final hdr = ocpHeaderFor(sc, bk);
+          if (hdr.ePrev <= 0) continue;
+          final seg = ocpSegmentForSlot(sc, bk);
+          if (seg.isEmpty) continue;
+          final key = '$sc|$bk';
+          processedKeys.add(key);
+          final reals = List<PointageExportRow>.from(byKey[key] ?? const []);
+          final rowCount = max(hdr.ePrev, reals.length);
+          final seed = reals.isNotEmpty ? reals.first : null;
+          for (int i = 0; i < reals.length; i++) {
+            expanded.add(reals[i]);
+            emittedIds.add(reals[i].employeId);
           }
-          // كتابة القيمة ثم تعيين style
-          sheet.updateCell(cellIndex, excel.TextCellValue(val), cellStyle: style);
-          dayCol++;
-          col = dayCol;
+          for (int i = reals.length; i < rowCount; i++) {
+            expanded.add(ocpSkeletonRow(seed, sc, bk, seg, i));
+          }
         }
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.TextCellValue('${r.daysWorked}/${r.plannedShifts}'));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.IntCellValue(r.daysAbsent));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.totalHours));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.overtimeHours));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.totalHours + r.overtimeHours));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.salaireNet));
-        sheet.updateCell(
-            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
-            excel.DoubleCellValue(r.salairePeriode));
-        rowIndex++;
+      }
+
+      for (final e in byKey.entries) {
+        if (processedKeys.contains(e.key)) continue;
+        e.value.sort((a, b) {
+          final sc = shiftCodeForRow(a);
+          if (shiftCodeForRow(b) == sc && (sc == 'P1' || sc == 'P2')) {
+            return compareRowsP1P2ForOcpExport(a, b);
+          }
+          if (shiftCodeForRow(b) == sc && sc == 'P3') {
+            return compareRowsP3ForOcpExport(a, b);
+          }
+          return a.employeNom.compareTo(b.employeNom);
+        });
+        for (final r in e.value) {
+          if (!emittedIds.contains(r.employeId)) {
+            expanded.add(r);
+            emittedIds.add(r.employeId);
+          }
+        }
+      }
+
+      exportRowsForSheet = expanded;
+    }
+
+    final book = excel.Excel.createExcel();
+    final defaultName = book.getDefaultSheet() ?? 'Sheet1';
+    book.rename(defaultName, 'Pointage');
+    final sheet = book['Pointage'];
+
+    final borderThin = excel.Border(
+      borderStyle: excel.BorderStyle.Thin,
+      borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+    );
+    final borderMedium = excel.Border(
+      borderStyle: excel.BorderStyle.Medium,
+      borderColorHex: excel.ExcelColor.fromHexString('#424242'),
+    );
+    final borderSep = excel.Border(
+      borderStyle: excel.BorderStyle.Thick,
+      borderColorHex: excel.ExcelColor.fromHexString('#424242'),
+    );
+    excel.CellStyle baseStyle({
+      bool bold = false,
+      String bg = '#FFFFFF',
+      String fg = '#000000',
+      excel.HorizontalAlign align = excel.HorizontalAlign.Center,
+      excel.VerticalAlign vAlign = excel.VerticalAlign.Center,
+      excel.Border? left,
+      excel.Border? right,
+      excel.Border? top,
+      excel.Border? bottom,
+      excel.TextWrapping? wrap,
+    }) {
+      return excel.CellStyle(
+        bold: bold,
+        horizontalAlign: align,
+        verticalAlign: vAlign,
+        textWrapping: wrap,
+        backgroundColorHex: excel.ExcelColor.fromHexString(bg),
+        fontColorHex: excel.ExcelColor.fromHexString(fg),
+        leftBorder: left ?? borderThin,
+        rightBorder: right ?? borderThin,
+        topBorder: top ?? borderThin,
+        bottomBorder: bottom ?? borderThin,
+      );
+    }
+
+    final titleStyle = baseStyle(
+      bold: true,
+      bg: '#D9E1F2',
+      fg: '#1F4E78',
+      align: excel.HorizontalAlign.Left,
+    );
+    final headerStyle = baseStyle(
+      bold: true,
+      bg: '#000000',
+      fg: '#FFFFFF',
+      align: excel.HorizontalAlign.Center,
+    );
+    final weekendHeaderStyle = baseStyle(
+      bold: true,
+      bg: '#263238',
+      fg: '#E3F2FD',
+      align: excel.HorizontalAlign.Center,
+    );
+    final dayHeaderLightStyle = baseStyle(
+      bold: true,
+      bg: '#D9EAF7',
+      fg: '#1F4E78',
+      align: excel.HorizontalAlign.Center,
+    );
+
+    const colShift = 1;
+    const colService = 2;
+    const colEntite = 3;
+    const colPrevuDt = 4;
+    const colTotalBloc = 5;
+    const colDispo = 6;
+    const colNom = 7;
+    const colPrenom = 8;
+    const colPoste = 9;
+    const firstDayCol = 10; // après Shift..POSTE (aligné modèle OCP colonnes Nom / Prénom)
+    const dayNamesRow = 7; // ligne 8 dans Excel (après bannière mois)
+    const headerRow = 8; // ligne 9 dans Excel
+    final shiftsCol = firstDayCol + days.length + 1;
+    final totalPiCol = firstDayCol + days.length + 3;
+
+    /// Libellé « Mois de Avril 2026 » selon le mois de début de période export.
+    String ocpMonthBannerLabel() {
+      final ref = DateTime(start.year, start.month, 1);
+      try {
+        final m = DateFormat('MMMM', 'fr_FR').format(ref);
+        if (m.isEmpty) return 'Mois de ${ref.month} ${ref.year}';
+        final cap = '${m[0].toUpperCase()}${m.substring(1)}';
+        return 'Mois de $cap ${ref.year}';
+      } catch (_) {
+        const months = <String>[
+          '',
+          'Janvier',
+          'Février',
+          'Mars',
+          'Avril',
+          'Mai',
+          'Juin',
+          'Juillet',
+          'Août',
+          'Septembre',
+          'Octobre',
+          'Novembre',
+          'Décembre',
+        ];
+        final name =
+            ref.month >= 1 && ref.month <= 12 ? months[ref.month] : '${ref.month}';
+        return 'Mois de $name ${ref.year}';
       }
     }
 
-    // إذا لم يكن هناك بيانات أصلاً، على الأقل ورقة واحدة
-    if (grouped.isEmpty) {
-      book.rename(defaultName, 'Pointage');
-      final sheet = book['Pointage'];
+    final bannerStyle = baseStyle(
+      bold: true,
+      bg: '#D32F2F',
+      fg: '#FFFFFF',
+      align: excel.HorizontalAlign.Center,
+      vAlign: excel.VerticalAlign.Center,
+      top: borderMedium,
+      bottom: borderMedium,
+      left: borderMedium,
+      right: borderMedium,
+    );
+
+    final bannerLabel = ocpMonthBannerLabel();
+    // Bannière centrée : fusion sur quelques colonnes au milieu du tableau (pas toute la largeur).
+    final bannerSpan = (bannerLabel.length * 0.42).ceil().clamp(5, 12);
+    var bannerStartCol = ((totalPiCol - bannerSpan) / 2).round();
+    if (bannerStartCol < 1) bannerStartCol = 1;
+    var bannerEndCol = bannerStartCol + bannerSpan - 1;
+    if (bannerEndCol > totalPiCol) {
+      bannerEndCol = totalPiCol;
+      bannerStartCol = (bannerEndCol - bannerSpan + 1).clamp(1, totalPiCol);
+    }
+    final bannerLeft =
+        excel.CellIndex.indexByColumnRow(columnIndex: bannerStartCol, rowIndex: 1);
+    final bannerRight =
+        excel.CellIndex.indexByColumnRow(columnIndex: bannerEndCol, rowIndex: 1);
+    sheet.merge(bannerLeft, bannerRight);
+    sheet.cell(bannerLeft).value = excel.TextCellValue(bannerLabel);
+    sheet.cell(bannerLeft).cellStyle = bannerStyle;
+    sheet.setMergedCellStyle(bannerLeft, bannerStyle);
+
+    // Header قريب من القالب المرجعي (سطرين عنوان + سطر أيام + سطر تواريخ)
+    sheet.updateCell(
+      excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 2),
+      excel.TextCellValue('DIPS  / WAVE 2 EAST'),
+      cellStyle: titleStyle,
+    );
+    sheet.updateCell(
+      excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 3),
+      excel.TextCellValue('FEUILLE DE POINTAGE'),
+      cellStyle: titleStyle,
+    );
+    sheet.updateCell(
+      excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 4),
+      excel.TextCellValue(
+          'Période: ${_dateFormat.format(start)} - ${_dateFormat.format(end)}'),
+      cellStyle: baseStyle(
+        bold: true,
+        bg: '#F5F5F5',
+        fg: '#424242',
+        align: excel.HorizontalAlign.Left,
+      ),
+    );
+
+    var maxNomLen = 'Nom'.length;
+    var maxPrenomLen = 'Prénom'.length;
+    var maxPosteLen = 'POSTE'.length;
+    for (final r in exportRowsForSheet) {
+      final np = PointageExportService.splitNomPrenomForExcel(r.employeNom.trim());
+      final nom = np.nom.trim().toUpperCase();
+      final prenom = np.prenom.trim().toUpperCase();
+      final poste = (r.poste.trim().isEmpty ? 'Opérateur' : r.poste.trim());
+      if (nom.length > maxNomLen) maxNomLen = nom.length;
+      if (prenom.length > maxPrenomLen) maxPrenomLen = prenom.length;
+      if (poste.length > maxPosteLen) maxPosteLen = poste.length;
+    }
+    final nomColWidth =
+        PointageExportService.ocpExcelColumnWidthForText('N' * maxNomLen, min: 26, max: 52);
+    final prenomColWidth =
+        PointageExportService.ocpExcelColumnWidthForText('N' * maxPrenomLen, min: 24, max: 52);
+    final posteColWidth =
+        PointageExportService.ocpExcelColumnWidthForText('N' * maxPosteLen, min: 26, max: 48);
+    // سطر أسماء الأيام (Mercredi...)
+    for (int i = 0; i < days.length; i++) {
+      final d = days[i];
+      final c = firstDayCol + i;
+      final dayName = _weekdayNameFr(d.weekday);
+      final isWeekend = d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
       sheet.updateCell(
-        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
-        excel.TextCellValue('Aucune donnee pour cette periode'),
+        excel.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: dayNamesRow),
+        excel.TextCellValue(dayName),
+        cellStyle: isWeekend ? weekendHeaderStyle : dayHeaderLightStyle,
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: headerRow),
+        excel.TextCellValue(_dateFormat.format(d)),
+        cellStyle: isWeekend ? weekendHeaderStyle : dayHeaderLightStyle,
+      );
+    }
+
+    // أعمدة القالب المرجعي
+    final fixedHeaders = <int, String>{
+      colShift: 'Shift',
+      colService: 'Service',
+      colEntite: 'Entité',
+      colPrevuDt: 'Effectif prévu DT',
+      colTotalBloc: 'Effectif cible',
+      colDispo: 'Effectif disponible',
+      colNom: 'Nom',
+      colPrenom: 'Prénom',
+      colPoste: 'POSTE',
+      firstDayCol + days.length: '',
+      shiftsCol: 'Nombre de Shift',
+      firstDayCol + days.length + 2: '',
+      totalPiCol: 'Total Shifts par Pi',
+    };
+    for (final e in fixedHeaders.entries) {
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: e.key, rowIndex: headerRow),
+        excel.TextCellValue(e.value),
+        cellStyle: headerStyle,
+      );
+    }
+
+    const ocpServiceTitles = [
+      'Opérateurs Salle de contrôle',
+      'Opérateur Process & Nettoyage',
+      'Chefs d\'équipe & logistique',
+      'Animateur HSE',
+      'Management Atelier',
+      'Chefs d\'atelier',
+      'Animation HSE',
+      'Pilotage Process',
+    ];
+    var maxServiceLen = fixedHeaders[colService]!.length;
+    for (final t in ocpServiceTitles) {
+      if (t.length > maxServiceLen) maxServiceLen = t.length;
+    }
+    sheet.setColumnWidth(
+      colShift,
+      PointageExportService.ocpExcelColumnWidthForText('Shift', min: 9, max: 14),
+    );
+    sheet.setColumnWidth(
+      colService,
+      PointageExportService.ocpExcelColumnWidthForText(
+        'N' * maxServiceLen,
+        min: 30,
+        max: 52,
+      ),
+    );
+    sheet.setColumnWidth(
+      colEntite,
+      PointageExportService.ocpExcelColumnWidthForText('Entité', min: 14, max: 28),
+    );
+    sheet.setColumnWidth(
+      colPrevuDt,
+      PointageExportService.ocpExcelColumnWidthForText(
+        fixedHeaders[colPrevuDt]!,
+        min: 16,
+        max: 24,
+      ),
+    );
+    sheet.setColumnWidth(
+      colTotalBloc,
+      PointageExportService.ocpExcelColumnWidthForText(
+        fixedHeaders[colTotalBloc]!,
+        min: 15,
+        max: 22,
+      ),
+    );
+    sheet.setColumnWidth(
+      colDispo,
+      PointageExportService.ocpExcelColumnWidthForText(
+        fixedHeaders[colDispo]!,
+        min: 18,
+        max: 26,
+      ),
+    );
+    sheet.setColumnWidth(colNom, nomColWidth);
+    sheet.setColumnWidth(colPrenom, prenomColWidth);
+    sheet.setColumnWidth(colPoste, posteColWidth);
+    // Largeur calendrier : tenir « dd/MM/yyyy » + nom du jour (Vendredi, Mercredi…).
+    var maxDayHeaderChars = 0;
+    for (final d in days) {
+      final dateLen = _dateFormat.format(d).length;
+      final dayLen = _weekdayNameFr(d.weekday).length;
+      if (dateLen > maxDayHeaderChars) maxDayHeaderChars = dateLen;
+      if (dayLen > maxDayHeaderChars) maxDayHeaderChars = dayLen;
+    }
+    final dayColWidth = PointageExportService.ocpExcelColumnWidthForText(
+      'N' * maxDayHeaderChars,
+      min: 14,
+      max: 18,
+    );
+    for (int i = 0; i < days.length; i++) {
+      sheet.setColumnWidth(firstDayCol + i, dayColWidth);
+    }
+    sheet.setColumnWidth(
+      shiftsCol,
+      PointageExportService.ocpExcelColumnWidthForText(
+        fixedHeaders[shiftsCol]!,
+        min: 16,
+        max: 24,
+      ),
+    );
+    sheet.setColumnWidth(
+      totalPiCol,
+      PointageExportService.ocpExcelColumnWidthForText(
+        fixedHeaders[totalPiCol]!,
+        min: 18,
+        max: 28,
+      ),
+    );
+
+    /// Fond bleu = présence/congé ; gris = repos ; blanc = absence / vide.
+    excel.CellStyle ocpDayCellStyleForDay({
+      required String marker,
+      required String status,
+      required String fallback,
+      required bool isWeekend,
+    }) {
+      if (marker == '1') {
+        return baseStyle(bg: '#E3F2FD', fg: '#0D47A1', align: excel.HorizontalAlign.Center);
+      }
+      final fb = fallback.trim().toLowerCase();
+      if (status == 'rest' || fb == 'repos') {
+        return baseStyle(bg: '#D9D9D9', fg: '#616161', align: excel.HorizontalAlign.Center);
+      }
+      if (isWeekend) {
+        return baseStyle(bg: '#F5F5F5', align: excel.HorizontalAlign.Center);
+      }
+      return baseStyle(bg: '#FFFFFF', align: excel.HorizontalAlign.Center);
+    }
+
+    bool isOcpSkeletonExportRow(PointageExportRow r) =>
+        r.employeId.startsWith('__ocp_skeleton__');
+
+    String? ocpBucketKeyForCountRow(PointageExportRow r) {
+      final sc = shiftCodeForRow(r);
+      if (!isAllowedExportShift(sc)) return null;
+      if (sc == 'P1') return ocpP1Bucket(r);
+      if (sc == 'P2') return ocpP2Bucket(r);
+      if (sc == 'P3') return ocpP3Bucket(r);
+      if (sc == 'P4') return ocpP4Bucket(r);
+      if (sc == 'P5') return ocpP5Bucket(r);
+      if (sc == 'P6') return ocpP6Bucket(r);
+      return null;
+    }
+
+    /// Statut / heures par jour en tolérant des clés [DateTime] légèrement différentes (UTC vs local).
+    String exportRowDayStatusForDay(PointageExportRow r, DateTime d) {
+      final k = PointageExportService._dayKey(d);
+      for (final e in r.dayStatusByDay.entries) {
+        if (PointageExportService._dayKey(e.key) == k) return e.value;
+      }
+      return '';
+    }
+
+    String exportRowHoursForDay(PointageExportRow r, DateTime d) {
+      final k = PointageExportService._dayKey(d);
+      for (final e in r.hoursByDay.entries) {
+        if (PointageExportService._dayKey(e.key) == k) return e.value;
+      }
+      return '';
+    }
+
+    final actualPrevuByShiftBucket = <String, int>{};
+    final headcountRealByShift = <String, int>{};
+    final presentAtLeastOnceByShift = <String, int>{};
+    final presentOnceByBucket = <String, int>{};
+    for (final r in exportRowsForSheet) {
+      if (isOcpSkeletonExportRow(r)) continue;
+      final sc = shiftCodeForRow(r);
+      if (!isAllowedExportShift(sc)) continue;
+      final bk = ocpBucketKeyForCountRow(r);
+      if (bk == null || bk.endsWith('_autres')) continue;
+      final key = '$sc|$bk';
+      actualPrevuByShiftBucket[key] = (actualPrevuByShiftBucket[key] ?? 0) + 1;
+      headcountRealByShift[sc] = (headcountRealByShift[sc] ?? 0) + 1;
+      var hasPresentOne = false;
+      for (final d in days) {
+        final status = exportRowDayStatusForDay(r, d);
+        final fallback = exportRowHoursForDay(r, d);
+        if (PointageExportService.ocpExcelDayMarker(status, fallback) == '1') {
+          hasPresentOne = true;
+          break;
+        }
+      }
+      if (hasPresentOne) {
+        presentAtLeastOnceByShift[sc] = (presentAtLeastOnceByShift[sc] ?? 0) + 1;
+        presentOnceByBucket[key] = (presentOnceByBucket[key] ?? 0) + 1;
+      }
+    }
+
+    /// Effectif cible (colonne fusionnée par shift) : valeurs fixes gabarit OCP.
+    int? ocpEffectifCibleFixe(String shiftCode) {
+      switch (shiftCode) {
+        case 'P1':
+          return 12;
+        case 'P2':
+          return 42;
+        case 'P4':
+          return 1;
+        default:
+          return null;
+      }
+    }
+
+    int rowIndex = headerRow + 1; // première ligne données (ligne 10 Excel)
+    String? currentShiftCode;
+    int? shiftStartRow;
+    int shiftTotalShifts = 0;
+    String? currentPoste;
+    int? posteStartRow;
+    String? currentEntity;
+    String? prevOcpP1Bucket;
+    String? prevOcpP2Bucket;
+    String? prevOcpP3Bucket;
+    String? prevOcpP4Bucket;
+    String? prevOcpP5Bucket;
+    String? prevOcpP6Bucket;
+    final shiftRanges = <({int start, int end, String shiftCode, String? ocpBucket, int totalShifts})>[];
+    final posteRanges = <({int start, int end})>[];
+    final ocpEntiteVerticalMerges = <({int start, int end, bool mergePrevu})>[];
+    final ocpEntBlockEndRows = <int>{};
+    int? ocpEntBlocStartRow;
+    var ocpEntBlocMergePrevu = false;
+    String? currentVisualMergeKey;
+
+    void recordOcpEntiteVerticalMerge(int endInclusive) {
+      if (ocpEntBlocStartRow == null) return;
+      final s = ocpEntBlocStartRow!;
+      if (endInclusive >= s) {
+        ocpEntBlockEndRows.add(endInclusive);
+        if (endInclusive > s) {
+          ocpEntiteVerticalMerges.add((
+            start: s,
+            end: endInclusive,
+            mergePrevu: ocpEntBlocMergePrevu,
+          ));
+        }
+      }
+      ocpEntBlocStartRow = null;
+      ocpEntBlocMergePrevu = false;
+    }
+
+    String ocpShiftServiceTitle(String code) {
+      switch (code) {
+        case 'P1':
+          return 'Opérateurs Salle de contrôle';
+        case 'P2':
+          return 'Opérateur Process & Nettoyage';
+        case 'P3':
+          return 'Chefs d\'équipe & logistique';
+        case 'P4':
+          return 'Animateur HSE';
+        case 'P5':
+          return 'Management Atelier';
+        case 'P6':
+          return 'Chefs d\'atelier';
+        default:
+          return '';
+      }
+    }
+
+    String? ocpBucketFromVisualMergeKey(String? vmk) {
+      if (vmk == null || !vmk.contains('|')) return null;
+      final parts = vmk.split('|');
+      if (parts.length < 2) return null;
+      final sc = parts[0];
+      if (sc != 'P4' && sc != 'P5' && sc != 'P6') return null;
+      return parts[1];
+    }
+
+    String ocpBlockServiceTitle(String shiftCode) {
+      if (shiftCode == 'P4') return 'Animation HSE';
+      if (shiftCode == 'P6') return 'Pilotage Process';
+      if (shiftCode == 'P5') return 'Management Atelier';
+      return ocpShiftServiceTitle(shiftCode);
+    }
+
+    for (final r in exportRowsForSheet) {
+      final np = PointageExportService.splitNomPrenomForExcel(r.employeNom.trim());
+      final nomCol = np.nom.trim().toUpperCase();
+      final prenomCol = np.prenom.trim().toUpperCase();
+      final posteLabel = r.poste.trim().isEmpty ? 'Opérateur' : r.poste.trim();
+      final posteKey = normalizePoste(posteLabel);
+      final shiftCode = shiftCodeForRow(r);
+      final p1b = ocpP1Bucket(r);
+      final p2b = ocpP2Bucket(r);
+      final p3b = ocpP3Bucket(r);
+      final p4b = ocpP4Bucket(r);
+      final p5b = ocpP5Bucket(r);
+      final p6b = ocpP6Bucket(r);
+
+      var visualMergeKey = shiftCode;
+      // P5: une seule fusion verticale « P5 » sur tout le bloc (sous-blocs = Entité uniquement).
+      if (shiftCode == 'P5' && (p5b == null || p5b.endsWith('_autres'))) {
+        visualMergeKey = '$shiftCode|autres';
+      }
+
+      final posteKeyForMerge =
+          isAllowedExportShift(shiftCode) ? '__m__$visualMergeKey' : posteKey;
+      final showMergeBlock = currentVisualMergeKey != visualMergeKey;
+
+      String entityKey = r.equipeName.trim();
+      if (shiftCode == 'P3' && p3b != null && p3b != 'p3_autres') {
+        entityKey = 'P3|$p3b';
+      } else if (shiftCode == 'P4' && p4b != null && p4b != 'p4_autres') {
+        entityKey = 'P4|$p4b';
+      } else if (shiftCode == 'P5' && p5b != null && p5b != 'p5_autres') {
+        entityKey = 'P5|$p5b';
+      } else if (shiftCode == 'P6' && p6b != null && p6b != 'p6_autres') {
+        entityKey = 'P6|$p6b';
+      }
+
+      final ocpSubBlocActif = (shiftCode == 'P3' && p3b != null && p3b != 'p3_autres') ||
+          (shiftCode == 'P4' && p4b != null && p4b != 'p4_autres') ||
+          (shiftCode == 'P5' && p5b != null && p5b != 'p5_autres') ||
+          (shiftCode == 'P6' && p6b != null && p6b != 'p6_autres');
+
+      final showShiftHeader = currentShiftCode != shiftCode;
+      final showPosteHeader = currentPoste != posteKeyForMerge;
+      final entityBlockChanged = currentEntity != entityKey;
+      if (showShiftHeader) {
+        prevOcpP1Bucket = null;
+        prevOcpP2Bucket = null;
+        prevOcpP3Bucket = null;
+        prevOcpP4Bucket = null;
+        prevOcpP5Bucket = null;
+        prevOcpP6Bucket = null;
+      }
+      final showOcpEntite = (shiftCode == 'P1' && p1b != null && p1b != prevOcpP1Bucket) ||
+          (shiftCode == 'P2' && p2b != null && p2b != prevOcpP2Bucket) ||
+          (shiftCode == 'P3' && p3b != null && p3b != 'p3_autres' && p3b != prevOcpP3Bucket) ||
+          (shiftCode == 'P4' && p4b != null && p4b != 'p4_autres' && p4b != prevOcpP4Bucket) ||
+          (shiftCode == 'P5' && p5b != null && p5b != 'p5_autres' && p5b != prevOcpP5Bucket) ||
+          (shiftCode == 'P6' && p6b != null && p6b != 'p6_autres' && p6b != prevOcpP6Bucket);
+      if (shiftCode == 'P1') prevOcpP1Bucket = p1b;
+      if (shiftCode == 'P2') prevOcpP2Bucket = p2b;
+      if (shiftCode == 'P3') prevOcpP3Bucket = p3b;
+      if (shiftCode == 'P4') prevOcpP4Bucket = p4b;
+      if (shiftCode == 'P5') prevOcpP5Bucket = p5b;
+      if (shiftCode == 'P6') prevOcpP6Bucket = p6b;
+
+      final isFirstRow = rowIndex == headerRow + 1;
+      if (!isFirstRow && showMergeBlock && shiftStartRow != null && currentShiftCode != null) {
+        shiftRanges.add((
+          start: shiftStartRow,
+          end: rowIndex - 1,
+          shiftCode: currentShiftCode,
+          ocpBucket: ocpBucketFromVisualMergeKey(currentVisualMergeKey),
+          totalShifts: shiftTotalShifts,
+        ));
+        shiftTotalShifts = 0;
+      }
+      if (!isFirstRow && showPosteHeader && posteStartRow != null) {
+        posteRanges.add((start: posteStartRow, end: rowIndex - 1));
+      }
+      if (!isFirstRow && showMergeBlock && ocpEntBlocStartRow != null) {
+        recordOcpEntiteVerticalMerge(rowIndex - 1);
+      }
+      if (showMergeBlock) shiftStartRow = rowIndex;
+      if (showPosteHeader) posteStartRow = rowIndex;
+      currentShiftCode = shiftCode;
+      currentPoste = posteKeyForMerge;
+      currentEntity = entityKey;
+
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rowIndex),
+        excel.TextCellValue(showMergeBlock ? shiftCode : ''),
+        cellStyle: baseStyle(bold: true, bg: '#F3F6FB'),
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colService, rowIndex: rowIndex),
+        excel.TextCellValue(
+          showPosteHeader ? ocpBlockServiceTitle(shiftCode) : '',
+        ),
+        cellStyle: baseStyle(align: excel.HorizontalAlign.Center, bg: '#F3F6FB'),
+      );
+
+      if (showOcpEntite) {
+        if (ocpEntBlocStartRow != null) {
+          recordOcpEntiteVerticalMerge(rowIndex - 1);
+        }
+        final ({String label, int ePrev}) hdr = shiftCode == 'P1' && p1b != null
+            ? ocpP1BucketHeader(p1b)
+            : shiftCode == 'P2' && p2b != null
+                ? ocpP2BucketHeader(p2b)
+                : shiftCode == 'P3' && p3b != null
+                    ? ocpP3BucketHeader(p3b)
+                    : shiftCode == 'P4' && p4b != null
+                        ? ocpP4BucketHeader(p4b)
+                        : shiftCode == 'P5' && p5b != null
+                            ? ocpP5BucketHeader(p5b)
+                            : shiftCode == 'P6' && p6b != null
+                                ? ocpP6BucketHeader(p6b)
+                                : (label: '', ePrev: 0);
+        final ocpBandTop = showShiftHeader ? borderThin : borderMedium;
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: rowIndex),
+          excel.TextCellValue(hdr.label),
+          cellStyle: baseStyle(
+            align: excel.HorizontalAlign.Center,
+            bold: true,
+            bg: '#ECEFF1',
+            top: ocpBandTop,
+            vAlign: excel.VerticalAlign.Center,
+            wrap: excel.TextWrapping.WrapText,
+          ),
+        );
+        final String? bkForPrevu = shiftCode == 'P1'
+            ? p1b
+            : shiftCode == 'P2'
+                ? p2b
+                : shiftCode == 'P3'
+                    ? p3b
+                    : shiftCode == 'P4'
+                        ? p4b
+                        : shiftCode == 'P5'
+                            ? p5b
+                            : shiftCode == 'P6'
+                                ? p6b
+                                : null;
+        final prevuReel = bkForPrevu != null
+            ? (actualPrevuByShiftBucket['$shiftCode|$bkForPrevu'] ?? 0)
+            : 0;
+        final prevuAffiche =
+            (shiftCode == 'P1' || shiftCode == 'P2') ? hdr.ePrev : prevuReel;
+        if (hdr.ePrev > 0) {
+          sheet.updateCell(
+            excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: rowIndex),
+            excel.IntCellValue(prevuAffiche),
+            cellStyle: baseStyle(
+              bold: true,
+              bg: '#ECEFF1',
+              align: excel.HorizontalAlign.Center,
+              vAlign: excel.VerticalAlign.Center,
+            ),
+          );
+        } else {
+          sheet.updateCell(
+            excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: rowIndex),
+            excel.TextCellValue(''),
+            cellStyle: baseStyle(bg: '#ECEFF1'),
+          );
+        }
+        ocpEntBlocMergePrevu = hdr.ePrev > 0;
+        ocpEntBlocStartRow = rowIndex;
+      } else if (!ocpSubBlocActif && shiftCode != 'P1' && shiftCode != 'P2' && entityBlockChanged) {
+        if (ocpEntBlocStartRow != null) {
+          recordOcpEntiteVerticalMerge(rowIndex - 1);
+        }
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: rowIndex),
+          excel.TextCellValue(entityKey),
+          cellStyle: baseStyle(align: excel.HorizontalAlign.Left),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: rowIndex),
+          excel.TextCellValue(''),
+          cellStyle: baseStyle(),
+        );
+      } else {
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: rowIndex),
+          excel.TextCellValue(''),
+          cellStyle: baseStyle(),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: rowIndex),
+          excel.TextCellValue(''),
+          cellStyle: baseStyle(),
+        );
+      }
+
+      if (showMergeBlock && isAllowedExportShift(shiftCode)) {
+        final String? bkEnt = shiftCode == 'P5' ? p5b : null;
+        final int effectifBloc = ocpEffectifCibleFixe(shiftCode) ??
+            (shiftCode == 'P5' &&
+                    bkEnt != null &&
+                    !bkEnt.endsWith('_autres')
+                ? (actualPrevuByShiftBucket['$shiftCode|$bkEnt'] ?? 0)
+                : (headcountRealByShift[shiftCode] ?? 0));
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rowIndex),
+          excel.IntCellValue(effectifBloc),
+          cellStyle: baseStyle(bold: true, align: excel.HorizontalAlign.Center),
+        );
+      } else {
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rowIndex),
+          excel.TextCellValue(''),
+          cellStyle: baseStyle(),
+        );
+      }
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colDispo, rowIndex: rowIndex),
+        excel.TextCellValue(''),
+        cellStyle: baseStyle(),
+      );
+
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colNom, rowIndex: rowIndex),
+        excel.TextCellValue(nomCol),
+        cellStyle: baseStyle(
+          align: excel.HorizontalAlign.Left,
+          wrap: excel.TextWrapping.WrapText,
+        ),
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colPrenom, rowIndex: rowIndex),
+        excel.TextCellValue(prenomCol),
+        cellStyle: baseStyle(
+          align: excel.HorizontalAlign.Left,
+          wrap: excel.TextWrapping.WrapText,
+        ),
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: colPoste, rowIndex: rowIndex),
+        excel.TextCellValue(r.poste.isEmpty ? 'Opérateur' : r.poste),
+        cellStyle: baseStyle(
+          align: excel.HorizontalAlign.Left,
+          wrap: excel.TextWrapping.WrapText,
+        ),
+      );
+
+      int presenceCount = 0;
+      for (int i = 0; i < days.length; i++) {
+        final d = days[i];
+        final status = exportRowDayStatusForDay(r, d);
+        final fallback = exportRowHoursForDay(r, d);
+        final marker = PointageExportService.ocpExcelDayMarker(status, fallback);
+        if (marker == '1') presenceCount++;
+        final c = firstDayCol + i;
+        final isWeekend = d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: rowIndex),
+          excel.TextCellValue(marker),
+          cellStyle: ocpDayCellStyleForDay(
+            marker: marker,
+            status: status,
+            fallback: fallback,
+            isWeekend: isWeekend,
+          ),
+        );
+      }
+
+      shiftTotalShifts += presenceCount;
+
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: shiftsCol, rowIndex: rowIndex),
+        excel.IntCellValue(presenceCount),
+        cellStyle: baseStyle(bold: true),
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: totalPiCol, rowIndex: rowIndex),
+        excel.IntCellValue(presenceCount),
+        cellStyle: baseStyle(bold: true, bg: '#E8F5E9', fg: '#1B5E20'),
+      );
+
+      rowIndex++;
+      currentVisualMergeKey = visualMergeKey;
+    }
+
+    recordOcpEntiteVerticalMerge(rowIndex - 1);
+
+    if (exportRowsForSheet.isNotEmpty) {
+      if (posteStartRow != null) {
+        posteRanges.add((start: posteStartRow, end: rowIndex - 1));
+      }
+      if (shiftStartRow != null && currentShiftCode != null) {
+        shiftRanges.add((
+          start: shiftStartRow,
+          end: rowIndex - 1,
+          shiftCode: currentShiftCode,
+          ocpBucket: ocpBucketFromVisualMergeKey(currentVisualMergeKey),
+          totalShifts: shiftTotalShifts,
+        ));
+      }
+
+      for (final rg in shiftRanges) {
+        final effectifCibleReel = ocpEffectifCibleFixe(rg.shiftCode) ??
+            (rg.ocpBucket != null
+                ? (actualPrevuByShiftBucket['${rg.shiftCode}|${rg.ocpBucket}'] ?? 0)
+                : (headcountRealByShift[rg.shiftCode] ?? 0));
+        // Blocs fusionnés P4/P5/P6 : si aucun jour ne remonte en « présent » mais des lignes
+        // existent sur la feuille, afficher au moins l'effectif réel (sinon « disponible » reste 0).
+        final int baseEffectifDispo = rg.ocpBucket != null
+            ? (presentOnceByBucket['${rg.shiftCode}|${rg.ocpBucket}'] ?? 0)
+            : (presentAtLeastOnceByShift[rg.shiftCode] ?? 0);
+        final int headOnSheet = headcountRealByShift[rg.shiftCode] ?? 0;
+        // P3 : effectif réel sur la feuille (pas seulement présents ≥1 jour).
+        final effectifDispoReel = rg.shiftCode == 'P3'
+            ? headOnSheet
+            : (rg.ocpBucket == null &&
+                    (rg.shiftCode == 'P4' ||
+                        rg.shiftCode == 'P5' ||
+                        rg.shiftCode == 'P6') &&
+                    baseEffectifDispo == 0 &&
+                    headOnSheet > 0
+                ? headOnSheet
+                : baseEffectifDispo);
+
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rg.start),
+          excel.TextCellValue(rg.shiftCode),
+          cellStyle: baseStyle(
+            bold: true,
+            bg: '#E3F2FD',
+            align: excel.HorizontalAlign.Center,
+            vAlign: excel.VerticalAlign.Center,
+          ),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: totalPiCol, rowIndex: rg.start),
+          excel.IntCellValue(rg.totalShifts),
+          cellStyle: baseStyle(
+            bold: true,
+            bg: '#E8F5E9',
+            fg: '#1B5E20',
+            vAlign: excel.VerticalAlign.Center,
+          ),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: colDispo, rowIndex: rg.start),
+          excel.IntCellValue(effectifDispoReel),
+          cellStyle: baseStyle(
+            bold: true,
+            bg: '#E3F2FD',
+            align: excel.HorizontalAlign.Center,
+            vAlign: excel.VerticalAlign.Center,
+          ),
+        );
+        if (isAllowedExportShift(rg.shiftCode)) {
+          sheet.updateCell(
+            excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rg.start),
+            excel.IntCellValue(effectifCibleReel),
+            cellStyle: baseStyle(
+              bold: true,
+              bg: '#BBDEFB',
+              align: excel.HorizontalAlign.Center,
+              vAlign: excel.VerticalAlign.Center,
+            ),
+          );
+        }
+      }
+
+      for (final rg in posteRanges) {
+        // Accent visuel du bloc POSTE: bordure supérieure et inférieure plus épaisses.
+        for (int col = 1; col <= totalPiCol; col++) {
+          final topIdx = excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: rg.start);
+          final topCell = sheet.cell(topIdx);
+          topCell.cellStyle = (topCell.cellStyle ?? baseStyle()).copyWith(topBorderVal: borderMedium);
+          final bottomIdx = excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: rg.end);
+          final bottomCell = sheet.cell(bottomIdx);
+          bottomCell.cellStyle = (bottomCell.cellStyle ?? baseStyle()).copyWith(bottomBorderVal: borderMedium);
+        }
+      }
+
+      // Grille fine sur toutes les cellules (avant fusion verticale Entité / Prévu OCP).
+      final lastDataCol = totalPiCol;
+      for (int rr = headerRow; rr <= rowIndex - 1; rr++) {
+        for (int cc = 1; cc <= lastDataCol; cc++) {
+          final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: rr);
+          final cell = sheet.cell(idx);
+          cell.cellStyle = (cell.cellStyle ?? baseStyle()).copyWith(
+            leftBorderVal: borderThin,
+            rightBorderVal: borderThin,
+            topBorderVal: borderThin,
+            bottomBorderVal: borderThin,
+          );
+        }
+      }
+
+      // Bordures horizontales légères (éviter l'effet « liste de gros traits » entre chaque ligne).
+      for (int rr = headerRow + 1; rr <= rowIndex - 1; rr++) {
+        for (int cc = 1; cc <= lastDataCol; cc++) {
+          final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: rr);
+          final cell = sheet.cell(idx);
+          cell.cellStyle = (cell.cellStyle ?? baseStyle()).copyWith(bottomBorderVal: borderThin);
+        }
+      }
+
+      // Outer frame.
+      for (int cc = 1; cc <= lastDataCol; cc++) {
+        final topIdx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: headerRow);
+        final topCell = sheet.cell(topIdx);
+        topCell.cellStyle = (topCell.cellStyle ?? baseStyle()).copyWith(topBorderVal: borderMedium);
+        final bottomIdx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: rowIndex - 1);
+        final bottomCell = sheet.cell(bottomIdx);
+        bottomCell.cellStyle = (bottomCell.cellStyle ?? baseStyle()).copyWith(bottomBorderVal: borderMedium);
+      }
+      for (int rr = headerRow; rr <= rowIndex - 1; rr++) {
+        final leftIdx = excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rr);
+        final leftCell = sheet.cell(leftIdx);
+        leftCell.cellStyle = (leftCell.cellStyle ?? baseStyle()).copyWith(leftBorderVal: borderMedium);
+        final rightIdx = excel.CellIndex.indexByColumnRow(columnIndex: lastDataCol, rowIndex: rr);
+        final rightCell = sheet.cell(rightIdx);
+        rightCell.cellStyle = (rightCell.cellStyle ?? baseStyle()).copyWith(rightBorderVal: borderMedium);
+      }
+
+      final ocpMergedEntBandStyle = baseStyle(
+        bold: true,
+        bg: '#ECEFF1',
+        align: excel.HorizontalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+        vAlign: excel.VerticalAlign.Center,
+        wrap: excel.TextWrapping.WrapText,
+      );
+      final ocpMergedPrevuBandStyle = baseStyle(
+        bold: true,
+        bg: '#ECEFF1',
+        align: excel.HorizontalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+        vAlign: excel.VerticalAlign.Center,
+      );
+
+      for (final m in ocpEntiteVerticalMerges) {
+        if (m.end > m.start) {
+          final entTop = excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: m.start);
+          final entBottom = excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: m.end);
+          sheet.merge(entTop, entBottom);
+          sheet.setMergedCellStyle(entTop, ocpMergedEntBandStyle);
+          if (m.mergePrevu) {
+            final prTop = excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: m.start);
+            final prBottom = excel.CellIndex.indexByColumnRow(columnIndex: colPrevuDt, rowIndex: m.end);
+            sheet.merge(prTop, prBottom);
+            sheet.setMergedCellStyle(prTop, ocpMergedPrevuBandStyle);
+          }
+        }
+      }
+
+      final shiftBlockMergedStyle = baseStyle(
+        bold: true,
+        bg: '#E3F2FD',
+        align: excel.HorizontalAlign.Center,
+        vAlign: excel.VerticalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+      );
+      final serviceBlockMergedStyle = baseStyle(
+        bold: true,
+        bg: '#F3F6FB',
+        align: excel.HorizontalAlign.Center,
+        vAlign: excel.VerticalAlign.Center,
+        wrap: excel.TextWrapping.WrapText,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+      );
+      final totalBlocMergedStyle = baseStyle(
+        bold: true,
+        bg: '#BBDEFB',
+        align: excel.HorizontalAlign.Center,
+        vAlign: excel.VerticalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+      );
+      final dispoBlockMergedStyle = baseStyle(
+        bold: true,
+        bg: '#E3F2FD',
+        align: excel.HorizontalAlign.Center,
+        vAlign: excel.VerticalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+      );
+      final totalPiBlockMergedStyle = baseStyle(
+        bold: true,
+        bg: '#E8F5E9',
+        fg: '#1B5E20',
+        align: excel.HorizontalAlign.Center,
+        vAlign: excel.VerticalAlign.Center,
+        left: borderThin,
+        right: borderThin,
+        top: borderThin,
+        bottom: borderThin,
+      );
+
+      for (final rg in shiftRanges) {
+        if (rg.end > rg.start) {
+          final shS = excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rg.start);
+          final shE = excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rg.end);
+          sheet.merge(shS, shE);
+          sheet.setMergedCellStyle(shS, shiftBlockMergedStyle);
+
+          final piS = excel.CellIndex.indexByColumnRow(columnIndex: totalPiCol, rowIndex: rg.start);
+          final piE = excel.CellIndex.indexByColumnRow(columnIndex: totalPiCol, rowIndex: rg.end);
+          sheet.merge(piS, piE);
+          sheet.setMergedCellStyle(piS, totalPiBlockMergedStyle);
+
+          final dS = excel.CellIndex.indexByColumnRow(columnIndex: colDispo, rowIndex: rg.start);
+          final dE = excel.CellIndex.indexByColumnRow(columnIndex: colDispo, rowIndex: rg.end);
+          sheet.merge(dS, dE);
+          sheet.setMergedCellStyle(dS, dispoBlockMergedStyle);
+
+          if (isAllowedExportShift(rg.shiftCode)) {
+            final tS = excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rg.start);
+            final tE = excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rg.end);
+            sheet.merge(tS, tE);
+            sheet.setMergedCellStyle(tS, totalBlocMergedStyle);
+          }
+        }
+      }
+      for (final rg in posteRanges) {
+        if (rg.end > rg.start) {
+          final svS = excel.CellIndex.indexByColumnRow(columnIndex: colService, rowIndex: rg.start);
+          final svE = excel.CellIndex.indexByColumnRow(columnIndex: colService, rowIndex: rg.end);
+          sheet.merge(svS, svE);
+          sheet.setMergedCellStyle(svS, serviceBlockMergedStyle);
+        }
+      }
+
+      for (final endRow in ocpEntBlockEndRows) {
+        if (endRow < headerRow + 1 || endRow > rowIndex - 1) continue;
+        for (int cc = 1; cc <= lastDataCol; cc++) {
+          final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: endRow);
+          final cell = sheet.cell(idx);
+          cell.cellStyle = (cell.cellStyle ?? baseStyle()).copyWith(bottomBorderVal: borderSep);
+        }
+      }
+    }
+
+    if (exportRowsForSheet.isEmpty) {
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: headerRow + 1),
+        excel.TextCellValue(
+          exportRows.isEmpty
+              ? 'Aucune donnée pour cette période'
+              : 'Aucune ligne exportable : les collaborateurs hors segment OCP (Autres) sont exclus de cette feuille.',
+        ),
+        cellStyle: baseStyle(align: excel.HorizontalAlign.Left, bold: true),
       );
     }
 
@@ -759,6 +2427,64 @@ class PointageExportService {
     final name =
         'pointage_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
     return _saveAndOpen(bytes, name);
+  }
+
+  /// Exporte en s'appuyant sur un modèle Excel fixe (template),
+  /// puis remplit uniquement les marqueurs journaliers selon [rows].
+  static Future<String> saveAndOpenExcelFromTemplate({
+    required String templatePath,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<PointageExportRow> rows,
+  }) async {
+    final templateFile = File(templatePath);
+    if (!await templateFile.exists()) {
+      throw Exception('Template introuvable: $templatePath');
+    }
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
+    final useComOnWindows = Platform.isWindows;
+    if (!useComOnWindows) {
+      throw Exception(
+        'Le mode "Excel Template OCP" nécessite Windows + Microsoft Excel (COM).',
+      );
+    }
+
+    final rowsPayload = rows.map((r) {
+      final split = _splitFullName(r.employeNom);
+      final markers = <String, String>{};
+      final daysCount = end.difference(start).inDays + 1;
+      for (int i = 0; i < daysCount; i++) {
+        final d = _dayKey(start.add(Duration(days: i)));
+        final status = r.dayStatusByDay[d] ?? '';
+        final fallback = r.hoursByDay[d] ?? '';
+        final marker = PointageExportService.ocpExcelDayMarker(status, fallback);
+        markers['${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}'] = marker;
+      }
+      return {
+        'nom': split.$1,
+        'prenom': split.$2,
+        'poste': r.poste,
+        'markers': markers,
+      };
+    }).toList();
+
+    final fileName =
+        'pt_ocp_${startDate.year}${startDate.month.toString().padLeft(2, '0')}${startDate.day.toString().padLeft(2, '0')}_${endDate.year}${endDate.month.toString().padLeft(2, '0')}${endDate.day.toString().padLeft(2, '0')}.xlsx';
+    try {
+      return await _saveTemplateWithExcelCom(
+        templatePath: templatePath,
+        outputFileName: fileName,
+        rowsPayload: rowsPayload,
+        startDate: start,
+        endDate: end,
+      );
+    } catch (e) {
+      throw Exception(
+        'Échec export template via Excel COM. '
+        'Vérifiez que Microsoft Excel est installé et que le fichier template est accessible. Détail: $e',
+      );
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -793,6 +2519,312 @@ class PointageExportService {
     return filePath;
   }
 
+  static Future<String> _saveTemplateWithExcelCom({
+    required String templatePath,
+    required String outputFileName,
+    required List<Map<String, dynamic>> rowsPayload,
+    required DateTime startDate,
+    required DateTime endDate,
+  }) async {
+    final outDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+    await Directory(outDir.path).create(recursive: true);
+    final outPath = _buildUniquePath(outDir.path, outputFileName);
+    await File(templatePath).copy(outPath);
+
+    final tempDir = await getTemporaryDirectory();
+    final payloadPath = '${tempDir.path}${Platform.pathSeparator}ocp_template_rows.json';
+    final scriptPath = '${tempDir.path}${Platform.pathSeparator}ocp_template_fill.ps1';
+    await File(payloadPath).writeAsString(jsonEncode(rowsPayload));
+
+    String psLiteral(String p) => "'${p.replaceAll("'", "''")}'";
+
+    final logPath = '${tempDir.path}${Platform.pathSeparator}ocp_fill_log.txt';
+
+    final psScript = '''
+\$ErrorActionPreference = "Stop"
+\$output    = ${psLiteral(outPath)}
+\$logPath   = ${psLiteral(logPath)}
+\$payloadPath = ${psLiteral(payloadPath)}
+\$rowsPayload = Get-Content -Raw -Path \$payloadPath | ConvertFrom-Json
+\$startDate = [datetime]::ParseExact("${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}", "yyyy-MM-dd", \$null)
+\$endDate   = [datetime]::ParseExact("${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}", "yyyy-MM-dd", \$null)
+\$monthMap  = @{1='Jan';2='Feb';3='Mar';4='Apr';5='May';6='Jun';7='Jul';8='Aug';9='Sep';10='Oct';11='Nov';12='Dec'}
+\$dayMapFr  = @{0='Dimanche';1='Lundi';2='Mardi';3='Mercredi';4='Jeudi';5='Vendredi';6='Samedi'}
+\$log = [System.Collections.Generic.List[string]]::new()
+
+function Log([string]\$msg) { \$log.Add(\$msg) }
+
+function Norm([string]\$s) {
+  if ([string]::IsNullOrEmpty(\$s)) { return '' }
+  \$x = \$s.ToLowerInvariant().Trim()
+  \$x = \$x -replace '[àáâãäå]','a' -replace '[éèêë]','e' -replace '[îïì]','i' -replace '[ôöò]','o' -replace '[ùûüú]','u' -replace 'ç','c' -replace 'ñ','n'
+  \$x = \$x -replace "[^a-z0-9 ]",' ' -replace '\\s+',' '
+  return \$x.Trim()
+}
+function NKey([string]\$s) { return ((Norm \$s) -split ' ' | Where-Object { \$_ } | Sort-Object) -join '|' }
+function CellStr(\$v) { if (\$null -eq \$v) { return '' } ; return [string]\$v }
+
+\$excel = New-Object -ComObject Excel.Application
+\$excel.Visible = \$false
+\$excel.DisplayAlerts = \$false
+\$wb = \$null ; \$ws = \$null
+try {
+  \$wb = \$excel.Workbooks.Open(\$output, 0, \$false)
+  \$ws = \$wb.Worksheets.Item(1)
+
+  # ── 1. Read ALL data at once (single COM call) ──────────────────────────────
+  \$ur      = \$ws.UsedRange
+  \$urRow0  = \$ur.Row          # first row of used range (1-based)
+  \$urCol0  = \$ur.Column       # first col of used range (1-based)
+  \$urRows  = \$ur.Rows.Count
+  \$urCols  = \$ur.Columns.Count
+  \$allData = \$ur.Value2       # 2-D array [1..urRows, 1..urCols] or scalar
+
+  # Helper: get cell value from in-memory array (r,c are absolute 1-based sheet coords)
+  function GV([int]\$r,[int]\$c) {
+    \$ri = \$r - \$urRow0 + 1 ; \$ci = \$c - \$urCol0 + 1
+    if (\$ri -lt 1 -or \$ci -lt 1 -or \$ri -gt \$urRows -or \$ci -gt \$urCols) { return '' }
+    if (\$null -eq \$allData) { return '' }
+    if (\$allData -isnot [System.Array]) { return CellStr \$allData }
+    \$v = \$allData[\$ri,\$ci]
+    return CellStr \$v
+  }
+
+  \$totalRows = \$urRow0 + \$urRows - 1
+  \$totalCols = \$urCol0 + \$urCols - 1
+  Log "UsedRange: rows \$urRow0..\$totalRows  cols \$urCol0..\$totalCols"
+
+  # ── 2. Auto-detect header row (Nom+Prénom OU colonne « Nom complet ») ───────
+  \$headerRow = \$null ; \$nomCol = \$null ; \$prenomCol = \$null ; \$nomCompletCol = \$null ; \$posteCol = \$null
+  for (\$r = \$urRow0; \$r -le [Math]::Min(\$urRow0+30, \$totalRows); \$r++) {
+    \$fNom = \$false ; \$fPre = \$false ; \$fNomComplet = \$false
+    for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
+      \$t = (GV \$r \$c).Trim()
+      if (\$t -ieq 'nom complet' -or \$t -match '(?i)^nom\\s+et\\s+pr') { \$nomCompletCol = \$c ; \$fNomComplet = \$true }
+      elseif (\$t -ieq 'nom')    { \$nomCol   = \$c ; \$fNom = \$true }
+      if (\$t -ieq 'prenom' -or \$t -ieq 'prénom') { \$prenomCol = \$c ; \$fPre = \$true }
+      if (\$t -ieq 'poste')  { \$posteCol  = \$c }
+    }
+    if (\$fNomComplet -or (\$fNom -and \$fPre)) { \$headerRow = \$r ; break }
+  }
+
+  # Fallback: find row with date pattern "1-May"
+  if (\$null -eq \$headerRow) {
+    for (\$r = \$urRow0; \$r -le [Math]::Min(\$urRow0+30, \$totalRows); \$r++) {
+      for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
+        if ((GV \$r \$c) -match '^\\d{1,2}[-/ ][A-Za-z]{3}') { \$headerRow = \$r ; break }
+      }
+      if (\$null -ne \$headerRow) { break }
+    }
+  }
+  if (\$null -eq \$headerRow) { \$headerRow = 9 }
+  if (\$null -ne \$nomCompletCol) {
+    \$nomCol = \$nomCompletCol
+    \$prenomCol = \$nomCompletCol
+  } else {
+    if (\$null -eq \$nomCol)    { \$nomCol    = 5 }
+    if (\$null -eq \$prenomCol) { \$prenomCol = 6 }
+  }
+  if (\$null -eq \$posteCol)  { \$posteCol  = \$null }
+  Log "headerRow=\$headerRow  nomCompletCol=\$nomCompletCol  nomCol=\$nomCol  prenomCol=\$prenomCol  posteCol=\$posteCol"
+
+  # ── 3. Detect firstDayCol & lastDayCol ─────────────────────────────────────
+  \$firstDayCol = \$null
+  for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
+    if ((GV \$headerRow \$c) -match '^\\d{1,2}[-/ ][A-Za-z]{3}') { \$firstDayCol = \$c ; break }
+  }
+  if (\$null -eq \$firstDayCol) {
+    \$firstDayCol = if (\$null -ne \$posteCol) { \$posteCol+1 } else { [Math]::Max(\$nomCol+2,8) }
+  }
+  \$shiftsCol = \$totalCols + 1
+  for (\$c = \$firstDayCol; \$c -le \$totalCols; \$c++) {
+    if ((GV \$headerRow \$c) -imatch 'nombre.*shift|shift.*nombre') { \$shiftsCol = \$c ; break }
+  }
+  \$lastDayCol = \$shiftsCol - 2
+  if (\$lastDayCol -lt \$firstDayCol) { \$lastDayCol = \$totalCols }
+  \$dayNamesRow  = if (\$headerRow -gt 1) { \$headerRow-1 } else { \$headerRow }
+  \$firstDataRow = \$headerRow + 1
+  Log "firstDayCol=\$firstDayCol  lastDayCol=\$lastDayCol  dayNamesRow=\$dayNamesRow  firstDataRow=\$firstDataRow"
+
+  # ── 4. Build selected-days list & column map ────────────────────────────────
+  \$selectedDays = @()
+  \$d = \$startDate
+  while (\$d -le \$endDate) { \$selectedDays += \$d ; \$d = \$d.AddDays(1) }
+
+  \$dateToCol = @{}
+  for (\$c = \$firstDayCol; \$c -le \$lastDayCol; \$c++) {
+    \$txt = (GV \$headerRow \$c).Trim()
+    if (\$txt -match '^(\\d{1,2})[-/ ]([A-Za-z]{3,})\$') {
+      \$day = [int]\$Matches[1] ; \$monTxt = \$Matches[2].ToLower()
+      \$mon = switch (\$monTxt) {
+        'jan'{1};'feb'{2};'mar'{3};'apr'{4};'may'{5};'jun'{6};'jul'{7};'aug'{8};'sep'{9};'oct'{10};'nov'{11};'dec'{12}
+        'janv'{1};'fev'{2};'fév'{2};'avr'{4};'juil'{7};'sept'{9};default{0}
+      }
+      if (\$mon -gt 0) { \$dateToCol[("{0}-{1:D2}-{2:D2}" -f \$startDate.Year,\$mon,\$day)] = \$c }
+    }
+  }
+  Log "dateToCol keys: \$(\$dateToCol.Keys -join ', ')"
+
+  \$finalMap = @{}
+  foreach (\$sd in \$selectedDays) {
+    \$k = \$sd.ToString('yyyy-MM-dd')
+    if (\$dateToCol.ContainsKey(\$k)) { \$finalMap[\$k] = \$dateToCol[\$k] }
+  }
+  if (\$finalMap.Count -eq 0) {
+    for (\$i=0; \$i -lt \$selectedDays.Count; \$i++) {
+      \$c = \$firstDayCol + \$i
+      if (\$c -le \$lastDayCol) { \$finalMap[\$selectedDays[\$i].ToString('yyyy-MM-dd')] = \$c }
+    }
+  }
+  Log "finalMap (\$(\$finalMap.Count) days): \$(\$finalMap.Keys -join ', ')"
+
+  # ── 5. Rewrite day headers (individual cells – small count, OK) ─────────────
+  for (\$c=\$firstDayCol; \$c -le \$lastDayCol; \$c++) {
+    \$ws.Cells.Item(\$dayNamesRow,\$c).Value2 = ''
+    \$ws.Cells.Item(\$headerRow,\$c).Value2   = ''
+  }
+  foreach (\$sd in \$selectedDays) {
+    \$k = \$sd.ToString('yyyy-MM-dd')
+    if (-not \$finalMap.ContainsKey(\$k)) { continue }
+    \$c = [int]\$finalMap[\$k]
+    \$ws.Cells.Item(\$dayNamesRow,\$c).Value2 = \$dayMapFr[[int]\$sd.DayOfWeek]
+    \$ws.Cells.Item(\$headerRow,\$c).Value2   = "{0}-{1}" -f \$sd.Day, \$monthMap[\$sd.Month]
+  }
+
+  # ── 6. Update Période / Mois de labels ─────────────────────────────────────
+  \$periodText = "Période: " + \$startDate.ToString('dd/MM/yyyy') + " - " + \$endDate.ToString('dd/MM/yyyy')
+  \$monthText  = "Mois de " + (Get-Culture).TextInfo.ToTitleCase(\$startDate.ToString('MMMM')) + " " + \$startDate.Year
+  for (\$r=\$urRow0; \$r -le [Math]::Min(\$urRow0+25,\$totalRows); \$r++) {
+    for (\$c=\$urCol0; \$c -le \$totalCols; \$c++) {
+      \$t = (GV \$r \$c).ToLower()
+      if (\$t -match 'p.riode|periode')  { \$ws.Cells.Item(\$r,\$c).Value2 = \$periodText }
+      elseif (\$t -match 'mois de') { \$ws.Cells.Item(\$r,\$c).Value2 = \$monthText }
+    }
+  }
+
+  # ── 7. Build name index from in-memory data ─────────────────────────────────
+  \$byKey  = @{}   # NKey(nom+prenom) -> row
+  \$byComb = @{}   # Norm(nom+prenom) -> row
+  for (\$r=\$firstDataRow; \$r -le \$totalRows; \$r++) {
+    if (\$null -ne \$nomCompletCol) {
+      \$full = (GV \$r \$nomCompletCol).Trim()
+      \$parts = \$full -split '\\s+'
+      \$nom = if (\$parts.Count -gt 0) { \$parts[0] } else { '' }
+      \$prenom = if (\$parts.Count -gt 1) { (\$parts[1..(\$parts.Count-1)] -join ' ') } else { '' }
+    } else {
+      \$nom    = GV \$r \$nomCol
+      \$prenom = GV \$r \$prenomCol
+      \$full   = "\$nom \$prenom".Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace(\$full)) { continue }
+    \$k = NKey \$full ; \$cb = Norm \$full
+    if (-not \$byKey.ContainsKey(\$k))  { \$byKey[\$k]  = \$r }
+    if (-not \$byComb.ContainsKey(\$cb)) { \$byComb[\$cb] = \$r }
+    # Index nom seul (recherche FindRow2)
+    \$kn = NKey \$nom
+    if (-not \$byKey.ContainsKey(\$kn)) { \$byKey[\$kn] = \$r }
+  }
+  Log "Template rows indexed: \$(\$byKey.Count)"
+
+  function FindRow2([string]\$nom,[string]\$prenom) {
+    \$full = "\$nom \$prenom".Trim()
+    \$k = NKey \$full
+    if (\$byKey.ContainsKey(\$k))  { return [int]\$byKey[\$k] }
+    \$cb = Norm \$full
+    if (\$byComb.ContainsKey(\$cb)) { return [int]\$byComb[\$cb] }
+    \$kn = NKey \$nom
+    if (\$byKey.ContainsKey(\$kn)) { return [int]\$byKey[\$kn] }
+    # Last resort: check if nom is a substring of any key
+    foreach (\$entry in \$byKey.GetEnumerator()) {
+      if (\$entry.Key -like "*\$(Norm \$nom)*") { return [int]\$entry.Value }
+    }
+    return \$null
+  }
+
+  # ── 8. Build write list in memory, then batch-write ─────────────────────────
+  \$writes = [System.Collections.Generic.List[object]]::new()
+  \$unmatched = [System.Collections.Generic.List[string]]::new()
+
+  foreach (\$row in \$rowsPayload) {
+    \$rn = [string]\$row.nom ; \$rp = [string]\$row.prenom
+    \$t = FindRow2 \$rn \$rp
+    if (\$null -eq \$t) { \$unmatched.Add("\$rn \$rp") ; continue }
+    foreach (\$entry in \$row.markers.PSObject.Properties) {
+      if (-not \$finalMap.ContainsKey(\$entry.Name)) { continue }
+      \$v = [string]\$entry.Value
+      if (\$v -eq '') { continue }
+      \$writes.Add(@{ r=\$t; c=[int]\$finalMap[\$entry.Name]; v=\$v })
+    }
+  }
+  Log "Matched \$(\$rowsPayload.Count - \$unmatched.Count)/\$(\$rowsPayload.Count) employees, writes=\$(\$writes.Count)"
+  if (\$unmatched.Count -gt 0) { Log "UNMATCHED: \$(\$unmatched -join '; ')" }
+
+  # Clear day columns for matched rows in bulk using Range union
+  \$matchedRowSet = \$writes | ForEach-Object { \$_.r } | Select-Object -Unique
+  foreach (\$mr in \$matchedRowSet) {
+    \$clr = \$ws.Range(\$ws.Cells.Item([int]\$mr, \$firstDayCol), \$ws.Cells.Item([int]\$mr, \$lastDayCol))
+    \$clr.ClearContents()
+  }
+
+  # Write values
+  foreach (\$w in \$writes) {
+    \$ws.Cells.Item([int]\$w.r, [int]\$w.c).Value2 = \$w.v
+  }
+
+  \$wb.Save()
+  \$wb.Close(\$true)
+} catch {
+  Add-Content \$logPath "[ERROR] \$_"
+  throw
+} finally {
+  try { [IO.File]::WriteAllLines(\$logPath, \$log) } catch {}
+  \$excel.Quit()
+  if (\$ws  -ne \$null) { [Runtime.Interopservices.Marshal]::ReleaseComObject(\$ws)    | Out-Null }
+  if (\$wb  -ne \$null) { [Runtime.Interopservices.Marshal]::ReleaseComObject(\$wb)    | Out-Null }
+  [Runtime.Interopservices.Marshal]::ReleaseComObject(\$excel) | Out-Null
+}
+''';
+    await File(scriptPath).writeAsString(psScript);
+    final res = await Process.run(
+      'powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    );
+    if (res.exitCode != 0) {
+      String logContent = '';
+      try { logContent = await File(logPath).readAsString(); } catch (_) {}
+      throw Exception('Échec export template via Excel COM:\n${res.stderr}\n$logContent');
+    }
+    // Surface diagnostic log (unmatched employees etc.)
+    try {
+      final logContent = await File(logPath).readAsString();
+      if (logContent.contains('UNMATCHED')) {
+        // Non-fatal: log to stderr so developer can see it
+        // ignore: avoid_print
+        print('[OCP Export] $logContent');
+      }
+    } catch (_) {}
+    try {
+      await Process.run('cmd', ['/c', 'start', '', outPath]);
+    } catch (_) {}
+    try {
+      await Process.run('explorer', ['/select,', outPath]);
+    } catch (_) {}
+    return outPath;
+  }
+
+  static String _buildUniquePath(String dirPath, String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    final base = dot > 0 ? fileName.substring(0, dot) : fileName;
+    final ext = dot > 0 ? fileName.substring(dot) : '';
+    var candidate = '$dirPath${Platform.pathSeparator}$fileName';
+    var i = 1;
+    while (File(candidate).existsSync()) {
+      candidate = '$dirPath${Platform.pathSeparator}${base}_$i$ext';
+      i++;
+    }
+    return candidate;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // حساب صفوف Excel
   // ═══════════════════════════════════════════════════════════════════════
@@ -802,10 +2834,26 @@ class PointageExportService {
     return DateTime(dt.year, dt.month, dt.day);
   }
 
+  static (String, String) _splitFullName(String fullName) {
+    final parts = fullName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return ('', '');
+    final nom = parts.first;
+    final prenom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    return (nom, prenom);
+  }
+
+  static bool _isPaidAbsenceByReason(
+    String? absenceReason,
+    List<AbsenceReasonConfig>? reasonConfigs,
+  ) {
+    return absenceReason != null &&
+        !isAbsenceReasonDeductFromSalary(absenceReason, reasonConfigs);
+  }
+
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})> employees,
     required List<PointageRecord> records,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
@@ -814,6 +2862,8 @@ class PointageExportService {
     bool requireConfirmedEntryExit = false,
     /// قائمة سجلات الساعات الإضافية (overtime_assignments) لإضافتها لكل موظف.
     List<OvertimeAssignment>? overtimeAssignments,
+    Map<String, String>? ocpExcelSegmentByEmployeId,
+    Map<String, bool>? ocpForceSalleControleByEmployeId,
   }) {
     final start = _dayKey(startDate);
     final end = _dayKey(endDate);
@@ -849,6 +2899,7 @@ class PointageExportService {
       }
 
       int daysWorked = 0;
+      int daysAbsentCount = 0;
       int restDaysCount = 0;
       double totalHours = 0;
       double overtimeHours = 0;
@@ -984,8 +3035,10 @@ class PointageExportService {
                 (r?.chefStatus == ChefPointageStatus.absent ? r?.absenceReason : null);
             final isPaidAbsence = absReason != null &&
                 !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
-            hoursByDay[d] = isPaidAbsence ? 'P' : 'A';
+            // Paid absence stays an absence in the grid (A) but keeps payable hours.
+            hoursByDay[d] = 'A';
             dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
+            daysAbsentCount++;
             if (absReason != null) {
               absenceReasonIdByDay[d] = absReason;
               if (isPaidAbsence) totalHours += hoursPerDay;
@@ -1000,7 +3053,7 @@ class PointageExportService {
         }
       }
 
-      final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
+      final daysAbsent = daysAbsentCount.clamp(0, days.length);
       final plannedShifts = (days.length - restDaysCount).clamp(0, days.length);
       final payableDays = totalHours / hoursPerDay;
       final periodBaseDays = (days.length - restDaysCount).clamp(1, days.length);
@@ -1009,7 +3062,10 @@ class PointageExportService {
         employeId: emp.id,
         employeCin: emp.cin,
         employeNom: emp.nom,
+        poste: emp.poste,
         equipeName: emp.equipeName,
+        equipeId: emp.equipeId,
+        orgTypeLabel: _orgTypeLabel(emp.equipeId),
         daysWorked: daysWorked,
         plannedShifts: plannedShifts,
         daysAbsent: daysAbsent,
@@ -1020,6 +3076,12 @@ class PointageExportService {
         hoursByDay: hoursByDay,
         dayStatusByDay: dayStatusByDay,
         absenceReasonIdByDay: absenceReasonIdByDay,
+        ocpExcelSegment: () {
+          final raw = (ocpExcelSegmentByEmployeId?[emp.id] ?? '').trim();
+          if (raw.isEmpty || !OcpExcelSegmentCode.allCodes.contains(raw)) return '';
+          return raw;
+        }(),
+        ocpForceSalleControle: ocpForceSalleControleByEmployeId?[emp.id] ?? false,
       ));
     }
 
@@ -1035,11 +3097,13 @@ class PointageExportService {
   static List<PointageExportRow> computeExcelRowsFromSnapshots({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String cin, String nom, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})> employees,
     required List<DailyEmployeeSnapshot> snapshots,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
     List<OvertimeAssignment>? overtimeAssignments,
+    Map<String, String>? ocpExcelSegmentByEmployeId,
+    Map<String, bool>? ocpForceSalleControleByEmployeId,
   }) {
     final start = _dayKey(startDate);
     final end = _dayKey(endDate);
@@ -1076,6 +3140,7 @@ class PointageExportService {
       final empOtByDay = overtimeByEmploye[emp.id] ?? {};
 
       int daysWorked = 0;
+      int daysAbsentCount = 0;
       int restDaysCount = 0;
       double totalHours = 0;
       double overtimeHours = 0;
@@ -1099,9 +3164,9 @@ class PointageExportService {
         final dayOt = empOtByDay[d] ?? 0;
 
         if (snap == null) {
-          // لا يوجد snapshot → غائب (لم يتم تأكيد الفريق هذا اليوم)
-          hoursByDay[d] = 'A';
-          dayStatusByDay[d] = 'absent';
+          // No confirmed snapshot for this day: keep neutral marker (not auto-absent).
+          hoursByDay[d] = '-';
+          dayStatusByDay[d] = '';
         } else {
           switch (snap.status) {
             case 'present':
@@ -1123,26 +3188,32 @@ class PointageExportService {
               hoursByDay[d] = 'G';
               dayStatusByDay[d] = 'leave';
             case 'paid_absence':
-              daysWorked++;
-              totalHours += hoursPerDay;
-              hoursByDay[d] = 'P';
-              dayStatusByDay[d] = 'paid_absence';
-              if (snap.absenceReason != null) absenceReasonIdByDay[d] = snap.absenceReason;
+              final isPaidByReason =
+                  _isPaidAbsenceByReason(snap.absenceReason, reasonConfigs);
+              daysAbsentCount++;
+              hoursByDay[d] = 'A';
+              dayStatusByDay[d] = isPaidByReason ? 'paid_absence' : 'absent';
+              if (isPaidByReason) {
+                totalHours += hoursPerDay;
+              }
+              if (snap.absenceReason != null) {
+                absenceReasonIdByDay[d] = snap.absenceReason;
+              }
             case 'rest':
               hoursByDay[d] = 'repos';
               dayStatusByDay[d] = 'rest';
               restDaysCount++;
             default: // 'absent' أو أي قيمة أخرى
               final absReason = snap.absenceReason;
-              final isPaid = absReason != null &&
-                  !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
+              final isPaid = _isPaidAbsenceByReason(absReason, reasonConfigs);
               if (isPaid) {
-                daysWorked++;
                 totalHours += hoursPerDay;
-                hoursByDay[d] = 'P';
+                daysAbsentCount++;
+                hoursByDay[d] = 'A';
                 dayStatusByDay[d] = 'paid_absence';
                 absenceReasonIdByDay[d] = absReason;
               } else {
+                daysAbsentCount++;
                 hoursByDay[d] = 'A';
                 dayStatusByDay[d] = 'absent';
                 if (absReason != null) absenceReasonIdByDay[d] = absReason;
@@ -1151,7 +3222,7 @@ class PointageExportService {
         }
       }
 
-      final daysAbsent = (days.length - restDaysCount - daysWorked).clamp(0, days.length);
+      final daysAbsent = daysAbsentCount.clamp(0, days.length);
       final plannedShifts = (days.length - restDaysCount).clamp(0, days.length);
       final payableDays = totalHours / hoursPerDay;
       final periodBaseDays = (days.length - restDaysCount).clamp(1, days.length);
@@ -1161,7 +3232,10 @@ class PointageExportService {
         employeId: emp.id,
         employeCin: emp.cin,
         employeNom: emp.nom,
+        poste: emp.poste,
         equipeName: emp.equipeName,
+        equipeId: emp.equipeId,
+        orgTypeLabel: _orgTypeLabel(emp.equipeId),
         daysWorked: daysWorked,
         plannedShifts: plannedShifts,
         daysAbsent: daysAbsent,
@@ -1172,9 +3246,44 @@ class PointageExportService {
         hoursByDay: hoursByDay,
         dayStatusByDay: dayStatusByDay,
         absenceReasonIdByDay: absenceReasonIdByDay,
+        ocpExcelSegment: () {
+          final raw = (ocpExcelSegmentByEmployeId?[emp.id] ?? '').trim();
+          if (raw.isEmpty || !OcpExcelSegmentCode.allCodes.contains(raw)) return '';
+          return raw;
+        }(),
+        ocpForceSalleControle: ocpForceSalleControleByEmployeId?[emp.id] ?? false,
       ));
     }
 
     return rows;
+  }
+
+  static String _orgTypeLabel(String? equipeId) {
+    final id = (equipeId ?? '').trim();
+    if (id.isEmpty || id == 'hors_equipe') return 'Hors équipe';
+    if (id.startsWith('distribution:')) return 'Distribution';
+    if (id.startsWith('groupe:')) return 'Groupe';
+    return 'Équipe';
+  }
+
+  static String _weekdayNameFr(int weekday) {
+    switch (weekday) {
+      case DateTime.monday:
+        return 'Lundi';
+      case DateTime.tuesday:
+        return 'Mardi';
+      case DateTime.wednesday:
+        return 'Mercredi';
+      case DateTime.thursday:
+        return 'Jeudi';
+      case DateTime.friday:
+        return 'Vendredi';
+      case DateTime.saturday:
+        return 'Samedi';
+      case DateTime.sunday:
+        return 'Dimanche';
+      default:
+        return '';
+    }
   }
 }

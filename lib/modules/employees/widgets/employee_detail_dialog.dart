@@ -429,6 +429,7 @@ class _PresenceLeaveCard extends StatefulWidget {
 
 class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
   final _deductDaysController = TextEditingController();
+  double? _leaveExtraOverride;
 
   @override
   void dispose() {
@@ -442,6 +443,7 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
     final isDirecteur = widget.isDirecteur;
     final start = parseDateDebut(employe.dateDebut);
     final leaveAcquired = leaveDaysAcquired(employe.dateDebut);
+    final leaveExtra = _leaveExtraOverride ?? employe.leaveDaysExtra;
     final hasStart = start != null && !start.isAfter(DateTime.now());
 
     return Consumer<CongesProvider>(
@@ -463,7 +465,7 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
             ),
           );
         }
-        final available = (leaveAcquired - taken).clamp(0.0, double.infinity);
+        final available = (leaveAcquired + leaveExtra - taken).clamp(0.0, double.infinity);
 
         return _cardShell(
           context,
@@ -477,10 +479,23 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
                   : const Text('—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_acquired'),
                   Text(hasStart ? _formatLeave(leaveAcquired) : '—', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              _row(context, 'Congé additionnel/reporté',
+                  Text(_formatLeave(leaveExtra), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_taken'),
                   Text(_formatLeave(taken), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_available'),
                   Text(hasStart ? _formatLeave(available) : '—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green.shade700))),
+              if (isDirecteur) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => _showAddReportedLeaveDialog(context, employe, leaveExtra),
+                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                    label: const Text('Ajouter solde reporté'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 6),
               Text(tr(context, 'employee_leave_rule'), style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               if (isDirecteur && hasStart) ...[
@@ -557,6 +572,52 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
   String _formatLeave(double days) {
     if (days == days.roundToDouble()) return '${days.toInt()}';
     return days.toStringAsFixed(1).replaceAll('.', ',');
+  }
+
+  Future<void> _showAddReportedLeaveDialog(BuildContext context, Employe employe, double currentExtra) async {
+    final ctrl = TextEditingController();
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ajouter solde reporté'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Jours à ajouter',
+            hintText: 'Ex: 12',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final parsed = double.tryParse(ctrl.text.trim().replaceFirst(',', '.'));
+              if (parsed == null || parsed <= 0) return;
+              Navigator.pop(ctx, parsed);
+            },
+            child: const Text('Ajouter'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+
+    if (value == null || value <= 0) return;
+    final next = (currentExtra + value).clamp(0.0, double.infinity).toDouble();
+    await context.read<EmployeesProvider>().updateEmploye(
+          employe.copyWith(leaveDaysExtra: next),
+        );
+    if (!mounted) return;
+    setState(() => _leaveExtraOverride = next);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Solde reporté mis à jour: ${_formatLeave(next)} jour(s).')),
+    );
   }
 }
 
