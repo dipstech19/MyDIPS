@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show max;
 import 'dart:typed_data';
@@ -625,7 +625,7 @@ class PointageExportService {
   // Excel — ورقة (sheet) منفصلة لكل فريق
   // ═══════════════════════════════════════════════════════════════════════
 
-  static Future<Uint8List> buildPointageExcel({
+  static Future<Uint8List> buildOcpPointageExcel({
     required DateTime startDate,
     required DateTime endDate,
     required List<PointageExportRow> rows,
@@ -2405,86 +2405,266 @@ class PointageExportService {
     return Uint8List.fromList(bytes);
   }
 
+  static Future<Uint8List> buildCompanyPointageExcel({
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<PointageExportRow> rows,
+    bool singleSheet = false,
+    String singleSheetName = 'Société',
+    bool includeEquipeColumnInSingleSheet = true,
+  }) async {
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
+    final days = <DateTime>[];
+    for (int i = 0; i <= end.difference(start).inDays; i++) {
+      days.add(start.add(Duration(days: i)));
+    }
+
+    final book = excel.Excel.createExcel();
+    final grouped = <String, List<PointageExportRow>>{};
+    if (singleSheet) {
+      final name = singleSheetName.trim().isEmpty ? 'Société' : singleSheetName.trim();
+      final sorted = List<PointageExportRow>.from(rows)
+        ..sort((a, b) {
+          final c = a.equipeName.compareTo(b.equipeName);
+          if (c != 0) return c;
+          return a.employeNom.compareTo(b.employeNom);
+        });
+      grouped[name] = sorted;
+    } else {
+      for (final r in rows) {
+        grouped.putIfAbsent(r.equipeName, () => []).add(r);
+      }
+    }
+
+    bool isFirst = true;
+    final defaultName = book.getDefaultSheet() ?? 'Sheet1';
+    String? firstSheetName;
+
+    for (final entry in grouped.entries) {
+      var sheetName = entry.key.length > 30 ? entry.key.substring(0, 30) : entry.key;
+      sheetName = sheetName.replaceAll(RegExp(r'[\\/*?\[\]:]'), '-');
+      if (isFirst) {
+        book.rename(defaultName, sheetName);
+        firstSheetName = sheetName;
+        isFirst = false;
+      } else {
+        book.copy(firstSheetName ?? defaultName, sheetName);
+      }
+
+      final sheet = book[sheetName];
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
+        excel.TextCellValue('Rapport pointage: ${entry.key}'),
+      );
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 1),
+        excel.TextCellValue('Du ${_dateFormat.format(start)} au ${_dateFormat.format(end)}'),
+      );
+
+      int col = 0;
+      const headerRow = 3;
+      final headerStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+        bottomBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        topBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        leftBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+        rightBorder: excel.Border(
+          borderStyle: excel.BorderStyle.Thin,
+          borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+        ),
+      );
+
+      if (singleSheet && includeEquipeColumnInSingleSheet) {
+        final idx =
+            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idx, excel.TextCellValue('Équipe'));
+        sheet.cell(idx).cellStyle = headerStyle;
+      }
+
+      final idxEmp = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+      sheet.updateCell(idxEmp, excel.TextCellValue('Collaborateur'));
+      sheet.cell(idxEmp).cellStyle = headerStyle;
+
+      for (final d in days) {
+        final idx = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idx, excel.TextCellValue(_dateFormat.format(d)));
+        sheet.cell(idx).cellStyle = headerStyle;
+      }
+
+      void setHeader(String label) {
+        final idx = excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: headerRow);
+        sheet.updateCell(idx, excel.TextCellValue(label));
+        sheet.cell(idx).cellStyle = headerStyle;
+      }
+
+      setHeader('Jours travailles');
+      setHeader('Jours absents');
+      setHeader('Total heures');
+      setHeader('Heures sup.');
+      setHeader('Temps total');
+      setHeader('Salaire net');
+      setHeader('Salaire periode');
+
+      var rowIndex = headerRow + 1;
+      for (final r in entry.value) {
+        col = 0;
+        if (singleSheet && includeEquipeColumnInSingleSheet) {
+          sheet.updateCell(
+            excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+            excel.TextCellValue(r.equipeName),
+          );
+        }
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.TextCellValue(r.employeNom),
+        );
+        final firstDayCol = (singleSheet && includeEquipeColumnInSingleSheet) ? 2 : 1;
+        var dayCol = firstDayCol;
+
+        excel.CellStyle makeDayStyle({String bg = '#FFFFFF', String fg = '#000000'}) {
+          return excel.CellStyle(
+            horizontalAlign: excel.HorizontalAlign.Center,
+            backgroundColorHex: excel.ExcelColor.fromHexString(bg),
+            fontColorHex: excel.ExcelColor.fromHexString(fg),
+            leftBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            rightBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            topBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+            bottomBorder: excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#BDBDBD'),
+            ),
+          );
+        }
+
+        for (final d in days) {
+          final val = r.hoursByDay[d] ?? '-';
+          final cellIndex =
+              excel.CellIndex.indexByColumnRow(columnIndex: dayCol, rowIndex: rowIndex);
+          final dayStatus = r.dayStatusByDay[d] ?? '';
+          final excel.CellStyle style;
+          switch (dayStatus) {
+            case 'present':
+              style = makeDayStyle(bg: '#C8E6C9', fg: '#1B5E20');
+            case 'absent':
+              style = makeDayStyle(bg: '#FFCDD2', fg: '#B71C1C');
+            case 'formation':
+              style = makeDayStyle(bg: '#BBDEFB', fg: '#0D47A1');
+            case 'leave':
+              style = makeDayStyle(bg: '#0D47A1', fg: '#FFFFFF');
+            case 'paid_absence':
+              style = makeDayStyle(bg: '#FFE0B2', fg: '#E65100');
+            case 'rest':
+              style = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
+            case 'pending_exit':
+              style = makeDayStyle(bg: '#FFE082', fg: '#E65100');
+            default:
+              style = makeDayStyle();
+          }
+          sheet.updateCell(cellIndex, excel.TextCellValue(val), cellStyle: style);
+          dayCol++;
+          col = dayCol;
+        }
+
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.TextCellValue('${r.daysWorked}/${r.plannedShifts}'),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.IntCellValue(r.daysAbsent),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.DoubleCellValue(r.totalHours),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.DoubleCellValue(r.overtimeHours),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.DoubleCellValue(r.totalHours + r.overtimeHours),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.DoubleCellValue(r.salaireNet),
+        );
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex),
+          excel.DoubleCellValue(r.salairePeriode),
+        );
+        rowIndex++;
+      }
+    }
+
+    if (grouped.isEmpty) {
+      book.rename(defaultName, 'Pointage');
+      book['Pointage'].updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
+        excel.TextCellValue('Aucune donnée pour cette période'),
+      );
+    }
+
+    final bytes = book.encode();
+    if (bytes == null) return Uint8List(0);
+    return Uint8List.fromList(bytes);
+  }
+
   /// حفظ ملف Excel على القرص ثم فتحه مباشرة.
   static Future<String> saveAndOpenExcel({
     required DateTime startDate,
     required DateTime endDate,
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
+    bool useOcpGrid = false,
     bool singleSheet = false,
     String singleSheetName = 'Société',
     bool includeEquipeColumnInSingleSheet = true,
   }) async {
-    final bytes = await buildPointageExcel(
-      startDate: startDate,
-      endDate: endDate,
-      rows: rows,
-      reasonConfigs: reasonConfigs,
-      singleSheet: singleSheet,
-      singleSheetName: singleSheetName,
-      includeEquipeColumnInSingleSheet: includeEquipeColumnInSingleSheet,
-    );
-    final name =
-        'pointage_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
+    final Uint8List bytes;
+    final String name;
+    if (useOcpGrid) {
+      bytes = await buildOcpPointageExcel(
+        startDate: startDate,
+        endDate: endDate,
+        rows: rows,
+        reasonConfigs: reasonConfigs,
+      );
+      name =
+          'pointage_ocp_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
+    } else {
+      bytes = await buildCompanyPointageExcel(
+        startDate: startDate,
+        endDate: endDate,
+        rows: rows,
+        singleSheet: singleSheet,
+        singleSheetName: singleSheetName,
+        includeEquipeColumnInSingleSheet: includeEquipeColumnInSingleSheet,
+      );
+      name =
+          'pointage_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
+    }
     return _saveAndOpen(bytes, name);
-  }
-
-  /// Exporte en s'appuyant sur un modèle Excel fixe (template),
-  /// puis remplit uniquement les marqueurs journaliers selon [rows].
-  static Future<String> saveAndOpenExcelFromTemplate({
-    required String templatePath,
-    required DateTime startDate,
-    required DateTime endDate,
-    required List<PointageExportRow> rows,
-  }) async {
-    final templateFile = File(templatePath);
-    if (!await templateFile.exists()) {
-      throw Exception('Template introuvable: $templatePath');
-    }
-    final start = _dayKey(startDate);
-    final end = _dayKey(endDate);
-    final useComOnWindows = Platform.isWindows;
-    if (!useComOnWindows) {
-      throw Exception(
-        'Le mode "Excel Template OCP" nécessite Windows + Microsoft Excel (COM).',
-      );
-    }
-
-    final rowsPayload = rows.map((r) {
-      final split = _splitFullName(r.employeNom);
-      final markers = <String, String>{};
-      final daysCount = end.difference(start).inDays + 1;
-      for (int i = 0; i < daysCount; i++) {
-        final d = _dayKey(start.add(Duration(days: i)));
-        final status = r.dayStatusByDay[d] ?? '';
-        final fallback = r.hoursByDay[d] ?? '';
-        final marker = PointageExportService.ocpExcelDayMarker(status, fallback);
-        markers['${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}'] = marker;
-      }
-      return {
-        'nom': split.$1,
-        'prenom': split.$2,
-        'poste': r.poste,
-        'markers': markers,
-      };
-    }).toList();
-
-    final fileName =
-        'pt_ocp_${startDate.year}${startDate.month.toString().padLeft(2, '0')}${startDate.day.toString().padLeft(2, '0')}_${endDate.year}${endDate.month.toString().padLeft(2, '0')}${endDate.day.toString().padLeft(2, '0')}.xlsx';
-    try {
-      return await _saveTemplateWithExcelCom(
-        templatePath: templatePath,
-        outputFileName: fileName,
-        rowsPayload: rowsPayload,
-        startDate: start,
-        endDate: end,
-      );
-    } catch (e) {
-      throw Exception(
-        'Échec export template via Excel COM. '
-        'Vérifiez que Microsoft Excel est installé et que le fichier template est accessible. Détail: $e',
-      );
-    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -2519,327 +2699,9 @@ class PointageExportService {
     return filePath;
   }
 
-  static Future<String> _saveTemplateWithExcelCom({
-    required String templatePath,
-    required String outputFileName,
-    required List<Map<String, dynamic>> rowsPayload,
-    required DateTime startDate,
-    required DateTime endDate,
-  }) async {
-    final outDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
-    await Directory(outDir.path).create(recursive: true);
-    final outPath = _buildUniquePath(outDir.path, outputFileName);
-    await File(templatePath).copy(outPath);
-
-    final tempDir = await getTemporaryDirectory();
-    final payloadPath = '${tempDir.path}${Platform.pathSeparator}ocp_template_rows.json';
-    final scriptPath = '${tempDir.path}${Platform.pathSeparator}ocp_template_fill.ps1';
-    await File(payloadPath).writeAsString(jsonEncode(rowsPayload));
-
-    String psLiteral(String p) => "'${p.replaceAll("'", "''")}'";
-
-    final logPath = '${tempDir.path}${Platform.pathSeparator}ocp_fill_log.txt';
-
-    final psScript = '''
-\$ErrorActionPreference = "Stop"
-\$output    = ${psLiteral(outPath)}
-\$logPath   = ${psLiteral(logPath)}
-\$payloadPath = ${psLiteral(payloadPath)}
-\$rowsPayload = Get-Content -Raw -Path \$payloadPath | ConvertFrom-Json
-\$startDate = [datetime]::ParseExact("${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}", "yyyy-MM-dd", \$null)
-\$endDate   = [datetime]::ParseExact("${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}", "yyyy-MM-dd", \$null)
-\$monthMap  = @{1='Jan';2='Feb';3='Mar';4='Apr';5='May';6='Jun';7='Jul';8='Aug';9='Sep';10='Oct';11='Nov';12='Dec'}
-\$dayMapFr  = @{0='Dimanche';1='Lundi';2='Mardi';3='Mercredi';4='Jeudi';5='Vendredi';6='Samedi'}
-\$log = [System.Collections.Generic.List[string]]::new()
-
-function Log([string]\$msg) { \$log.Add(\$msg) }
-
-function Norm([string]\$s) {
-  if ([string]::IsNullOrEmpty(\$s)) { return '' }
-  \$x = \$s.ToLowerInvariant().Trim()
-  \$x = \$x -replace '[àáâãäå]','a' -replace '[éèêë]','e' -replace '[îïì]','i' -replace '[ôöò]','o' -replace '[ùûüú]','u' -replace 'ç','c' -replace 'ñ','n'
-  \$x = \$x -replace "[^a-z0-9 ]",' ' -replace '\\s+',' '
-  return \$x.Trim()
-}
-function NKey([string]\$s) { return ((Norm \$s) -split ' ' | Where-Object { \$_ } | Sort-Object) -join '|' }
-function CellStr(\$v) { if (\$null -eq \$v) { return '' } ; return [string]\$v }
-
-\$excel = New-Object -ComObject Excel.Application
-\$excel.Visible = \$false
-\$excel.DisplayAlerts = \$false
-\$wb = \$null ; \$ws = \$null
-try {
-  \$wb = \$excel.Workbooks.Open(\$output, 0, \$false)
-  \$ws = \$wb.Worksheets.Item(1)
-
-  # ── 1. Read ALL data at once (single COM call) ──────────────────────────────
-  \$ur      = \$ws.UsedRange
-  \$urRow0  = \$ur.Row          # first row of used range (1-based)
-  \$urCol0  = \$ur.Column       # first col of used range (1-based)
-  \$urRows  = \$ur.Rows.Count
-  \$urCols  = \$ur.Columns.Count
-  \$allData = \$ur.Value2       # 2-D array [1..urRows, 1..urCols] or scalar
-
-  # Helper: get cell value from in-memory array (r,c are absolute 1-based sheet coords)
-  function GV([int]\$r,[int]\$c) {
-    \$ri = \$r - \$urRow0 + 1 ; \$ci = \$c - \$urCol0 + 1
-    if (\$ri -lt 1 -or \$ci -lt 1 -or \$ri -gt \$urRows -or \$ci -gt \$urCols) { return '' }
-    if (\$null -eq \$allData) { return '' }
-    if (\$allData -isnot [System.Array]) { return CellStr \$allData }
-    \$v = \$allData[\$ri,\$ci]
-    return CellStr \$v
-  }
-
-  \$totalRows = \$urRow0 + \$urRows - 1
-  \$totalCols = \$urCol0 + \$urCols - 1
-  Log "UsedRange: rows \$urRow0..\$totalRows  cols \$urCol0..\$totalCols"
-
-  # ── 2. Auto-detect header row (Nom+Prénom OU colonne « Nom complet ») ───────
-  \$headerRow = \$null ; \$nomCol = \$null ; \$prenomCol = \$null ; \$nomCompletCol = \$null ; \$posteCol = \$null
-  for (\$r = \$urRow0; \$r -le [Math]::Min(\$urRow0+30, \$totalRows); \$r++) {
-    \$fNom = \$false ; \$fPre = \$false ; \$fNomComplet = \$false
-    for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
-      \$t = (GV \$r \$c).Trim()
-      if (\$t -ieq 'nom complet' -or \$t -match '(?i)^nom\\s+et\\s+pr') { \$nomCompletCol = \$c ; \$fNomComplet = \$true }
-      elseif (\$t -ieq 'nom')    { \$nomCol   = \$c ; \$fNom = \$true }
-      if (\$t -ieq 'prenom' -or \$t -ieq 'prénom') { \$prenomCol = \$c ; \$fPre = \$true }
-      if (\$t -ieq 'poste')  { \$posteCol  = \$c }
-    }
-    if (\$fNomComplet -or (\$fNom -and \$fPre)) { \$headerRow = \$r ; break }
-  }
-
-  # Fallback: find row with date pattern "1-May"
-  if (\$null -eq \$headerRow) {
-    for (\$r = \$urRow0; \$r -le [Math]::Min(\$urRow0+30, \$totalRows); \$r++) {
-      for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
-        if ((GV \$r \$c) -match '^\\d{1,2}[-/ ][A-Za-z]{3}') { \$headerRow = \$r ; break }
-      }
-      if (\$null -ne \$headerRow) { break }
-    }
-  }
-  if (\$null -eq \$headerRow) { \$headerRow = 9 }
-  if (\$null -ne \$nomCompletCol) {
-    \$nomCol = \$nomCompletCol
-    \$prenomCol = \$nomCompletCol
-  } else {
-    if (\$null -eq \$nomCol)    { \$nomCol    = 5 }
-    if (\$null -eq \$prenomCol) { \$prenomCol = 6 }
-  }
-  if (\$null -eq \$posteCol)  { \$posteCol  = \$null }
-  Log "headerRow=\$headerRow  nomCompletCol=\$nomCompletCol  nomCol=\$nomCol  prenomCol=\$prenomCol  posteCol=\$posteCol"
-
-  # ── 3. Detect firstDayCol & lastDayCol ─────────────────────────────────────
-  \$firstDayCol = \$null
-  for (\$c = \$urCol0; \$c -le \$totalCols; \$c++) {
-    if ((GV \$headerRow \$c) -match '^\\d{1,2}[-/ ][A-Za-z]{3}') { \$firstDayCol = \$c ; break }
-  }
-  if (\$null -eq \$firstDayCol) {
-    \$firstDayCol = if (\$null -ne \$posteCol) { \$posteCol+1 } else { [Math]::Max(\$nomCol+2,8) }
-  }
-  \$shiftsCol = \$totalCols + 1
-  for (\$c = \$firstDayCol; \$c -le \$totalCols; \$c++) {
-    if ((GV \$headerRow \$c) -imatch 'nombre.*shift|shift.*nombre') { \$shiftsCol = \$c ; break }
-  }
-  \$lastDayCol = \$shiftsCol - 2
-  if (\$lastDayCol -lt \$firstDayCol) { \$lastDayCol = \$totalCols }
-  \$dayNamesRow  = if (\$headerRow -gt 1) { \$headerRow-1 } else { \$headerRow }
-  \$firstDataRow = \$headerRow + 1
-  Log "firstDayCol=\$firstDayCol  lastDayCol=\$lastDayCol  dayNamesRow=\$dayNamesRow  firstDataRow=\$firstDataRow"
-
-  # ── 4. Build selected-days list & column map ────────────────────────────────
-  \$selectedDays = @()
-  \$d = \$startDate
-  while (\$d -le \$endDate) { \$selectedDays += \$d ; \$d = \$d.AddDays(1) }
-
-  \$dateToCol = @{}
-  for (\$c = \$firstDayCol; \$c -le \$lastDayCol; \$c++) {
-    \$txt = (GV \$headerRow \$c).Trim()
-    if (\$txt -match '^(\\d{1,2})[-/ ]([A-Za-z]{3,})\$') {
-      \$day = [int]\$Matches[1] ; \$monTxt = \$Matches[2].ToLower()
-      \$mon = switch (\$monTxt) {
-        'jan'{1};'feb'{2};'mar'{3};'apr'{4};'may'{5};'jun'{6};'jul'{7};'aug'{8};'sep'{9};'oct'{10};'nov'{11};'dec'{12}
-        'janv'{1};'fev'{2};'fév'{2};'avr'{4};'juil'{7};'sept'{9};default{0}
-      }
-      if (\$mon -gt 0) { \$dateToCol[("{0}-{1:D2}-{2:D2}" -f \$startDate.Year,\$mon,\$day)] = \$c }
-    }
-  }
-  Log "dateToCol keys: \$(\$dateToCol.Keys -join ', ')"
-
-  \$finalMap = @{}
-  foreach (\$sd in \$selectedDays) {
-    \$k = \$sd.ToString('yyyy-MM-dd')
-    if (\$dateToCol.ContainsKey(\$k)) { \$finalMap[\$k] = \$dateToCol[\$k] }
-  }
-  if (\$finalMap.Count -eq 0) {
-    for (\$i=0; \$i -lt \$selectedDays.Count; \$i++) {
-      \$c = \$firstDayCol + \$i
-      if (\$c -le \$lastDayCol) { \$finalMap[\$selectedDays[\$i].ToString('yyyy-MM-dd')] = \$c }
-    }
-  }
-  Log "finalMap (\$(\$finalMap.Count) days): \$(\$finalMap.Keys -join ', ')"
-
-  # ── 5. Rewrite day headers (individual cells – small count, OK) ─────────────
-  for (\$c=\$firstDayCol; \$c -le \$lastDayCol; \$c++) {
-    \$ws.Cells.Item(\$dayNamesRow,\$c).Value2 = ''
-    \$ws.Cells.Item(\$headerRow,\$c).Value2   = ''
-  }
-  foreach (\$sd in \$selectedDays) {
-    \$k = \$sd.ToString('yyyy-MM-dd')
-    if (-not \$finalMap.ContainsKey(\$k)) { continue }
-    \$c = [int]\$finalMap[\$k]
-    \$ws.Cells.Item(\$dayNamesRow,\$c).Value2 = \$dayMapFr[[int]\$sd.DayOfWeek]
-    \$ws.Cells.Item(\$headerRow,\$c).Value2   = "{0}-{1}" -f \$sd.Day, \$monthMap[\$sd.Month]
-  }
-
-  # ── 6. Update Période / Mois de labels ─────────────────────────────────────
-  \$periodText = "Période: " + \$startDate.ToString('dd/MM/yyyy') + " - " + \$endDate.ToString('dd/MM/yyyy')
-  \$monthText  = "Mois de " + (Get-Culture).TextInfo.ToTitleCase(\$startDate.ToString('MMMM')) + " " + \$startDate.Year
-  for (\$r=\$urRow0; \$r -le [Math]::Min(\$urRow0+25,\$totalRows); \$r++) {
-    for (\$c=\$urCol0; \$c -le \$totalCols; \$c++) {
-      \$t = (GV \$r \$c).ToLower()
-      if (\$t -match 'p.riode|periode')  { \$ws.Cells.Item(\$r,\$c).Value2 = \$periodText }
-      elseif (\$t -match 'mois de') { \$ws.Cells.Item(\$r,\$c).Value2 = \$monthText }
-    }
-  }
-
-  # ── 7. Build name index from in-memory data ─────────────────────────────────
-  \$byKey  = @{}   # NKey(nom+prenom) -> row
-  \$byComb = @{}   # Norm(nom+prenom) -> row
-  for (\$r=\$firstDataRow; \$r -le \$totalRows; \$r++) {
-    if (\$null -ne \$nomCompletCol) {
-      \$full = (GV \$r \$nomCompletCol).Trim()
-      \$parts = \$full -split '\\s+'
-      \$nom = if (\$parts.Count -gt 0) { \$parts[0] } else { '' }
-      \$prenom = if (\$parts.Count -gt 1) { (\$parts[1..(\$parts.Count-1)] -join ' ') } else { '' }
-    } else {
-      \$nom    = GV \$r \$nomCol
-      \$prenom = GV \$r \$prenomCol
-      \$full   = "\$nom \$prenom".Trim()
-    }
-    if ([string]::IsNullOrWhiteSpace(\$full)) { continue }
-    \$k = NKey \$full ; \$cb = Norm \$full
-    if (-not \$byKey.ContainsKey(\$k))  { \$byKey[\$k]  = \$r }
-    if (-not \$byComb.ContainsKey(\$cb)) { \$byComb[\$cb] = \$r }
-    # Index nom seul (recherche FindRow2)
-    \$kn = NKey \$nom
-    if (-not \$byKey.ContainsKey(\$kn)) { \$byKey[\$kn] = \$r }
-  }
-  Log "Template rows indexed: \$(\$byKey.Count)"
-
-  function FindRow2([string]\$nom,[string]\$prenom) {
-    \$full = "\$nom \$prenom".Trim()
-    \$k = NKey \$full
-    if (\$byKey.ContainsKey(\$k))  { return [int]\$byKey[\$k] }
-    \$cb = Norm \$full
-    if (\$byComb.ContainsKey(\$cb)) { return [int]\$byComb[\$cb] }
-    \$kn = NKey \$nom
-    if (\$byKey.ContainsKey(\$kn)) { return [int]\$byKey[\$kn] }
-    # Last resort: check if nom is a substring of any key
-    foreach (\$entry in \$byKey.GetEnumerator()) {
-      if (\$entry.Key -like "*\$(Norm \$nom)*") { return [int]\$entry.Value }
-    }
-    return \$null
-  }
-
-  # ── 8. Build write list in memory, then batch-write ─────────────────────────
-  \$writes = [System.Collections.Generic.List[object]]::new()
-  \$unmatched = [System.Collections.Generic.List[string]]::new()
-
-  foreach (\$row in \$rowsPayload) {
-    \$rn = [string]\$row.nom ; \$rp = [string]\$row.prenom
-    \$t = FindRow2 \$rn \$rp
-    if (\$null -eq \$t) { \$unmatched.Add("\$rn \$rp") ; continue }
-    foreach (\$entry in \$row.markers.PSObject.Properties) {
-      if (-not \$finalMap.ContainsKey(\$entry.Name)) { continue }
-      \$v = [string]\$entry.Value
-      if (\$v -eq '') { continue }
-      \$writes.Add(@{ r=\$t; c=[int]\$finalMap[\$entry.Name]; v=\$v })
-    }
-  }
-  Log "Matched \$(\$rowsPayload.Count - \$unmatched.Count)/\$(\$rowsPayload.Count) employees, writes=\$(\$writes.Count)"
-  if (\$unmatched.Count -gt 0) { Log "UNMATCHED: \$(\$unmatched -join '; ')" }
-
-  # Clear day columns for matched rows in bulk using Range union
-  \$matchedRowSet = \$writes | ForEach-Object { \$_.r } | Select-Object -Unique
-  foreach (\$mr in \$matchedRowSet) {
-    \$clr = \$ws.Range(\$ws.Cells.Item([int]\$mr, \$firstDayCol), \$ws.Cells.Item([int]\$mr, \$lastDayCol))
-    \$clr.ClearContents()
-  }
-
-  # Write values
-  foreach (\$w in \$writes) {
-    \$ws.Cells.Item([int]\$w.r, [int]\$w.c).Value2 = \$w.v
-  }
-
-  \$wb.Save()
-  \$wb.Close(\$true)
-} catch {
-  Add-Content \$logPath "[ERROR] \$_"
-  throw
-} finally {
-  try { [IO.File]::WriteAllLines(\$logPath, \$log) } catch {}
-  \$excel.Quit()
-  if (\$ws  -ne \$null) { [Runtime.Interopservices.Marshal]::ReleaseComObject(\$ws)    | Out-Null }
-  if (\$wb  -ne \$null) { [Runtime.Interopservices.Marshal]::ReleaseComObject(\$wb)    | Out-Null }
-  [Runtime.Interopservices.Marshal]::ReleaseComObject(\$excel) | Out-Null
-}
-''';
-    await File(scriptPath).writeAsString(psScript);
-    final res = await Process.run(
-      'powershell',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-    );
-    if (res.exitCode != 0) {
-      String logContent = '';
-      try { logContent = await File(logPath).readAsString(); } catch (_) {}
-      throw Exception('Échec export template via Excel COM:\n${res.stderr}\n$logContent');
-    }
-    // Surface diagnostic log (unmatched employees etc.)
-    try {
-      final logContent = await File(logPath).readAsString();
-      if (logContent.contains('UNMATCHED')) {
-        // Non-fatal: log to stderr so developer can see it
-        // ignore: avoid_print
-        print('[OCP Export] $logContent');
-      }
-    } catch (_) {}
-    try {
-      await Process.run('cmd', ['/c', 'start', '', outPath]);
-    } catch (_) {}
-    try {
-      await Process.run('explorer', ['/select,', outPath]);
-    } catch (_) {}
-    return outPath;
-  }
-
-  static String _buildUniquePath(String dirPath, String fileName) {
-    final dot = fileName.lastIndexOf('.');
-    final base = dot > 0 ? fileName.substring(0, dot) : fileName;
-    final ext = dot > 0 ? fileName.substring(dot) : '';
-    var candidate = '$dirPath${Platform.pathSeparator}$fileName';
-    var i = 1;
-    while (File(candidate).existsSync()) {
-      candidate = '$dirPath${Platform.pathSeparator}${base}_$i$ext';
-      i++;
-    }
-    return candidate;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // حساب صفوف Excel
-  // ═══════════════════════════════════════════════════════════════════════
-
   /// Canonical day key: midnight of the given date, ignoring time component.
   static DateTime _dayKey(DateTime dt) {
     return DateTime(dt.year, dt.month, dt.day);
-  }
-
-  static (String, String) _splitFullName(String fullName) {
-    final parts = fullName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return ('', '');
-    final nom = parts.first;
-    final prenom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-    return (nom, prenom);
   }
 
   static bool _isPaidAbsenceByReason(

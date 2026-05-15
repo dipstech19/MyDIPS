@@ -1710,7 +1710,7 @@ class _PointagePageState extends State<PointagePage> {
                       employes,
                       pointageProvider,
                       initialScope: 'all',
-                      forceSingleSheet: true,
+                      useOcpGrid: true,
                       excludeDistribution: true,
                     ),
                     style: OutlinedButton.styleFrom(
@@ -1718,29 +1718,8 @@ class _PointagePageState extends State<PointagePage> {
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
                     ),
-                    icon: Icon(Icons.filter_alt_off_outlined, size: iconSize),
-                    label: Text('Excel sans Distribution', style: TextStyle(fontSize: labelSize)),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _showExcelExportDialog(
-                      context,
-                      allTeams,
-                      equipes,
-                      employes,
-                      pointageProvider,
-                      initialScope: 'all',
-                      forceSingleSheet: true,
-                      useFixedTemplate: true,
-                      fixedTemplatePath:
-                          r'C:\Users\omarh\Documents\DIPS_Managment\DIPS_Managment\Pointage_Template.xlsx',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
                     icon: Icon(Icons.grid_view_outlined, size: iconSize),
-                    label: Text('Excel Template OCP', style: TextStyle(fontSize: labelSize)),
+                    label: Text('Excel OCP', style: TextStyle(fontSize: labelSize)),
                   ),
                   if (_canViewValidatedExcel(auth))
                     OutlinedButton.icon(
@@ -3461,8 +3440,7 @@ class _PointagePageState extends State<PointagePage> {
     String? initialEquipeId,
     bool forceSingleSheet = false,
     bool excludeDistribution = false,
-    bool useFixedTemplate = false,
-    String? fixedTemplatePath,}
+    bool useOcpGrid = false,}
   ) async {
     final now = DateTime.now();
     DateTime start = DateTime(now.year, now.month, 1);
@@ -3688,7 +3666,7 @@ class _PointagePageState extends State<PointagePage> {
     final overtimeAssignments = await overtimeProvider.getForDateRange(start, end);
 
     // Export grille OCP : uniquement les employés avec un bloc OCP explicite (fiche employé).
-    if (useFixedTemplate || !forceSingleSheet) {
+    if (useOcpGrid) {
       final ocpSegmentByEmpId = {
         for (final e in employes) e.id: e.ocpExcelSegment.trim(),
       };
@@ -3828,23 +3806,16 @@ class _PointagePageState extends State<PointagePage> {
     final isTodayOnlyForLog = exportStartDay == exportTodayDay && exportEndDay == exportTodayDay;
     String filePath;
     try {
-      filePath = useFixedTemplate
-          ? await PointageExportService.saveAndOpenExcelFromTemplate(
-              templatePath: fixedTemplatePath ??
-                  r'C:\Users\omarh\Documents\DIPS_Managment\DIPS_Managment\Pointage_Template.xlsx',
-              startDate: start,
-              endDate: end,
-              rows: rows,
-            )
-          : await PointageExportService.saveAndOpenExcel(
-              startDate: start,
-              endDate: end,
-              rows: rows,
-              reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-              singleSheet: forceSingleSheet,
-              singleSheetName: 'Société',
-              includeEquipeColumnInSingleSheet: true,
-            );
+      filePath = await PointageExportService.saveAndOpenExcel(
+        startDate: start,
+        endDate: end,
+        rows: rows,
+        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
+        useOcpGrid: useOcpGrid,
+        singleSheet: forceSingleSheet,
+        singleSheetName: 'Société',
+        includeEquipeColumnInSingleSheet: true,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
