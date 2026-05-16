@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 import 'document_model.dart';
 
 /// Codes stockés dans [Employe.ocpExcelSegment] pour le regroupement export pointage OCP.
@@ -193,7 +194,7 @@ extension EmployeStatutExt on EmployeStatut {
       case EmployeStatut.enService:  return Colors.green;
       case EmployeStatut.quitte:     return Colors.red;
       case EmployeStatut.enConge:    return Colors.orange;
-      case EmployeStatut.enMaladie:  return Colors.blue;
+      case EmployeStatut.enMaladie:  return AppColors.brand;
     }
   }
 

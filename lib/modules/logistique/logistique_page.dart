@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
+﻿// ─────────────────────────────────────────────────────────────────────────────
 //  logistique_page.dart  (version Firebase)
 //  Connecté à Firestore via LogistiqueService
 //  Tous les modèles sont importés depuis vehicule_model.dart
@@ -17,9 +17,9 @@ import 'vehicule_model.dart';
 import 'logistique_service.dart';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
-const _cBlue       = Color(0xFF1565C0);
-const _cBlueDark   = Color(0xFF0D47A1);
-const _cBlueMid    = Color(0xFF1976D2);
+const _cBlue       = Color(0xFF000966);
+const _cBlueDark   = Color(0xFF00044D);
+const _cBlueMid    = Color(0xFF000966);
 const _cBlueSoft   = Color(0xFF42A5F5);
 const _cBlueFaint  = Color(0xFFE3F2FD);
 const _cBlueBorder = Color(0xFFBBDEFB);
@@ -1935,7 +1935,7 @@ class _VidangeCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(width: 42, height: 42,
-                decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF1565C0), Color(0xFF42A5F5)], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF000966), Color(0xFF42A5F5)], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.circular(12)),
                 child: const Icon(Icons.oil_barrel_outlined, color: Colors.white, size: 19)),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [

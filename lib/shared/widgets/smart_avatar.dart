@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 
 /// A smart avatar widget that handles both network URLs and local file paths
@@ -20,8 +20,8 @@ class SmartAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = backgroundColor ?? const Color(0xFF1565C0).withOpacity(0.15);
-    final txtColor = textColor ?? const Color(0xFF1565C0);
+    final bgColor = backgroundColor ?? const Color(0xFF000966).withOpacity(0.15);
+    final txtColor = textColor ?? const Color(0xFF000966);
     
     // Check if we have a valid image URL
     if (imageUrl == null || imageUrl!.isEmpty) {

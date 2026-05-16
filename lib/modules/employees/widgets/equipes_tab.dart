@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
@@ -75,7 +76,7 @@ class _EquipesTabState extends State<EquipesTab> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.group_add, color: Color(0xFF1565C0)),
+              Icon(Icons.group_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
               Text('Affecter des collaborateurs sans équipe'),
             ],
@@ -156,7 +157,7 @@ class _EquipesTabState extends State<EquipesTab> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white),
               onPressed: () {
                 if (selectedIds.isEmpty) return;
                 final target = widget.equipes.where((e) => e.id == selectedEquipeId).toList();
@@ -230,7 +231,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 icon: const Icon(Icons.group_add, size: 18),
                 label: const Text('Nouvelle Équipe'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0),
+                  backgroundColor: const Color(0xFF000966),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
@@ -312,7 +313,7 @@ class _EquipesTabState extends State<EquipesTab> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isExpanded
-              ? const Color(0xFF1565C0).withOpacity(0.4)
+              ? const Color(0xFF000966).withOpacity(0.4)
               : Colors.grey.shade200,
           width: isExpanded ? 1.5 : 1,
         ),
@@ -338,11 +339,11 @@ class _EquipesTabState extends State<EquipesTab> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1565C0).withOpacity(0.1),
+                      color: const Color(0xFF000966).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.groups,
-                        color: Color(0xFF1565C0), size: 24),
+                        color: Color(0xFF000966), size: 24),
                   ),
                   const SizedBox(width: 14),
                   // Info équipe
@@ -397,13 +398,13 @@ class _EquipesTabState extends State<EquipesTab> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
+                      color: AppColors.brandLight,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       '${membres.length} membre(s)',
                       style: TextStyle(
-                          color: Colors.blue.shade700,
+                          color: AppColors.brand,
                           fontSize: 12,
                           fontWeight: FontWeight.w600),
                     ),
@@ -441,7 +442,7 @@ class _EquipesTabState extends State<EquipesTab> {
                       style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
-                          color: Color(0xFF1565C0))),
+                          color: Color(0xFF000966))),
                   const SizedBox(height: 8),
                   _membreCard(
                     equipe: eq,
@@ -459,7 +460,7 @@ class _EquipesTabState extends State<EquipesTab> {
                           style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
-                              color: Color(0xFF1565C0))),
+                              color: Color(0xFF000966))),
                       // ✅ Directeur أو Chef ديال هاد الفريق
                       if (widget.canManageMembers || eq.chefId == _getCurrentUserId())
                         TextButton.icon(
@@ -467,7 +468,7 @@ class _EquipesTabState extends State<EquipesTab> {
                           icon: const Icon(Icons.person_add, size: 16),
                           label: const Text('Ajouter membre'),
                           style: TextButton.styleFrom(
-                              foregroundColor: const Color(0xFF1565C0)),
+                              foregroundColor: const Color(0xFF000966)),
                         ),
                     ],
                   ),
@@ -515,12 +516,12 @@ class _EquipesTabState extends State<EquipesTab> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: isChef
-            ? const Color(0xFF1565C0).withOpacity(0.06)
+            ? const Color(0xFF000966).withOpacity(0.06)
             : Colors.grey.shade50,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isChef
-              ? const Color(0xFF1565C0).withOpacity(0.2)
+              ? const Color(0xFF000966).withOpacity(0.2)
               : Colors.grey.shade200,
         ),
       ),
@@ -529,12 +530,12 @@ class _EquipesTabState extends State<EquipesTab> {
           CircleAvatar(
             radius: 16,
             backgroundColor: isChef
-                ? const Color(0xFF1565C0).withOpacity(0.15)
+                ? const Color(0xFF000966).withOpacity(0.15)
                 : Colors.grey.shade200,
             child: Text(
               nom.isNotEmpty ? nom[0] : '?',
               style: TextStyle(
-                color: isChef ? const Color(0xFF1565C0) : Colors.grey[600],
+                color: isChef ? const Color(0xFF000966) : Colors.grey[600],
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
               ),
@@ -564,12 +565,12 @@ class _EquipesTabState extends State<EquipesTab> {
               padding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFF1565C0).withOpacity(0.1),
+                color: const Color(0xFF000966).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Text('Chef',
                   style: TextStyle(
-                      color: Color(0xFF1565C0),
+                      color: Color(0xFF000966),
                       fontSize: 11,
                       fontWeight: FontWeight.bold)),
             ),
@@ -627,7 +628,7 @@ class _EquipesTabState extends State<EquipesTab> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.group_add, color: Color(0xFF1565C0)),
+              Icon(Icons.group_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
               Text('Nouvelle Équipe'),
             ],
@@ -717,7 +718,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 }
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
+                backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Créer'),
@@ -765,7 +766,7 @@ class _EquipesTabState extends State<EquipesTab> {
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.person_add, color: Color(0xFF1565C0)),
+              Icon(Icons.person_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
               Text('Ajouter un membre'),
             ],
@@ -833,7 +834,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 Navigator.pop(ctx);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
+                backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Ajouter'),

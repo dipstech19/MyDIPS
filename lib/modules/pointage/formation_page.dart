@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/site/site_model.dart';
@@ -262,7 +263,7 @@ class _FormationPageState extends State<FormationPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Formation planifiée avec succès'),
-          backgroundColor: Colors.blue,
+          backgroundColor: AppColors.brand,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -387,7 +388,7 @@ class _FormationPageState extends State<FormationPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Période de formation mise à jour pour ${employe.nom}.'),
-          backgroundColor: Colors.blue,
+          backgroundColor: AppColors.brand,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -420,10 +421,10 @@ class _FormationPageState extends State<FormationPage> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(Icons.school, color: Colors.blue.shade700, size: 24),
+                child: Icon(Icons.school, color: AppColors.brand, size: 24),
               ),
               const SizedBox(width: 12),
               Column(
@@ -457,7 +458,7 @@ class _FormationPageState extends State<FormationPage> {
                 children: [
                   Text(
                     'Paramètres',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 15, color: Colors.blue.shade700),
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 15, color: AppColors.brand),
                   ),
                   const SizedBox(height: 14),
 
@@ -558,7 +559,7 @@ class _FormationPageState extends State<FormationPage> {
                             : 'Planifier (${_fmtDate(_startDate)} → ${_fmtDate(_endDate)}) — ${_selectedEmployeIds.length} collaborateur(s)',
                       ),
                       style: FilledButton.styleFrom(
-                        backgroundColor: Colors.blue.shade700,
+                        backgroundColor: AppColors.brand,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
@@ -678,10 +679,10 @@ class _TeamCard extends StatelessWidget {
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppColors.brandLight,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(Icons.group, color: Colors.blue.shade700, size: 20),
+          child: Icon(Icons.group, color: AppColors.brand, size: 20),
         ),
         title: Text(
           team.equipeName,
@@ -698,12 +699,12 @@ class _TeamCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade100,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   '$inFormationCount en formation',
-                  style: TextStyle(fontSize: 10, color: Colors.blue.shade700, fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 10, color: AppColors.brand, fontWeight: FontWeight.w600),
                 ),
               ),
             ],
@@ -746,7 +747,7 @@ class _TeamCard extends StatelessWidget {
                           style: const TextStyle(fontSize: 12),
                         ),
                         style: TextButton.styleFrom(
-                          foregroundColor: Colors.blue.shade700,
+                          foregroundColor: AppColors.brand,
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           minimumSize: Size.zero,
                         ),
@@ -774,14 +775,14 @@ class _TeamCard extends StatelessWidget {
                     subtitle: alreadyIn
                         ? Text(
                             'Déjà en formation — cliquez modifier pour changer la période',
-                            style: TextStyle(fontSize: 11, color: Colors.blue.shade600),
+                            style: TextStyle(fontSize: 11, color: AppColors.brand),
                           )
                         : null,
                     secondary: alreadyIn
                         ? IconButton(
                             tooltip: 'Modifier la période',
                             onPressed: () => onEditTrainingRange(e),
-                            icon: Icon(Icons.edit_calendar, size: 18, color: Colors.blue.shade500),
+                            icon: Icon(Icons.edit_calendar, size: 18, color: AppColors.brandLight),
                           )
                         : null,
                     controlAffinity: ListTileControlAffinity.leading,
@@ -808,7 +809,7 @@ class _DateButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = Colors.blue.shade700;
+    final color = AppColors.brand;
     final fmt =
         '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
     return InkWell(

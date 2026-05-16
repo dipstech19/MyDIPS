@@ -8,6 +8,7 @@ import '../core/locale/app_locale.dart';
 import '../core/site/site_model.dart';
 import '../core/site/site_provider.dart';
 import '../core/utils/responsive.dart';
+import '../core/theme/app_theme.dart';
 import '../core/widgets/dips_brand_logo.dart';
 import '../core/notifications/push_notifications_service.dart';
 import '../modules/Paramètres/paramètres.dart';
@@ -33,6 +34,11 @@ import '../modules/shifts/shifts_page.dart';
 import '../modules/shifts/models/shift_models.dart';
 import 'director_dashboard_page.dart';
 
+const Color _kNavBlue = AppColors.brand;
+const double _kSidebarWidth = 220;
+const double _kSidebarRailWidth = 72;
+const Duration _kSidebarAnim = Duration(milliseconds: 280);
+
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
 
@@ -42,6 +48,7 @@ class MainLayout extends StatefulWidget {
 
 class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
   int _selectedIndex = 0;
+  bool _sidebarOpen = true;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String? _listeningOvertimeEquipeId;
   String? _lastUserId;
@@ -263,6 +270,109 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     }
   }
 
+  Widget _buildNavEntry(
+    BuildContext context, {
+    required _NavItem item,
+    required int index,
+    required bool isSelected,
+    required bool expanded,
+    required Future<void> Function(int index) onNavTap,
+    VoidCallback? onItemTap,
+  }) {
+    Future<void> handleTap() async {
+      await onNavTap(index);
+      onItemTap?.call();
+    }
+
+    Widget badgeDot() {
+      if (item.badgeCount <= 0) return const SizedBox.shrink();
+      return Container(
+        constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+        decoration: BoxDecoration(
+          color: Colors.redAccent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          item.badgeCount > 99 ? '99+' : item.badgeCount.toString(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w700,
+            height: 1.0,
+          ),
+        ),
+      );
+    }
+
+    final tileDecoration = BoxDecoration(
+      color: isSelected ? Colors.white.withOpacity(0.2) : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+    );
+
+    if (!expanded) {
+      return Tooltip(
+        message: item.label,
+        waitDuration: const Duration(milliseconds: 400),
+        child: InkWell(
+          onTap: handleTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: tileDecoration,
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  item.icon,
+                  size: 22,
+                  color: isSelected ? Colors.white : Colors.white70,
+                ),
+                if (item.badgeCount > 0)
+                  Positioned(right: 10, top: 4, child: badgeDot()),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: tileDecoration,
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          item.icon,
+          color: isSelected ? Colors.white : Colors.white70,
+        ),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                item.label,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white70,
+                  fontWeight:
+                      isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (item.badgeCount > 0) ...[
+              const SizedBox(width: 6),
+              badgeDot(),
+            ],
+          ],
+        ),
+        onTap: handleTap,
+      ),
+    );
+  }
+
   Widget _buildSidebarContent(
       BuildContext context,
       AuthProvider auth,
@@ -270,33 +380,68 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
         VoidCallback? onItemTap,
         TabController? mobileTabController,
         required Future<void> Function(int index) onNavTap,
+        bool expanded = true,
+        bool showCollapseButton = false,
+        VoidCallback? onToggleSidebar,
       }) {
     final locale = context.watch<LocaleProvider>();
     final compactHeight = MediaQuery.sizeOf(context).height < 640;
+    final sidebarWidth = expanded ? _kSidebarWidth : _kSidebarRailWidth;
     return Container(
-      width: 220,
-      color: const Color(0xFF1565C0),
+      width: sidebarWidth,
+      color: _kNavBlue,
       child: Column(
         children: [
           // ── Header ─────────────────────────────────────────────────────────
           SafeArea(
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
+              padding: EdgeInsets.fromLTRB(
+                expanded ? 8 : 4,
+                16,
+                expanded ? 8 : 4,
+                expanded ? 20 : 12,
+              ),
               child: Column(
                 children: [
+                  if (showCollapseButton && onToggleSidebar != null)
+                    Align(
+                      alignment: expanded
+                          ? Alignment.centerRight
+                          : Alignment.center,
+                      child: IconButton(
+                        icon: Icon(
+                          expanded ? Icons.menu_open : Icons.menu,
+                          color: Colors.white70,
+                          size: 22,
+                        ),
+                        tooltip: expanded
+                            ? tr(context, 'nav_hide_menu')
+                            : tr(context, 'nav_show_menu'),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 36,
+                        ),
+                        onPressed: onToggleSidebar,
+                      ),
+                    ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: expanded ? 12 : 6,
+                    ),
                     child: DipsBrandLogo(
-                      height: 56,
+                      height: expanded ? 56 : 36,
                       fit: BoxFit.contain,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Système de Gestion',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
+                  if (expanded) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Système de Gestion',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -308,7 +453,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             final site = ctx.watch<SiteProvider>();
             final isSuperAdmin =
                 authInner.currentUser?.isSuperAdmin ?? false;
-            if (!isSuperAdmin) return const SizedBox.shrink();
+            if (!expanded || !isSuperAdmin) return const SizedBox.shrink();
             return Padding(
               padding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -322,7 +467,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                 child: DropdownButton<String>(
                   value: site.selectedSiteId ?? SiteId.all,
                   isExpanded: true,
-                  dropdownColor: const Color(0xFF1565C0),
+                  dropdownColor: _kNavBlue,
                   underline: const SizedBox(),
                   style:
                   const TextStyle(color: Colors.white, fontSize: 12),
@@ -351,67 +496,14 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
               itemCount: items.length,
               itemBuilder: (context, index) {
                 final item = items[index];
-                final isSelected = _selectedIndex == index;
-                return Container(
-                  margin: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? Colors.white.withOpacity(0.2)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: ListTile(
-                    leading: Icon(item.icon,
-                        color:
-                        isSelected ? Colors.white : Colors.white70),
-                    title: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            item.label,
-                            style: TextStyle(
-                              color:
-                              isSelected ? Colors.white : Colors.white70,
-                              fontWeight: isSelected
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (item.badgeCount > 0) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            constraints:
-                                const BoxConstraints(minWidth: 16, minHeight: 16),
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              item.badgeCount > 99
-                                  ? '99+'
-                                  : item.badgeCount.toString(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                height: 1.0,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    onTap: () async {
-                      await onNavTap(index);
-                      onItemTap?.call();
-                    },
-                  ),
+                return _buildNavEntry(
+                  context,
+                  item: item,
+                  index: index,
+                  isSelected: _selectedIndex == index,
+                  expanded: expanded,
+                  onNavTap: onNavTap,
+                  onItemTap: onItemTap,
                 );
               },
             ),
@@ -423,10 +515,35 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             SafeArea(
               top: false,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(expanded ? 12 : 8),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                  if (!expanded) ...[
+                    Tooltip(
+                      message: auth.currentUser?.nom ?? '',
+                      child: CircleAvatar(
+                        radius: 18,
+                        backgroundColor: Colors.white.withOpacity(0.2),
+                        child: Text(
+                          (auth.currentUser?.nom.isNotEmpty == true)
+                              ? auth.currentUser!.nom[0]
+                              : 'U',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.logout,
+                          color: Colors.white70, size: 20),
+                      tooltip: tr(context, 'logout'),
+                      onPressed: () => _confirmLogout(context),
+                    ),
+                  ] else
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -525,6 +642,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                       ],
                     ),
                   ),
+                  if (expanded) ...[
                   const SizedBox(height: 6),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -564,6 +682,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                   const Text('v1.0.0',
                       style: TextStyle(
                           color: Colors.white38, fontSize: 11)),
+                  ],
                   ],
                 ),
               ),
@@ -649,7 +768,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
             style: const TextStyle(fontSize: 18),
             overflow: TextOverflow.ellipsis,
           ),
-          backgroundColor: const Color(0xFF1565C0),
+          backgroundColor: _kNavBlue,
           foregroundColor: Colors.white,
           leading: IconButton(
             icon: const Icon(Icons.menu),
@@ -765,39 +884,48 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     }
 
     // ── Desktop / Tablet layout ────────────────────────────────────────────
+    Widget buildMainContent() {
+      final currentKey = effectiveItems[safeIndex].key;
+      final fullWidthPages = {'shifts'};
+      final useFullWidth = fullWidthPages.contains(currentKey);
+      if (useFullWidth) {
+        return IndexedStack(index: safeIndex, children: pages);
+      }
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1200),
+          child: IndexedStack(index: safeIndex, children: pages),
+        ),
+      );
+    }
+
     return Scaffold(
       body: Row(
         children: [
-          _buildSidebarContent(
-            context,
-            auth,
-            effectiveItems,
-            onNavTap: (index) => _handleNavIndexChange(
+          AnimatedContainer(
+            duration: _kSidebarAnim,
+            curve: Curves.easeInOutCubic,
+            width: _sidebarOpen ? _kSidebarWidth : _kSidebarRailWidth,
+            child: _buildSidebarContent(
               context,
-              index,
+              auth,
               effectiveItems,
-              isChefEquipe: isChefEquipe,
-              isGroupe: isGroupe,
-              isDistribution: isDistribution,
-              mobileTabController: null,
+              expanded: _sidebarOpen,
+              showCollapseButton: true,
+              onToggleSidebar: () =>
+                  setState(() => _sidebarOpen = !_sidebarOpen),
+              onNavTap: (index) => _handleNavIndexChange(
+                context,
+                index,
+                effectiveItems,
+                isChefEquipe: isChefEquipe,
+                isGroupe: isGroupe,
+                isDistribution: isDistribution,
+                mobileTabController: null,
+              ),
             ),
           ),
-          Expanded(
-            child: () {
-              final currentKey = effectiveItems[safeIndex].key;
-              final fullWidthPages = {'shifts'};
-              final useFullWidth = fullWidthPages.contains(currentKey);
-              if (useFullWidth) {
-                return IndexedStack(index: safeIndex, children: pages);
-              }
-              return Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1200),
-                  child: IndexedStack(index: safeIndex, children: pages),
-                ),
-              );
-            }(),
-          ),
+          Expanded(child: buildMainContent()),
         ],
       ),
     );
@@ -1011,7 +1139,7 @@ class _ChefDashboardPage extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: mobile ? 38 : 48,
-                    backgroundColor: const Color(0xFF1565C0).withOpacity(0.12),
+                    backgroundColor: _kNavBlue.withOpacity(0.12),
                     backgroundImage: hasPhoto ? NetworkImage(user!.photoUrl!) : null,
                     child: hasPhoto
                         ? null
@@ -1020,7 +1148,7 @@ class _ChefDashboardPage extends StatelessWidget {
                             style: TextStyle(
                               fontSize: mobile ? 26 : 32,
                               fontWeight: FontWeight.bold,
-                              color: const Color(0xFF1565C0),
+                              color: _kNavBlue,
                             ),
                           ),
                   ),

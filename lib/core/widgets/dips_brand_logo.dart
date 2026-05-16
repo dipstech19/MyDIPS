@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
-/// Logo DIPS (`assets/images/logo.png`) — connexion et barre latérale.
+/// Logo entreprise (`assets/images/dips_logo.png`) — connexion et barre latérale.
 class DipsBrandLogo extends StatelessWidget {
   const DipsBrandLogo({
     super.key,
@@ -18,7 +19,7 @@ class DipsBrandLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Image.asset(
-      'assets/images/logo.png',
+      'assets/images/dips_logo.png',
       height: height,
       width: width,
       fit: fit,
@@ -31,12 +32,12 @@ class DipsBrandLogo extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.business, color: const Color(0xFF1565C0), size: h * 0.85),
+        Icon(Icons.business, color: AppColors.brand, size: h * 0.85),
         const SizedBox(height: 4),
         Text(
           'DIPS',
           style: TextStyle(
-            color: const Color(0xFF1565C0),
+            color: AppColors.brand,
             fontSize: (h * 0.45).clamp(14, 28),
             fontWeight: FontWeight.bold,
           ),

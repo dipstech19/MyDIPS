@@ -1776,16 +1776,19 @@ class PointageExportService {
     final shiftRanges = <({int start, int end, String shiftCode, String? ocpBucket, int totalShifts})>[];
     final posteRanges = <({int start, int end})>[];
     final ocpEntiteVerticalMerges = <({int start, int end, bool mergePrevu})>[];
-    final ocpEntBlockEndRows = <int>{};
+    final ocpThickSepEndRows = <int>{};
     int? ocpEntBlocStartRow;
     var ocpEntBlocMergePrevu = false;
     String? currentVisualMergeKey;
 
-    void recordOcpEntiteVerticalMerge(int endInclusive) {
+    void recordOcpEntiteVerticalMerge(
+      int endInclusive, {
+      bool thickSeparator = false,
+    }) {
       if (ocpEntBlocStartRow == null) return;
       final s = ocpEntBlocStartRow!;
       if (endInclusive >= s) {
-        ocpEntBlockEndRows.add(endInclusive);
+        if (thickSeparator) ocpThickSepEndRows.add(endInclusive);
         if (endInclusive > s) {
           ocpEntiteVerticalMerges.add((
             start: s,
@@ -1912,7 +1915,10 @@ class PointageExportService {
         posteRanges.add((start: posteStartRow, end: rowIndex - 1));
       }
       if (!isFirstRow && showMergeBlock && ocpEntBlocStartRow != null) {
-        recordOcpEntiteVerticalMerge(rowIndex - 1);
+        recordOcpEntiteVerticalMerge(
+          rowIndex - 1,
+          thickSeparator: showShiftHeader,
+        );
       }
       if (showMergeBlock) shiftStartRow = rowIndex;
       if (showPosteHeader) posteStartRow = rowIndex;
@@ -1950,7 +1956,7 @@ class PointageExportService {
                             : shiftCode == 'P6' && p6b != null
                                 ? ocpP6BucketHeader(p6b)
                                 : (label: '', ePrev: 0);
-        final ocpBandTop = showShiftHeader ? borderThin : borderMedium;
+        final ocpBandTop = borderThin;
         sheet.updateCell(
           excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: rowIndex),
           excel.TextCellValue(hdr.label),
@@ -2378,7 +2384,7 @@ class PointageExportService {
         }
       }
 
-      for (final endRow in ocpEntBlockEndRows) {
+      for (final endRow in ocpThickSepEndRows) {
         if (endRow < headerRow + 1 || endRow > rowIndex - 1) continue;
         for (int cc = 1; cc <= lastDataCol; cc++) {
           final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: endRow);
@@ -2444,12 +2450,14 @@ class PointageExportService {
     for (final entry in grouped.entries) {
       var sheetName = entry.key.length > 30 ? entry.key.substring(0, 30) : entry.key;
       sheetName = sheetName.replaceAll(RegExp(r'[\\/*?\[\]:]'), '-');
+      var copiedFromPreviousSheet = false;
       if (isFirst) {
         book.rename(defaultName, sheetName);
         firstSheetName = sheetName;
         isFirst = false;
       } else {
         book.copy(firstSheetName ?? defaultName, sheetName);
+        copiedFromPreviousSheet = true;
       }
 
       final sheet = book[sheetName];
@@ -2516,6 +2524,11 @@ class PointageExportService {
       setHeader('Salaire net');
       setHeader('Salaire periode');
 
+      final totalColumns = col;
+      if (copiedFromPreviousSheet) {
+        _clearSheetDataRows(sheet, headerRow + 1, headerRow + 600, totalColumns);
+      }
+
       var rowIndex = headerRow + 1;
       for (final r in entry.value) {
         col = 0;
@@ -2577,6 +2590,10 @@ class PointageExportService {
               style = makeDayStyle(bg: '#EEEEEE', fg: '#616161');
             case 'pending_exit':
               style = makeDayStyle(bg: '#FFE082', fg: '#E65100');
+            case 'arrangement':
+              style = makeDayStyle(bg: '#FFF9C4', fg: '#F57F17');
+            case 'arrangement_pending':
+              style = makeDayStyle(bg: '#FFFDE7', fg: '#FF8F00');
             default:
               style = makeDayStyle();
           }
@@ -2614,6 +2631,9 @@ class PointageExportService {
           excel.DoubleCellValue(r.salairePeriode),
         );
         rowIndex++;
+      }
+      if (rowIndex <= headerRow + 600) {
+        _clearSheetDataRows(sheet, rowIndex, headerRow + 600, totalColumns);
       }
     }
 
@@ -2712,6 +2732,74 @@ class PointageExportService {
         !isAbsenceReasonDeductFromSalary(absenceReason, reasonConfigs);
   }
 
+  /// Efface les lignes de données copiées d'une autre feuille (book.copy duplique tout le contenu).
+  static void _clearSheetDataRows(
+    excel.Sheet sheet,
+    int fromRow,
+    int toRowInclusive,
+    int totalColumns,
+  ) {
+    final empty = excel.TextCellValue('');
+    for (var r = fromRow; r <= toRowInclusive; r++) {
+      for (var c = 0; c < totalColumns; c++) {
+        sheet.updateCell(
+          excel.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r),
+          empty,
+        );
+      }
+    }
+  }
+
+  /// Statut snapshot pour export / confirmation admin.
+  static String resolveSnapshotStatus({
+    required PointageRecord? rec,
+    required bool isGroupScope,
+    required bool isDistributionScope,
+  }) {
+    if (rec == null) return 'absent';
+    if (rec.distSwapArrangement) {
+      return rec.distSwapArrangementPending ? 'arrangement_pending' : 'arrangement';
+    }
+    if (isGroupScope) {
+      final admin = rec.adminFinalStatus;
+      if (admin == AttendanceStatus.present ||
+          admin == AttendanceStatus.training ||
+          admin == AttendanceStatus.leave) {
+        return 'present';
+      }
+      return 'absent';
+    }
+    if (rec.adminFinalStatus == AttendanceStatus.training) return 'formation';
+    if (rec.adminFinalStatus == AttendanceStatus.leave || rec.status == AttendanceStatus.leave) {
+      return 'leave';
+    }
+    if (rec.isFinalPresent ||
+        rec.chefStatus == ChefPointageStatus.present ||
+        (!isDistributionScope &&
+            (rec.driverStatus == DriverPointageStatus.present ||
+                rec.driverStatus == DriverPointageStatus.enVehicule)) ||
+        rec.status == AttendanceStatus.present) {
+      return 'present';
+    }
+    return 'absent';
+  }
+
+  static PointageRecord? _arrangementRecordForDay(
+    List<PointageRecord> records,
+    String employeId,
+    String equipeId,
+    DateTime day,
+  ) {
+    final d = _dayKey(day);
+    for (final r in records) {
+      if (r.employeId != employeId || !r.distSwapArrangement) continue;
+      if (r.equipeId != equipeId) continue;
+      if (_dayKey(r.date) != d) continue;
+      return r;
+    }
+    return null;
+  }
+
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
@@ -2786,6 +2874,23 @@ class PointageExportService {
         }
 
         final dayRecords = byDay[d] ?? const <PointageRecord>[];
+
+        final arrangementRecords =
+            dayRecords.where((r) => r.distSwapArrangement).toList();
+        if (arrangementRecords.isNotEmpty) {
+          final confirmed =
+              arrangementRecords.any((r) => !r.distSwapArrangementPending);
+          if (confirmed) {
+            daysWorked++;
+            totalHours += hoursPerDay;
+            hoursByDay[d] = 'E';
+            dayStatusByDay[d] = 'arrangement';
+          } else {
+            hoursByDay[d] = 'E*';
+            dayStatusByDay[d] = 'arrangement_pending';
+          }
+          continue;
+        }
 
         // Formation (admin final) : take precedence for the day marker.
         PointageRecord? trainingRecord;
@@ -2966,6 +3071,8 @@ class PointageExportService {
     List<OvertimeAssignment>? overtimeAssignments,
     Map<String, String>? ocpExcelSegmentByEmployeId,
     Map<String, bool>? ocpForceSalleControleByEmployeId,
+    /// Complément pour les jours « E » (arrangement) si les snapshots sont anciens.
+    List<PointageRecord>? pointageRecords,
   }) {
     final start = _dayKey(startDate);
     final end = _dayKey(endDate);
@@ -2975,13 +3082,15 @@ class PointageExportService {
       days.add(start.add(Duration(days: i)));
     }
 
-    // تجميع snapshots لكل موظف حسب اليوم
-    // المفتاح: employeId → (dayKey → snapshot)
-    final snapshotsByEmp = <String, Map<DateTime, DailyEmployeeSnapshot>>{};
+    // employeId → equipeId → day → snapshot (évite d'appliquer un snapshot d'un autre groupe)
+    final snapshotsByEmpEquipe = <String, Map<String, Map<DateTime, DailyEmployeeSnapshot>>>{};
     for (final s in snapshots) {
       final dayK = _dayKey(s.date);
-      snapshotsByEmp.putIfAbsent(s.employeId, () => <DateTime, DailyEmployeeSnapshot>{})[dayK] = s;
+      snapshotsByEmpEquipe
+          .putIfAbsent(s.employeId, () => <String, Map<DateTime, DailyEmployeeSnapshot>>{})
+          .putIfAbsent(s.equipeId, () => <DateTime, DailyEmployeeSnapshot>{})[dayK] = s;
     }
+    final allPointageRecords = pointageRecords ?? const <PointageRecord>[];
 
     // تجميع overtime_assignments لكل موظف
     final overtimeByEmploye = <String, Map<DateTime, double>>{};
@@ -2998,7 +3107,10 @@ class PointageExportService {
 
     final rows = <PointageExportRow>[];
     for (final emp in employees) {
-      final empSnaps = snapshotsByEmp[emp.id] ?? {};
+      final empEquipeId = emp.equipeId ?? '';
+      final empSnaps = empEquipeId.isEmpty
+          ? <DateTime, DailyEmployeeSnapshot>{}
+          : (snapshotsByEmpEquipe[emp.id]?[empEquipeId] ?? {});
       final empOtByDay = overtimeByEmploye[emp.id] ?? {};
 
       int daysWorked = 0;
@@ -3025,12 +3137,36 @@ class PointageExportService {
         final snap = empSnaps[d];
         final dayOt = empOtByDay[d] ?? 0;
 
-        if (snap == null) {
+        String effectiveStatus = snap?.status ?? '';
+        if (effectiveStatus != 'arrangement' &&
+            effectiveStatus != 'arrangement_pending' &&
+            emp.equipeId != null) {
+          final arrRec = _arrangementRecordForDay(
+            allPointageRecords,
+            emp.id,
+            emp.equipeId!,
+            d,
+          );
+          if (arrRec != null) {
+            effectiveStatus =
+                arrRec.distSwapArrangementPending ? 'arrangement_pending' : 'arrangement';
+          }
+        }
+
+        if (snap == null && effectiveStatus.isEmpty) {
           // No confirmed snapshot for this day: keep neutral marker (not auto-absent).
           hoursByDay[d] = '-';
           dayStatusByDay[d] = '';
         } else {
-          switch (snap.status) {
+          switch (effectiveStatus) {
+            case 'arrangement':
+              daysWorked++;
+              totalHours += hoursPerDay;
+              hoursByDay[d] = 'E';
+              dayStatusByDay[d] = 'arrangement';
+            case 'arrangement_pending':
+              hoursByDay[d] = 'E*';
+              dayStatusByDay[d] = 'arrangement_pending';
             case 'present':
               daysWorked++;
               totalHours += hoursPerDay;
@@ -3051,22 +3187,22 @@ class PointageExportService {
               dayStatusByDay[d] = 'leave';
             case 'paid_absence':
               final isPaidByReason =
-                  _isPaidAbsenceByReason(snap.absenceReason, reasonConfigs);
+                  _isPaidAbsenceByReason(snap?.absenceReason, reasonConfigs);
               daysAbsentCount++;
               hoursByDay[d] = 'A';
               dayStatusByDay[d] = isPaidByReason ? 'paid_absence' : 'absent';
               if (isPaidByReason) {
                 totalHours += hoursPerDay;
               }
-              if (snap.absenceReason != null) {
-                absenceReasonIdByDay[d] = snap.absenceReason;
+              if (snap?.absenceReason != null) {
+                absenceReasonIdByDay[d] = snap!.absenceReason;
               }
             case 'rest':
               hoursByDay[d] = 'repos';
               dayStatusByDay[d] = 'rest';
               restDaysCount++;
-            default: // 'absent' أو أي قيمة أخرى
-              final absReason = snap.absenceReason;
+            default: // 'absent' ou autre
+              final absReason = snap?.absenceReason;
               final isPaid = _isPaidAbsenceByReason(absReason, reasonConfigs);
               if (isPaid) {
                 totalHours += hoursPerDay;

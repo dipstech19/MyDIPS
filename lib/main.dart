@@ -22,6 +22,7 @@ import 'modules/groupes/groupe_comptes_provider.dart';
 import 'modules/distribution/distribution_groups_provider.dart';
 import 'modules/distribution/distribution_shifts_provider.dart';
 import 'modules/distribution/distribution_comptes_provider.dart';
+import 'modules/distribution/distribution_swaps_provider.dart';
 import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
@@ -106,6 +107,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => DistributionGroupsProvider()),
         ChangeNotifierProvider(create: (_) => DistributionShiftsProvider()),
         ChangeNotifierProvider(create: (_) => DistributionComptesProvider()),
+        ChangeNotifierProvider(create: (_) => DistributionSwapsProvider()),
         ChangeNotifierProvider(create: (_) => AdminsProvider()),
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),

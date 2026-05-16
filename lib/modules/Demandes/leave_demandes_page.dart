@@ -1,9 +1,10 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -468,7 +469,7 @@ class _DemandesPageState extends State<DemandesPage>
       color: Colors.white,
       child: Row(
         children: [
-          Icon(isAdmin ? Icons.admin_panel_settings : Icons.assignment, color: Colors.blue.shade700),
+          Icon(isAdmin ? Icons.admin_panel_settings : Icons.assignment, color: AppColors.brand),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -1322,7 +1323,7 @@ class _ChefLeaveViewState extends State<_ChefLeaveView> {
           const SizedBox(height: 20),
           Row(
             children: [
-              Icon(Icons.calendar_month, size: 22, color: Colors.blue.shade700),
+              Icon(Icons.calendar_month, size: 22, color: AppColors.brand),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -1384,7 +1385,7 @@ class _ChefLeaveViewState extends State<_ChefLeaveView> {
           const SizedBox(height: 20),
           Row(
             children: [
-              Icon(Icons.history, size: 22, color: Colors.blue.shade700),
+              Icon(Icons.history, size: 22, color: AppColors.brand),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -2261,7 +2262,7 @@ class _AdminLeaveView extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'Équipe: $selectedTeamName  •  Solde reporté: ${selectedExtra.toStringAsFixed(1)}j  •  Solde restant: ${remaining.toStringAsFixed(1)}j',
-                        style: TextStyle(color: Colors.blue.shade800, fontWeight: FontWeight.w600),
+                        style: TextStyle(color: AppColors.brandDark, fontWeight: FontWeight.w600),
                       ),
                     ),
                     if (selected != null) ...[
@@ -2404,16 +2405,16 @@ class _AdminLeaveView extends StatelessWidget {
                       return Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
-                          color: valid ? Colors.blue.shade50 : Colors.red.shade50,
+                          color: valid ? AppColors.brandLight : Colors.red.shade50,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: valid ? Colors.blue.shade200 : Colors.red.shade200),
+                          border: Border.all(color: valid ? AppColors.brandBorder : Colors.red.shade200),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.date_range,
                               size: 16,
-                              color: valid ? Colors.blue.shade700 : Colors.red.shade700,
+                              color: valid ? AppColors.brand : Colors.red.shade700,
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -2423,7 +2424,7 @@ class _AdminLeaveView extends StatelessWidget {
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
-                                color: valid ? Colors.blue.shade800 : Colors.red.shade800,
+                                color: valid ? AppColors.brandDark : Colors.red.shade800,
                               ),
                             ),
                           ],
@@ -2652,16 +2653,16 @@ class _AdminLeaveView extends StatelessWidget {
                       return Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
-                          color: valid ? Colors.blue.shade50 : Colors.red.shade50,
+                          color: valid ? AppColors.brandLight : Colors.red.shade50,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: valid ? Colors.blue.shade200 : Colors.red.shade200),
+                          border: Border.all(color: valid ? AppColors.brandBorder : Colors.red.shade200),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.date_range,
                               size: 16,
-                              color: valid ? Colors.blue.shade700 : Colors.red.shade700,
+                              color: valid ? AppColors.brand : Colors.red.shade700,
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -2671,7 +2672,7 @@ class _AdminLeaveView extends StatelessWidget {
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
-                                color: valid ? Colors.blue.shade800 : Colors.red.shade800,
+                                color: valid ? AppColors.brandDark : Colors.red.shade800,
                               ),
                             ),
                           ],
@@ -2779,7 +2780,7 @@ void _showLeaveDayDetailsDialog(BuildContext context, DateTime day, List<LeaveRe
     builder: (ctx) => AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.event_note, color: Colors.blue.shade700),
+          Icon(Icons.event_note, color: AppColors.brand),
           const SizedBox(width: 8),
           Expanded(child: Text(title, style: const TextStyle(fontSize: 18))),
         ],
@@ -2911,8 +2912,8 @@ class _LargeLeaveCalendar extends StatelessWidget {
             margin: const EdgeInsets.all(2),
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: selected ? Colors.blue.shade100 : bg,
-              border: Border.all(color: selected ? Colors.blue : Colors.grey.shade300),
+              color: selected ? AppColors.brandLight : bg,
+              border: Border.all(color: selected ? AppColors.brand : Colors.grey.shade300),
               borderRadius: BorderRadius.circular(6),
             ),
             child: LayoutBuilder(
@@ -3310,13 +3311,13 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
                             width: double.infinity,
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: Colors.blue.shade50,
+                              color: AppColors.brandLight,
                               borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.blue.shade100),
+                              border: Border.all(color: AppColors.brandLight),
                             ),
                             child: Text(
                               'Solde congé (${emp.nom}) - Autorisé: ${acquired.toStringAsFixed(1)}j + Extra: ${extra.toStringAsFixed(1)}j • Pris: ${cachedTaken.toStringAsFixed(1)}j • Restant: ${remaining.toStringAsFixed(1)}j',
-                              style: TextStyle(color: Colors.blue.shade900, fontWeight: FontWeight.w600),
+                              style: TextStyle(color: AppColors.brandDark, fontWeight: FontWeight.w600),
                             ),
                           );
                         },

@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -111,7 +111,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
             children: [
               // HEADER
               Row(children: [
-                Icon(Icons.person_add, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
+                Icon(Icons.person_add, color: const Color(0xFF000966), size: mobile ? 22 : 26),
                 SizedBox(width: mobile ? 8 : 12),
                 Expanded(
                   child: Text('Nouveau Collaborateur',
@@ -311,7 +311,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                           : Icon(Icons.save, size: mobile ? 18 : 24),
                       label: Text(_saving ? 'Enregistrement...' : 'Enregistrer'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: const Color(0xFF000966),
                         foregroundColor: Colors.white,
                         padding: EdgeInsets.symmetric(
                           horizontal: mobile ? 16 : 24,
@@ -433,10 +433,10 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   Widget _sectionTitle(String t) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
     decoration: BoxDecoration(
-      color: const Color(0xFF1565C0).withOpacity(0.08),
+      color: const Color(0xFF000966).withOpacity(0.08),
       borderRadius: BorderRadius.circular(8),
     ),
-    child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1565C0))),
+    child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF000966))),
   );
 
   Widget _row2(Widget a, Widget b) {
@@ -781,8 +781,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
           icon: const Icon(Icons.upload_file, size: 18),
           label: const Text('Ajouter un document'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF1565C0),
-            side: const BorderSide(color: Color(0xFF1565C0)),
+            foregroundColor: const Color(0xFF000966),
+            side: const BorderSide(color: Color(0xFF000966)),
           ),
         ),
         const SizedBox(height: 12),

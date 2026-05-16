@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/utils/responsive.dart';
@@ -111,11 +112,11 @@ class _ChefOvertimeViewState extends State<_ChefOvertimeView> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text('Équipe : $equipeId',
-                    style: TextStyle(fontSize: 12, color: Colors.blue.shade700)),
+                    style: TextStyle(fontSize: 12, color: AppColors.brand)),
               ),
             ],
           ),
@@ -914,14 +915,14 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
+                      color: AppColors.brandLight,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.shade100),
+                      border: Border.all(color: AppColors.brandLight),
                     ),
                     child: Row(
                       children: [
                         Icon(Icons.info_outline,
-                            size: 16, color: Colors.blue.shade700),
+                            size: 16, color: AppColors.brand),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -929,7 +930,7 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
                             'Même jour : uniquement les shifts démarrant après la fin de son shift.',
                             style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.blue.shade800),
+                                color: AppColors.brandDark),
                           ),
                         ),
                       ],

@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -393,6 +393,25 @@ class _PointagePageState extends State<PointagePage> {
 
   /// Distribution : pas de flux chauffeur — uniquement le responsable (chef) du groupe.
   bool _isDistributionEquipeId(String equipeId) => equipeId.startsWith('distribution:');
+
+  PointageRecord? _pickDistributionRecordForTeam(
+    List<PointageRecord> list,
+    String equipeId,
+  ) {
+    if (list.isEmpty) return null;
+    final arrangement = list.where(
+      (r) => r.distSwapArrangement && r.equipeId == equipeId,
+    );
+    if (arrangement.isNotEmpty) return arrangement.first;
+    final home = list.where(
+      (r) => r.equipeId == equipeId && !r.tempAssigned && !r.distSwapArrangement,
+    );
+    if (home.isNotEmpty) return home.first;
+    final guest = list.where((r) => r.tempAssigned && r.equipeId == equipeId);
+    if (guest.isNotEmpty) return guest.first;
+    final anyHome = list.where((r) => !r.tempAssigned && !r.distSwapArrangement);
+    return anyHome.isNotEmpty ? anyHome.first : list.first;
+  }
 
   bool _isChefAtelierPoste(String poste) {
     final p = poste.trim().toLowerCase();
@@ -1308,11 +1327,24 @@ class _PointagePageState extends State<PointagePage> {
 
     final nonWorkingIdsEffective = effectiveNonWorkingIds.toList();
 
-    PointageRecord? getRecord(String employeId) {
-      if (isViewingToday) return pointageProvider.getRecordForEmployee(employeId);
-      final list = pointageProvider.pointageByDate;
-      final l = list.where((p) => p.employeId == employeId).toList();
-      return l.isEmpty ? null : l.first;
+    PointageRecord? getRecord(String employeId, {String? equipeId}) {
+      if (isViewingToday) {
+        if (equipeId != null && _isDistributionEquipeId(equipeId)) {
+          final all = pointageProvider.todayPointage
+              .where((p) => p.employeId == employeId)
+              .toList();
+          return _pickDistributionRecordForTeam(all, equipeId) ??
+              pointageProvider.getRecordForEmployee(employeId);
+        }
+        return pointageProvider.getRecordForEmployee(employeId);
+      }
+      final list = pointageProvider.pointageByDate
+          .where((p) => p.employeId == employeId)
+          .toList();
+      if (equipeId != null && _isDistributionEquipeId(equipeId)) {
+        return _pickDistributionRecordForTeam(list, equipeId);
+      }
+      return list.isEmpty ? null : list.first;
     }
 
     /// True = ready to be confirmed by admin:
@@ -2218,7 +2250,7 @@ class _PointagePageState extends State<PointagePage> {
                     int presentC = 0, absentC = 0, sortieOkC = 0;
                     final nightTeamMobile = _isNightShiftEntryOnlyAdminContext(t.equipeId, logicalDay, equipes, shiftsProvider);
                     for (final w in teamWorkers) {
-                      final rec = getRecord(w.id);
+                      final rec = getRecord(w.id, equipeId: t.equipeId);
                       if (isGroupScope) {
                         final admin = rec?.adminFinalStatus;
                         final isPresent = admin == AttendanceStatus.present || admin == AttendanceStatus.training || admin == AttendanceStatus.leave;
@@ -2246,7 +2278,7 @@ class _PointagePageState extends State<PointagePage> {
                       }
                     }
                     final canConfirm = teamWorkers.every((w) {
-                      final rec = getRecord(w.id);
+                      final rec = getRecord(w.id, equipeId: t.equipeId);
                       if (isGroupScope) {
                         final ok = rec?.adminFinalStatus == AttendanceStatus.present || rec?.adminFinalStatus == AttendanceStatus.absent;
                         if (ok) return true;
@@ -2265,7 +2297,7 @@ class _PointagePageState extends State<PointagePage> {
                       final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
                       final nightTeam = cfg.isNightShift || shiftForEquipe == ShiftType.night;
                       final allReadyNightEntry =
-                          nightTeam && teamWorkers.every((w) => isWorkerReadyForAdminConfirm(getRecord(w.id), t.equipeId));
+                          nightTeam && teamWorkers.every((w) => isWorkerReadyForAdminConfirm(getRecord(w.id, equipeId: t.equipeId), t.equipeId));
                       confirmWindowOpen = cfg.canAdminConfirmAfterShiftEnd(now, logicalDay) || allReadyNightEntry;
                       if (!confirmWindowOpen) {
                         confirmWindowHint = tr(context, 'pointage_admin_confirm_after_shift').replaceFirst('%s', cfg.shiftEndFormattedOn(logicalDay));
@@ -2276,7 +2308,7 @@ class _PointagePageState extends State<PointagePage> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(confirmWindowHint ?? 'Fenêtre de confirmation non ouverte.'),
-                            backgroundColor: Colors.blue.shade700,
+                            backgroundColor: AppColors.brand,
                             behavior: SnackBarBehavior.fixed,
                           ),
                         );
@@ -2302,36 +2334,14 @@ class _PointagePageState extends State<PointagePage> {
                     final auth = context.read<AuthProvider>();
                     final confirmedById = auth.currentUser?.id ?? '';
                     final empSnapshots = teamWorkers.map((w) {
-                      final rec = getRecord(w.id);
-                      String status;
-                      String? absenceReason;
-                      if (isGroupScope) {
-                        final admin = rec?.adminFinalStatus;
-                        if (admin == AttendanceStatus.present || admin == AttendanceStatus.training || admin == AttendanceStatus.leave) {
-                          status = 'present';
-                        } else {
-                          status = 'absent';
-                          absenceReason = rec?.absenceReason;
-                        }
-                      } else {
-                        if (rec == null) {
-                          status = 'absent';
-                        } else if (rec.adminFinalStatus == AttendanceStatus.training) {
-                          status = 'formation';
-                        } else if (rec.adminFinalStatus == AttendanceStatus.leave || rec.status == AttendanceStatus.leave) {
-                          status = 'leave';
-                        } else if (rec.isFinalPresent ||
-                            rec.chefStatus == ChefPointageStatus.present ||
-                            (!_isDistributionEquipeId(t.equipeId) &&
-                                (rec.driverStatus == DriverPointageStatus.present ||
-                                    rec.driverStatus == DriverPointageStatus.enVehicule)) ||
-                            rec.status == AttendanceStatus.present) {
-                          status = 'present';
-                        } else {
-                          status = 'absent';
-                          absenceReason = rec.absenceReason;
-                        }
-                      }
+                      final rec = getRecord(w.id, equipeId: t.equipeId);
+                      final status = PointageExportService.resolveSnapshotStatus(
+                        rec: rec,
+                        isGroupScope: isGroupScope,
+                        isDistributionScope: isDistributionScope,
+                      );
+                      final absenceReason =
+                          status == 'absent' || status == 'paid_absence' ? rec?.absenceReason : null;
                       return (
                         employeId: w.id,
                         employeNom: w.nom,
@@ -2833,7 +2843,7 @@ class _PointagePageState extends State<PointagePage> {
                                       int presentC = 0, absentC = 0;
                                       int sortieOkC = 0;
                                       for (final w in teamWorkers) {
-                                        final rec = getRecord(w.id);
+                                        final rec = getRecord(w.id, equipeId: t.equipeId);
                                         if (isGroupScope) {
                                           final admin = rec?.adminFinalStatus;
                                           final isPresent = admin == AttendanceStatus.present ||
@@ -2864,7 +2874,7 @@ class _PointagePageState extends State<PointagePage> {
                                       }
 
                                       final canConfirm = teamWorkers.every((w) {
-                                        final rec = getRecord(w.id);
+                                        final rec = getRecord(w.id, equipeId: t.equipeId);
                                         if (isGroupScope) {
                                           final ok = rec?.adminFinalStatus == AttendanceStatus.present ||
                                               rec?.adminFinalStatus == AttendanceStatus.absent;
@@ -2887,7 +2897,7 @@ class _PointagePageState extends State<PointagePage> {
                                         final cfg = getConfigForEquipeAndDate(equipe, logicalDay, shiftForEquipe);
                                         final nightTeam = cfg.isNightShift || shiftForEquipe == ShiftType.night;
                                         final allReadyNightEntry = nightTeam &&
-                                            teamWorkers.every((w) => isWorkerReadyForAdminConfirm(getRecord(w.id), t.equipeId));
+                                            teamWorkers.every((w) => isWorkerReadyForAdminConfirm(getRecord(w.id, equipeId: t.equipeId), t.equipeId));
                                         confirmWindowOpen =
                                             cfg.canAdminConfirmAfterShiftEnd(now, logicalDay) || allReadyNightEntry;
                                         if (!confirmWindowOpen) {
@@ -2986,12 +2996,12 @@ class _PointagePageState extends State<PointagePage> {
                                               decoration: BoxDecoration(
                                                 color: isCarryOverNight
                                                     ? Colors.deepOrange.withValues(alpha: 0.12)
-                                                    : Colors.blue.withValues(alpha: 0.10),
+                                                    : AppColors.brand.withValues(alpha: 0.10),
                                                 borderRadius: BorderRadius.circular(999),
                                                 border: Border.all(
                                                   color: isCarryOverNight
                                                       ? Colors.deepOrange.withValues(alpha: 0.40)
-                                                      : Colors.blue.withValues(alpha: 0.35),
+                                                      : AppColors.brand.withValues(alpha: 0.35),
                                                 ),
                                               ),
                                               child: Text(
@@ -3001,7 +3011,7 @@ class _PointagePageState extends State<PointagePage> {
                                                   fontWeight: FontWeight.w700,
                                                   color: isCarryOverNight
                                                       ? Colors.deepOrange.shade700
-                                                      : Colors.blue.shade700,
+                                                      : AppColors.brand,
                                                 ),
                                               ),
                                             );
@@ -3178,7 +3188,7 @@ class _PointagePageState extends State<PointagePage> {
                                                               ScaffoldMessenger.of(context).showSnackBar(
                                                                 SnackBar(
                                                                   content: Text(confirmWindowHint ?? 'Fenêtre de confirmation non ouverte.'),
-                                                                  backgroundColor: Colors.blue.shade700,
+                                                                  backgroundColor: AppColors.brand,
                                                                   behavior: SnackBarBehavior.fixed,
                                                                   duration: const Duration(seconds: 4),
                                                                 ),
@@ -3272,42 +3282,16 @@ class _PointagePageState extends State<PointagePage> {
 
                                                           // بناء قائمة snapshots لكل موظف في الفريق
                                                           final empSnapshots = teamWorkers.map((w) {
-                                                            final rec = getRecord(w.id);
-                                                            String status;
-                                                            String? absenceReason;
-
-                                                            // For group scope: only use admin chosen present/absent.
-                                                            if (isGroupScope) {
-                                                              final admin = rec?.adminFinalStatus;
-                                                              if (admin == AttendanceStatus.present ||
-                                                                  admin == AttendanceStatus.training ||
-                                                                  admin == AttendanceStatus.leave) {
-                                                                status = 'present';
-                                                              } else {
-                                                                status = 'absent';
-                                                                absenceReason = rec?.absenceReason;
-                                                              }
-                                                            } else {
-                                                              if (rec == null) {
-                                                                status = 'absent';
-                                                              } else if (rec.adminFinalStatus == AttendanceStatus.training) {
-                                                                status = 'formation';
-                                                              } else if (rec.adminFinalStatus == AttendanceStatus.leave ||
-                                                                  rec.status == AttendanceStatus.leave) {
-                                                                status = 'leave';
-                                                              } else if (rec.isFinalPresent ||
-                                                                  rec.chefStatus == ChefPointageStatus.present ||
-                                                                  (!_isDistributionEquipeId(t.equipeId) &&
-                                                                      (rec.driverStatus == DriverPointageStatus.present ||
-                                                                          rec.driverStatus ==
-                                                                              DriverPointageStatus.enVehicule)) ||
-                                                                  rec.status == AttendanceStatus.present) {
-                                                                status = 'present';
-                                                              } else {
-                                                                status = 'absent';
-                                                                absenceReason = rec.absenceReason;
-                                                              }
-                                                            }
+                                                            final rec = getRecord(w.id, equipeId: t.equipeId);
+                                                            final status = PointageExportService.resolveSnapshotStatus(
+                                                              rec: rec,
+                                                              isGroupScope: isGroupScope,
+                                                              isDistributionScope: isDistributionScope,
+                                                            );
+                                                            final absenceReason =
+                                                                status == 'absent' || status == 'paid_absence'
+                                                                    ? rec?.absenceReason
+                                                                    : null;
                                                             return (
                                                               employeId: w.id,
                                                               employeNom: w.nom,
@@ -3350,7 +3334,7 @@ class _PointagePageState extends State<PointagePage> {
                                                         style: FilledButton.styleFrom(
                                                           backgroundColor: !confirmWindowOpen
                                                               ? Colors.grey.shade400
-                                                              : Colors.blue.shade600,
+                                                              : AppColors.brand,
                                                           padding: EdgeInsets.symmetric(
                                                             vertical: adminFilterScrollOnly ? 2 : 4,
                                                             horizontal: adminFilterScrollOnly ? 6 : 10,
@@ -3552,7 +3536,7 @@ class _PointagePageState extends State<PointagePage> {
       }
     }
     final distGroupsForExport = context.read<DistributionGroupsProvider>().groups;
-    final seenDistribution = <String>{};
+    final distributionMemberIdsByGroup = <String, Set<String>>{};
     for (final g in distGroupsForExport) {
       if (authExport.isChefZoneAdmin &&
           zoneDistIds.isNotEmpty &&
@@ -3561,8 +3545,11 @@ class _PointagePageState extends State<PointagePage> {
       }
       final distEqId = 'distribution:${g.id}';
       final label = 'Distribution: ${g.nom}';
+      final seenInThisGroup = <String>{};
+      final memberIds = <String>{};
       for (final id in g.membreIds) {
-        if (!seenDistribution.add(id)) continue;
+        if (!seenInThisGroup.add(id)) continue;
+        memberIds.add(id);
         final empList = employes.where((e) => e.id == id).toList();
         if (empList.isEmpty) continue;
         final w = empList.first;
@@ -3577,6 +3564,7 @@ class _PointagePageState extends State<PointagePage> {
           salaireNet: w.salaireBase,
         ));
       }
+      distributionMemberIdsByGroup[distEqId] = memberIds;
     }
     final allById =
         <String, ({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})>{};
@@ -3644,12 +3632,17 @@ class _PointagePageState extends State<PointagePage> {
 
     final reasonConfigs = context.read<AbsenceReasonsProvider>().reasons;
     final shiftsProvider = context.read<ShiftsProvider>();
+    final distShiftsExport = context.read<DistributionShiftsProvider>();
     final weeklyRestByGroupeId = <String, int>{
       for (final g in groupes) g.id: g.weeklyRestWeekday,
     };
     bool isRestDay(DateTime date, String equipeId) {
-      // Distribution / Hors équipe: pas de repos hebdo configurable ici.
-      if (equipeId.startsWith('distribution:') || equipeId == 'hors_equipe') {
+      if (equipeId == 'hors_equipe') return false;
+      if (equipeId.startsWith('distribution:')) {
+        final gid = equipeId.substring('distribution:'.length);
+        if (distShiftsExport.hasRotationSlotForGroup(gid)) {
+          return distShiftsExport.getShiftForGroup(gid, date) == ShiftType.rest;
+        }
         return false;
       }
       if (equipeId.startsWith('groupe:')) {
@@ -3783,6 +3776,9 @@ class _PointagePageState extends State<PointagePage> {
         if (e.ocpForceSalleControle) e.id: true,
     };
 
+    final pointageRecordsForExport =
+        await context.read<PointageProvider>().getPointageForDateRange(start, end);
+
     // دائماً نستخدم مسار snapshots — يضمن أن Excel يعكس فقط البيانات المؤكدة
     List<PointageExportRow> rows;
     rows = PointageExportService.computeExcelRowsFromSnapshots(
@@ -3797,7 +3793,18 @@ class _PointagePageState extends State<PointagePage> {
             ocpExcelSegmentByEmployeId.isEmpty ? null : ocpExcelSegmentByEmployeId,
         ocpForceSalleControleByEmployeId:
             ocpForceSalleControleByEmployeId.isEmpty ? null : ocpForceSalleControleByEmployeId,
+        pointageRecords: pointageRecordsForExport,
       );
+    if (picked.scope == 'distribution' && distributionMemberIdsByGroup.isNotEmpty) {
+      rows = rows
+          .where((r) {
+            final eqId = r.equipeId;
+            if (eqId == null || !eqId.startsWith('distribution:')) return false;
+            final allowed = distributionMemberIdsByGroup[eqId];
+            return allowed != null && allowed.contains(r.employeId);
+          })
+          .toList();
+    }
 
     final exportNow = DateTime.now();
     final exportTodayDay = DateTime(exportNow.year, exportNow.month, exportNow.day);
@@ -4142,14 +4149,14 @@ class _PointagePageState extends State<PointagePage> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
+                          color: AppColors.brandLight,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.shade100),
+                          border: Border.all(color: AppColors.brandLight),
                         ),
                         child: Text(
                           'Shift actuel: ${originShift.shortLabel} (${originShift.timeRange}). '
                           'Même jour: seulement les shifts qui commencent après la fin (${originShiftEnd != null ? '${originShiftEnd.hour.toString().padLeft(2, '0')}:${originShiftEnd.minute.toString().padLeft(2, '0')}' : '--'}).',
-                          style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
+                          style: TextStyle(fontSize: 12, color: AppColors.brandDark),
                         ),
                       ),
                     const SizedBox(height: 8),
@@ -4414,7 +4421,7 @@ class _PointagePageState extends State<PointagePage> {
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: isOnLeave ? const Color(0xFF0D47A1) : isPresent ? Colors.green.shade700 : Colors.red.shade700,
+                              color: isOnLeave ? const Color(0xFF00044D) : isPresent ? Colors.green.shade700 : Colors.red.shade700,
                             ),
                           ),
                           if (showAbsentMotifLine) ...[
@@ -4440,7 +4447,7 @@ class _PointagePageState extends State<PointagePage> {
                               children: [
                                 Text(
                                   'Formation',
-                                  style: TextStyle(fontSize: 10, color: Colors.blue.shade700, fontWeight: FontWeight.w700),
+                                  style: TextStyle(fontSize: 10, color: AppColors.brand, fontWeight: FontWeight.w700),
                                 ),
                                 Text(
                                   formationRangeLabel,
@@ -4453,7 +4460,7 @@ class _PointagePageState extends State<PointagePage> {
                             const SizedBox(height: 2),
                             const Text(
                               'Congé approuvé',
-                              style: TextStyle(fontSize: 10, color: Color(0xFF0D47A1), fontWeight: FontWeight.w700),
+                              style: TextStyle(fontSize: 10, color: Color(0xFF00044D), fontWeight: FontWeight.w700),
                             ),
                           ],
                         ],
@@ -4501,7 +4508,7 @@ class _PointagePageState extends State<PointagePage> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
-                                  color: isOnLeave ? const Color(0xFF0D47A1) : isPresent ? Colors.green.shade700 : Colors.red.shade700,
+                                  color: isOnLeave ? const Color(0xFF00044D) : isPresent ? Colors.green.shade700 : Colors.red.shade700,
                                 ),
                               ),
                               if (showAbsentMotifLine) ...[
@@ -4527,7 +4534,7 @@ class _PointagePageState extends State<PointagePage> {
                                   children: [
                                     Text(
                                       'Formation',
-                                      style: TextStyle(fontSize: 9, color: Colors.blue.shade700, fontWeight: FontWeight.w700),
+                                      style: TextStyle(fontSize: 9, color: AppColors.brand, fontWeight: FontWeight.w700),
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
@@ -4541,7 +4548,7 @@ class _PointagePageState extends State<PointagePage> {
                                 const SizedBox(height: 2),
                                 const Text(
                                   'Congé approuvé',
-                                  style: TextStyle(fontSize: 9, color: Color(0xFF0D47A1), fontWeight: FontWeight.w700),
+                                  style: TextStyle(fontSize: 9, color: Color(0xFF00044D), fontWeight: FontWeight.w700),
                                 ),
                               ],
                             ],
@@ -5514,7 +5521,7 @@ class _PointagePageState extends State<PointagePage> {
         builder: (ctx) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.send_rounded, color: Colors.blue.shade700, size: 22),
+              Icon(Icons.send_rounded, color: AppColors.brand, size: 22),
               const SizedBox(width: 10),
               Expanded(child: Text(tr(ctx, 'pointage_confirm_send_title'))),
             ],
@@ -5662,18 +5669,18 @@ class _PointagePageState extends State<PointagePage> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
+                  color: AppColors.brandLight,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade100),
+                  border: Border.all(color: AppColors.brandLight),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
+                    Icon(Icons.info_outline, size: 16, color: AppColors.brand),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         tr(ctx, 'pointage_confirm_send_message'),
-                        style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
+                        style: TextStyle(fontSize: 12, color: AppColors.brandDark),
                       ),
                     ),
                   ],
@@ -5931,9 +5938,9 @@ class _PointagePageState extends State<PointagePage> {
                   label: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.beach_access, size: 16, color: const Color(0xFF0D47A1)),
+                      Icon(Icons.beach_access, size: 16, color: const Color(0xFF00044D)),
                       SizedBox(width: 6),
-                      Text('Congé approuvé', style: TextStyle(fontSize: mobile ? 11 : 12, fontWeight: FontWeight.w600, color: const Color(0xFF0D47A1))),
+                      Text('Congé approuvé', style: TextStyle(fontSize: mobile ? 11 : 12, fontWeight: FontWeight.w600, color: const Color(0xFF00044D))),
                     ],
                   ),
                   backgroundColor: const Color(0xFFE3F2FD),
@@ -6313,8 +6320,8 @@ class _PointagePageState extends State<PointagePage> {
                     icon: const Icon(Icons.logout, size: 18),
                     label: const Text('Confirmer sortie de tous', style: TextStyle(fontSize: 13)),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.blue.shade700,
-                      side: BorderSide(color: Colors.blue.shade400),
+                      foregroundColor: AppColors.brand,
+                      side: BorderSide(color: AppColors.brand),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                     onPressed: (!isWithinDeparture || lockAfterSendUi || pointageProvider.chefReportSyncPending) ? null : () async {
@@ -6345,7 +6352,7 @@ class _PointagePageState extends State<PointagePage> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Sortie de tous les membres présents confirmée'),
-                            backgroundColor: Colors.blue,
+                            backgroundColor: AppColors.brand,
                             behavior: SnackBarBehavior.fixed,
                           ),
                         );
@@ -7478,7 +7485,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
                       children: [
                         Text(e.nom, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
-                        _analysisRow(context, workedLabel, _minToHStr(workedMin), Colors.blue.shade700),
+                        _analysisRow(context, workedLabel, _minToHStr(workedMin), AppColors.brand),
                         const SizedBox(height: 4),
                         _analysisRow(context, overtimeLabel, overtimeMin > 0 ? _minToHStr(overtimeMin) : notRecorded, Colors.orange),
                         const SizedBox(height: 4),
@@ -7530,7 +7537,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
                   final overtimeMin = _overtimeMinutesForPeriod(e.id);
                   return TableRow(children: [
                     _cell(e.nom),
-                    _cell(_minToHStr(workedMin), color: Colors.blue.shade700),
+                    _cell(_minToHStr(workedMin), color: AppColors.brand),
                     _cell(overtimeMin > 0 ? _minToHStr(overtimeMin) : notRecorded, color: overtimeMin > 0 ? Colors.orange : null),
                     _cell(_minToHStr(workedMin + overtimeMin), color: primary, bold: true),
                   ]);
@@ -7539,7 +7546,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
                   decoration: BoxDecoration(color: primary.withValues(alpha: 0.07)),
                   children: [
                     _cell('Total équipe', bold: true),
-                    _cell(_minToHStr(teamWorked), color: Colors.blue.shade700, bold: true),
+                    _cell(_minToHStr(teamWorked), color: AppColors.brand, bold: true),
                     _cell(_minToHStr(teamOvertime), color: Colors.orange, bold: true),
                     _cell(_minToHStr(teamWorked + teamOvertime), color: primary, bold: true),
                   ],
@@ -7760,7 +7767,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Formation planifiée avec succès'),
-          backgroundColor: Colors.blue,
+          backgroundColor: AppColors.brand,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -7783,7 +7790,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
           // ─── Titre ───────────────────────────────────────────────────────
           Row(
             children: [
-              Icon(Icons.school, color: Colors.blue.shade700, size: 22),
+              Icon(Icons.school, color: AppColors.brand, size: 22),
               const SizedBox(width: 8),
               Text(
                 'Gestion des Formations',
@@ -7927,11 +7934,11 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
                             subtitle: alreadyIn
                                 ? Text(
                                     'Déjà en formation — ${_fmtDate(_startDate)}',
-                                    style: TextStyle(fontSize: 11, color: Colors.blue.shade600),
+                                    style: TextStyle(fontSize: 11, color: AppColors.brand),
                                   )
                                 : null,
                             secondary: alreadyIn
-                                ? Icon(Icons.school, size: 18, color: Colors.blue.shade400)
+                                ? Icon(Icons.school, size: 18, color: AppColors.brand)
                                 : null,
                             controlAffinity: ListTileControlAffinity.leading,
                           );
@@ -7956,7 +7963,7 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
                             : 'Planifier la formation (${_fmtDate(_startDate)} → ${_fmtDate(_endDate)})',
                       ),
                       style: FilledButton.styleFrom(
-                        backgroundColor: Colors.blue.shade700,
+                        backgroundColor: AppColors.brand,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
@@ -7971,25 +7978,25 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
             const SizedBox(height: 24),
             Row(
               children: [
-                Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
+                Icon(Icons.info_outline, size: 18, color: AppColors.brand),
                 const SizedBox(width: 6),
                 Text(
                   'En formation le ${_fmtDate(_startDate)}',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: Colors.blue.shade700),
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 13 : 14, color: AppColors.brand),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             ...workers.where((w) => _alreadyInFormationIds.contains(w.id)).map((e) => Card(
-                  color: Colors.blue.shade50,
+                  color: AppColors.brandLight,
                   margin: const EdgeInsets.only(bottom: 6),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   elevation: 0,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.school, color: Colors.blue.shade700, size: 20),
+                    leading: Icon(Icons.school, color: AppColors.brand, size: 20),
                     title: Text(e.nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    trailing: Icon(Icons.check_circle, color: Colors.blue.shade400, size: 18),
+                    trailing: Icon(Icons.check_circle, color: AppColors.brand, size: 18),
                   ),
                 )),
           ],

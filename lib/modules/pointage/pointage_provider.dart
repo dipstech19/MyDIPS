@@ -7,6 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import '../employees/models/employe_model.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
+import '../distribution/data/distribution_swaps_repository.dart';
+import '../distribution/services/distribution_swap_service.dart';
+import '../distribution/models/distribution_swap_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
 
@@ -66,6 +70,8 @@ class _DriverReportPendingPayload {
 class PointageProvider extends ChangeNotifier {
   final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
   PointageRepository? _repo;
+
+  PointageRepository? get repository => _repo;
 
   List<PointageRecord> _todayPointage = [];
   List<PointageRecord> _pointageByDate = [];
@@ -1191,7 +1197,33 @@ class PointageProvider extends ChangeNotifier {
       workedMinutesBeforeStop: workedMinutesBeforeStop,
       departureAt: departureAt,
     );
+    if (status == DepartureStatus.finished) {
+      await _tryConfirmDistributionSwapArrangements(record);
+    }
     return true;
+  }
+
+  Future<void> _tryConfirmDistributionSwapArrangements(PointageRecord record) async {
+    if (_repo == null || !_firebaseAvailable) return;
+    if (!record.equipeId.startsWith('distribution:')) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('distribution_swaps')
+          .where('status', isEqualTo: DistributionSwapStatus.scheduled.name)
+          .get();
+      final swaps = snap.docs
+          .map((d) => DistributionSwap.fromMap({...d.data(), 'id': d.id}))
+          .toList();
+      final swapsRepo = DistributionSwapsRepository();
+      await DistributionSwapService.tryConfirmArrangementsAfterWorkDay(
+        completedRecord: record,
+        pointageRepo: _repo!,
+        swapsRepo: swapsRepo,
+        swaps: swaps,
+      );
+    } catch (e) {
+      debugPrint('PointageProvider: distribution swap confirm: $e');
+    }
   }
 
   /// إلغاء تأكيد الخروج لموظف (إعادة departureStatus إلى unset).

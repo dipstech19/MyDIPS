@@ -19,6 +19,10 @@ class PointageRepository {
   String _renfortDocId(String employeId, DateTime date, String targetEquipeId) =>
       '${employeId}_${_dateKey(date)}_renfort_$targetEquipeId';
 
+  /// Journée « E » (échange Distribution) dans le groupe d'origine.
+  String _distArrangementDocId(String employeId, DateTime date, String homeEquipeId) =>
+      '${employeId}_${_dateKey(date)}_dist_arr_$homeEquipeId';
+
   String _dayStart(String dateKey) => '${dateKey}T00:00:00.000';
   String _dayEnd(String dateKey) => '${dateKey}T23:59:59.999';
 
@@ -200,6 +204,11 @@ class PointageRepository {
     final updates = <String, dynamic>{
       'chefStatus': status.name,
       'markedByChefId': chefId,
+      'equipeId': record.equipeId,
+      'equipeName': record.equipeName,
+      'chefName': record.chefName,
+      'employeNom': record.employeNom,
+      'employeCin': record.employeCin,
       'absenceReason': isPresent ? null : absenceReason,
       'arrivalMarkedAt': isPresent ? (arrivalAt ?? existing?.arrivalMarkedAt ?? DateTime.now()).toIso8601String() : null,
       'departureStatus': isPresent
@@ -610,6 +619,101 @@ class PointageRepository {
       await ref.set(record.toMap());
     }
     return docId;
+  }
+
+  Future<void> createOrUpdateDistSwapArrangement({
+    required String employeId,
+    required String employeNom,
+    required String employeCin,
+    required String homeEquipeId,
+    required String homeEquipeName,
+    required DateTime day,
+    required String swapId,
+    required String unlockWhenEmployeId,
+    required DateTime unlockWhenWorkDate,
+    required bool pending,
+  }) async {
+    final d = DateTime(day.year, day.month, day.day);
+    final docId = _distArrangementDocId(employeId, d, homeEquipeId);
+    final ref = _firestore.collection(_pointageCollection).doc(docId);
+    final snap = await ref.get();
+    final base = {
+      'employeId': employeId,
+      'employeNom': employeNom,
+      'employeCin': employeCin,
+      'equipeId': homeEquipeId,
+      'equipeName': homeEquipeName,
+      'chefName': 'Échange Distribution',
+      'date': d.toIso8601String(),
+      'distSwapArrangement': true,
+      'distSwapArrangementPending': pending,
+      'distSwapId': swapId,
+      'distSwapUnlockEmployeId': unlockWhenEmployeId,
+      'distSwapUnlockWorkDate': DateTime(
+        unlockWhenWorkDate.year,
+        unlockWhenWorkDate.month,
+        unlockWhenWorkDate.day,
+      ).toIso8601String(),
+      'tempAssigned': false,
+    };
+    if (snap.exists) {
+      await ref.update(base);
+      return;
+    }
+    final record = PointageRecord(
+      id: docId,
+      employeId: employeId,
+      employeNom: employeNom,
+      employeCin: employeCin,
+      equipeId: homeEquipeId,
+      equipeName: homeEquipeName,
+      chefName: 'Échange Distribution',
+      status: AttendanceStatus.present,
+      date: d,
+      createdAt: DateTime.now(),
+      chefStatus: ChefPointageStatus.present,
+      departureStatus: pending ? DepartureStatus.unset : DepartureStatus.finished,
+      departureMarkedAt: pending ? null : DateTime.now(),
+      overtimeMinutes: pending ? null : 480,
+      distSwapArrangement: true,
+      distSwapArrangementPending: pending,
+      distSwapId: swapId,
+    );
+    await ref.set({...record.toMap(), ...base});
+  }
+
+  Future<void> confirmDistSwapArrangement({
+    required String employeId,
+    required DateTime day,
+    required String homeEquipeId,
+  }) async {
+    final d = DateTime(day.year, day.month, day.day);
+    final docId = _distArrangementDocId(employeId, d, homeEquipeId);
+    final ref = _firestore.collection(_pointageCollection).doc(docId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final now = DateTime.now();
+    await ref.update({
+      'distSwapArrangementPending': false,
+      'chefStatus': ChefPointageStatus.present.name,
+      'departureStatus': DepartureStatus.finished.name,
+      'arrivalMarkedAt': null,
+      'departureMarkedAt': null,
+      'overtimeMinutes': 480,
+      'status': AttendanceStatus.present.name,
+    });
+  }
+
+  Future<PointageRecord?> getDistSwapArrangement({
+    required String employeId,
+    required DateTime day,
+    required String homeEquipeId,
+  }) async {
+    final d = DateTime(day.year, day.month, day.day);
+    final docId = _distArrangementDocId(employeId, d, homeEquipeId);
+    final snap = await _firestore.collection(_pointageCollection).doc(docId).get();
+    if (!snap.exists) return null;
+    return PointageRecord.fromMap({...snap.data()!, 'id': snap.id});
   }
 
   /// إنشاء سجل نقطاج بتعديل أدمن فقط (عند عدم وجود سجل)

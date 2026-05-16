@@ -1,10 +1,15 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
 import 'distribution_groups_provider.dart';
+import 'distribution_swaps_provider.dart';
+import 'services/distribution_swap_service.dart';
+import 'widgets/distribution_swap_dialog.dart';
 import '../pointage/models/pointage_model.dart';
 import '../pointage/pointage_provider.dart';
+import '../pointage/data/daily_snapshot_repository.dart';
 import '../pointage/services/pointage_export_service.dart';
 import '../pointage/absence_reasons_provider.dart';
 import '../pointage/models/absence_reason_config.dart';
@@ -28,13 +33,62 @@ class DistributionPointagePage extends StatefulWidget {
 }
 
 class _DistributionPointagePageState extends State<DistributionPointagePage> {
+  final DailySnapshotRepository _snapshotRepo = DailySnapshotRepository();
   String? _selectedGroupId;
   int _reloadCounter = 0;
   final Set<String> _manualStatusEditMode = <String>{};
+  late DateTime _pointageDay;
+  Future<({List<PointageRecord> records, List<OvertimeAssignment> overtime})>? _pointageDataFuture;
+  int _pointageDataKey = -1;
 
-  DateTime _yesterday() {
+  void _loadPointageData(PointageProvider pointageProv, OvertimeProvider overtimeProv, DateTime day) {
+    final key = Object.hash(day.year, day.month, day.day, _reloadCounter);
+    if (_pointageDataKey == key && _pointageDataFuture != null) return;
+    _pointageDataKey = key;
+    _pointageDataFuture = () async {
+      final records = await pointageProv.getPointageRecordsForDate(day);
+      final overtime = await overtimeProv.getForDateRange(day, day);
+      return (records: records, overtime: overtime);
+    }();
+  }
+
+  Future<void> _reloadPointageDataAfterAction(
+    PointageProvider pointageProv,
+    OvertimeProvider overtimeProv,
+    DateTime day,
+  ) async {
+    final records = await pointageProv.getPointageRecordsForDate(day);
+    final overtime = await overtimeProv.getForDateRange(day, day);
+    if (!mounted) return;
+    setState(() {
+      _reloadCounter++;
+      _pointageDataKey = Object.hash(day.year, day.month, day.day, _reloadCounter);
+      _pointageDataFuture = Future.value((records: records, overtime: overtime));
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
     final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day).subtract(const Duration(days: 1));
+    _pointageDay = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 1));
+  }
+
+  Future<void> _pickPointageDay(BuildContext context) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _pointageDay,
+      firstDate: today.subtract(const Duration(days: 120)),
+      lastDate: today,
+    );
+    if (picked != null) {
+      setState(() {
+        _pointageDay = DateTime(picked.year, picked.month, picked.day);
+        _reloadCounter++;
+      });
+    }
   }
 
   String _shiftLabel(ShiftType shift) {
@@ -146,7 +200,7 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
     final distShiftsProv = context.watch<DistributionShiftsProvider>();
     final leaveReqProv = context.watch<LeaveRequestsProvider>();
     final overtimeProv = context.read<OvertimeProvider>();
-    final day = _yesterday();
+    final day = _pointageDay;
 
     final readOnlyByRole = auth.isDirecteur || auth.adminRole.contains('rh') || auth.isChefZoneAdmin;
     final isReviewer = widget.reviewOnly || readOnlyByRole;
@@ -174,27 +228,19 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
         ? distShiftsProv.getShiftForGroup(g.id, day)
         : ShiftType.rest;
     final shiftLabel = _shiftLabel(shift);
-    final members = empsProv.employes
-        .where((e) => g.membreIds.contains(e.id) && e.statut == EmployeStatut.enService)
-        .toList()
-      ..sort((a, b) => a.nom.compareTo(b.nom));
+    final swapsProv = context.watch<DistributionSwapsProvider>();
+    final canManageSwaps = DistributionSwapDialogs.canOpen(auth);
 
+    _loadPointageData(pointageProv, overtimeProv, day);
     return FutureBuilder<({List<PointageRecord> records, List<OvertimeAssignment> overtime})>(
-      future: () async {
-        final records = await pointageProv.getPointageRecordsForDate(day);
-        final overtime = await overtimeProv.getForDateRange(day, day);
-        return (records: records, overtime: overtime);
-      }(),
+      key: ValueKey(_pointageDataKey),
+      future: _pointageDataFuture,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         final records = snap.data?.records ?? const <PointageRecord>[];
         final overtimeAssignments = snap.data?.overtime ?? const <OvertimeAssignment>[];
-        // Force refetch when actions happen.
-        if (_reloadCounter < 0) {
-          return const SizedBox.shrink();
-        }
         PointageRecord? recFor(String id) {
           try {
             return records.firstWhere((r) => r.employeId == id);
@@ -203,21 +249,80 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
           }
         }
         final currentEquipeId = 'distribution:${g.id}';
-        final reportConfirmed = records.any(
-          (r) => r.equipeId == currentEquipeId && r.submittedByChefAt != null,
+        final pointageMembers = DistributionSwapService.membersForPointage(
+          group: g,
+          allEmployes: empsProv.employes,
+          dayRecords: records,
+          swaps: swapsProv.swaps,
+          day: day,
         );
-        final filteredMembers = members;
-        bool isMemberPointageComplete(Employe e) {
-          final r = recFor(e.id);
-          if (r == null) return false;
-          if (r.chefStatus == ChefPointageStatus.unset) return false;
+
+        PointageRecord? recordForRow(
+          ({Employe employe, PointageRecord? record, bool isGuest, bool isArrangement, bool arrangementPending, bool isAwayOnRenfort}) row,
+        ) {
+          if (row.isArrangement || row.isGuest) return row.record;
+          if (row.record != null && row.record!.equipeId == currentEquipeId) return row.record;
+          final matches = records
+              .where((r) =>
+                  r.employeId == row.employe.id &&
+                  r.equipeId == currentEquipeId &&
+                  !r.distSwapArrangement)
+              .toList();
+          if (matches.isNotEmpty) {
+            final home = matches.where((r) => !r.tempAssigned).toList();
+            return home.isNotEmpty ? home.first : matches.first;
+          }
+          final stdId = DistributionSwapService.standardDayDocId(row.employe.id, day);
+          try {
+            return records.firstWhere(
+              (r) => r.id == stdId && !r.tempAssigned && !r.distSwapArrangement,
+            );
+          } catch (_) {
+            return null;
+          }
+        }
+
+        String? incompleteReason(
+          ({Employe employe, PointageRecord? record, bool isGuest, bool isArrangement, bool arrangementPending, bool isAwayOnRenfort}) row,
+        ) {
+          if (row.isArrangement || row.isAwayOnRenfort) return null;
+          final r = recordForRow(row);
+          if (r == null) return 'non marqué';
+          if (r.chefStatus == ChefPointageStatus.unset) return 'non marqué';
           if (r.chefStatus == ChefPointageStatus.present &&
               r.departureStatus == DepartureStatus.unset) {
-            return false;
+            return 'sortie non confirmée';
           }
-          return true;
+          return null;
         }
-        final canConfirmAll = filteredMembers.isNotEmpty && filteredMembers.every(isMemberPointageComplete);
+
+        bool isMemberPointageComplete(
+          ({Employe employe, PointageRecord? record, bool isGuest, bool isArrangement, bool arrangementPending, bool isAwayOnRenfort}) row,
+        ) {
+          if (row.isArrangement || row.isAwayOnRenfort) return true;
+          final r = recordForRow(row);
+          if (r == null) return false;
+          return r.chefStatus != ChefPointageStatus.unset;
+        }
+
+        final incompleteForConfirm = pointageMembers
+            .map((row) => (row: row, reason: incompleteReason(row)))
+            .where((e) => e.reason != null)
+            .toList();
+        final unmarkedNames = pointageMembers
+            .where((row) => incompleteReason(row) == 'non marqué')
+            .map((r) => r.employe.nom)
+            .toList();
+        final activeMembers = pointageMembers
+            .where((m) => !m.isArrangement && !m.isAwayOnRenfort)
+            .toList();
+        final reportConfirmed = activeMembers.isNotEmpty &&
+            activeMembers.every((m) {
+              final rec = recordForRow(m);
+              return rec?.submittedByChefAt != null;
+            });
+        final canConfirmAll =
+            pointageMembers.isNotEmpty && pointageMembers.every(isMemberPointageComplete);
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -252,14 +357,21 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        Chip(
+                        ActionChip(
                           avatar: const Icon(Icons.calendar_today, size: 16),
                           label: Text('${day.day}/${day.month}/${day.year}'),
+                          onPressed: isReviewer ? null : () => _pickPointageDay(context),
                         ),
                         Chip(
                           avatar: const Icon(Icons.schedule, size: 16),
                           label: Text(shiftLabel),
                         ),
+                        if (canManageSwaps && !isReviewer)
+                          ActionChip(
+                            avatar: const Icon(Icons.swap_horiz, size: 16),
+                            label: const Text('Échanges'),
+                            onPressed: () => DistributionSwapDialogs.showManageSheet(context),
+                          ),
                       ],
                     ),
                   ],
@@ -279,59 +391,105 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   onChanged: (v) => setState(() => _selectedGroupId = v),
                 ),
               const SizedBox(height: 12),
-              if (filteredMembers.isEmpty)
+              if (pointageMembers.isEmpty)
                 Text('Aucun membre dans ce groupe.', style: TextStyle(color: Colors.grey[700]))
               else
-                ...filteredMembers.map((Employe e) {
-                  final r = recFor(e.id);
+                ...pointageMembers.map((row) {
+                  final e = row.employe;
+                  final r = recordForRow(row);
+                  final isArrangement = row.isArrangement;
+                  final arrangementPending = row.arrangementPending;
+                  final isGuest = row.isGuest;
+                  final isAwayOnRenfort = row.isAwayOnRenfort;
                   final chefStatus = r?.chefStatus ?? ChefPointageStatus.unset;
                   final present = chefStatus == ChefPointageStatus.present;
                   final absent = chefStatus == ChefPointageStatus.absent;
                   final arrival = r?.arrivalMarkedAt;
                   final departure = r?.departureMarkedAt;
-                  final equipeId = currentEquipeId;
-                  final equipeName = 'Distribution: ${g.nom}';
+                  final equipeId = r?.equipeId ?? currentEquipeId;
+                  final equipeName = r?.equipeName ?? 'Distribution: ${g.nom}';
                   final chefName = auth.currentUser?.nom ?? 'Responsable Distribution';
 
                   Future<void> setPresent() async {
-                    if (isReviewer) return;
+                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
                     final shiftStartAt = _shiftStartFor(shift, day);
-                    await pointageProv.markDistributionAttendanceForDate(
-                      employeId: e.id,
-                      employeNom: e.nom,
-                      employeCin: e.cin,
-                      equipeId: equipeId,
-                      equipeName: equipeName,
-                      chefName: chefName,
-                      chefStatus: ChefPointageStatus.present,
-                      pointageDate: day,
-                      chefId: auth.currentUser?.id,
-                      arrivalAt: shiftStartAt,
-                    );
-                    if (mounted) setState(() => _reloadCounter++);
+                    final bool ok;
+                    if (r != null && r.id.isNotEmpty && r.tempAssigned) {
+                      ok = await pointageProv.markRenfortChefAttendance(
+                        renfortRecord: r,
+                        chefStatus: ChefPointageStatus.present,
+                        chefId: auth.currentUser?.id,
+                        bypassTimeWindows: true,
+                      );
+                    } else {
+                      ok = await pointageProv.markDistributionAttendanceForDate(
+                        employeId: e.id,
+                        employeNom: e.nom,
+                        employeCin: e.cin,
+                        equipeId: currentEquipeId,
+                        equipeName: 'Distribution: ${g.nom}',
+                        chefName: chefName,
+                        chefStatus: ChefPointageStatus.present,
+                        pointageDate: day,
+                        chefId: auth.currentUser?.id,
+                        arrivalAt: shiftStartAt,
+                      );
+                    }
+                    if (!context.mounted) return;
+                    if (!ok) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Échec enregistrement (Firebase indisponible ?)')),
+                      );
+                      return;
+                    }
+                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                   }
 
                   Future<void> setAbsent() async {
-                    if (isReviewer) return;
+                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
                     final reason = await _showAbsenceReasonDialog(context, absenceReasonsProv.reasons);
                     if (reason == null) return;
-                    await pointageProv.markDistributionAttendanceForDate(
-                      employeId: e.id,
-                      employeNom: e.nom,
-                      employeCin: e.cin,
-                      equipeId: equipeId,
-                      equipeName: equipeName,
-                      chefName: chefName,
-                      chefStatus: ChefPointageStatus.absent,
-                      pointageDate: day,
-                      chefId: auth.currentUser?.id,
-                      absenceReason: reason,
-                    );
-                    if (mounted) setState(() => _reloadCounter++);
+                    if (r != null && r.id.isNotEmpty && r.tempAssigned) {
+                      final okRenfort = await pointageProv.markRenfortChefAttendance(
+                        renfortRecord: r,
+                        chefStatus: ChefPointageStatus.absent,
+                        chefId: auth.currentUser?.id,
+                        absenceReason: reason,
+                        bypassTimeWindows: true,
+                      );
+                      if (!context.mounted) return;
+                      if (!okRenfort) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Échec enregistrement (Firebase indisponible ?)')),
+                        );
+                        return;
+                      }
+                    } else {
+                      final ok = await pointageProv.markDistributionAttendanceForDate(
+                        employeId: e.id,
+                        employeNom: e.nom,
+                        employeCin: e.cin,
+                        equipeId: currentEquipeId,
+                        equipeName: 'Distribution: ${g.nom}',
+                        chefName: chefName,
+                        chefStatus: ChefPointageStatus.absent,
+                        pointageDate: day,
+                        chefId: auth.currentUser?.id,
+                        absenceReason: reason,
+                      );
+                      if (!context.mounted) return;
+                      if (!ok) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Échec enregistrement (Firebase indisponible ?)')),
+                        );
+                        return;
+                      }
+                    }
+                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                   }
 
                   Future<void> markFinished() async {
-                    if (isReviewer) return;
+                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
                     final shiftEndAt = _shiftEndFor(shift, day);
                     final record = r ??
                         PointageRecord(
@@ -346,6 +504,8 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           date: day,
                           createdAt: DateTime.now(),
                           chefStatus: ChefPointageStatus.present,
+                          tempAssigned: isGuest,
+                          originalEquipeId: isGuest ? (r?.originalEquipeId ?? '') : null,
                         );
                     await pointageProv.setDepartureStatus(
                       record: record,
@@ -354,11 +514,11 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       departureAt: shiftEndAt,
                       bypassTimeWindows: true,
                     );
-                    if (mounted) setState(() => _reloadCounter++);
+                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                   }
 
                   Future<void> markNotCompleted() async {
-                    if (isReviewer) return;
+                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
                     final record = r ??
                         PointageRecord(
                           id: '',
@@ -528,7 +688,7 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       departureAt: payload.departureAt,
                       bypassTimeWindows: true,
                     );
-                    if (mounted) setState(() => _reloadCounter++);
+                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                   }
 
                   String fmt(DateTime? d) => d == null
@@ -536,13 +696,13 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
                   final actionChips = <Widget>[
-                    if (present)
+                    if (present && !isArrangement)
                       FilterChip(
                         label: const Text('Terminé'),
                         selected: r?.departureStatus == DepartureStatus.finished,
                         onSelected: reportConfirmed ? null : (_) => markFinished(),
                       ),
-                    if (present)
+                    if (present && !isArrangement)
                       FilterChip(
                         label: const Text("N'a pas terminé"),
                         selected: r?.departureStatus == DepartureStatus.stillWorking,
@@ -556,7 +716,37 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       ),
                   ];
                   final statusChooser = <Widget>[
-                    if (!isReviewer && !reportConfirmed) ...[
+                    if (isArrangement) ...[
+                      Chip(
+                        avatar: Icon(
+                          Icons.swap_horiz,
+                          size: 16,
+                          color: arrangementPending ? Colors.orange[900] : Colors.green[900],
+                        ),
+                        backgroundColor: arrangementPending ? const Color(0xFFFFF9C4) : const Color(0xFFFFF59D),
+                        label: Text(
+                          arrangementPending
+                              ? 'E — en attente du retour de l\'autre'
+                              : 'E — 8h (arrangement confirmé)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: arrangementPending ? Colors.orange[900] : Colors.green[900],
+                          ),
+                        ),
+                      ),
+                    ] else if (isGuest) ...[
+                      Chip(
+                        avatar: const Icon(Icons.person_pin_circle_outlined, size: 16),
+                        label: const Text('Manœuvre (groupe invité)'),
+                      ),
+                    ] else if (isAwayOnRenfort) ...[
+                      Chip(
+                        avatar: const Icon(Icons.directions_run, size: 16),
+                        label: const Text('En manœuvre dans un autre groupe'),
+                        backgroundColor: AppColors.brandLight,
+                      ),
+                    ],
+                    if (!isArrangement && !isAwayOnRenfort && !isReviewer && !reportConfirmed) ...[
                       if ((present || absent) && !_manualStatusEditMode.contains(e.id)) ...[
                         Chip(
                           avatar: Icon(
@@ -574,8 +764,9 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           label: const Text('Changer'),
                           onPressed: () => setState(() => _manualStatusEditMode.add(e.id)),
                         ),
-                      ] else
+                      ] else ...[
                         ChefStatusChips(
+                          showBothOptions: _manualStatusEditMode.contains(e.id),
                           current: present
                               ? AttendanceState.present
                               : absent
@@ -583,11 +774,21 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                   : AttendanceState.unmarked,
                           onSelect: (s) async {
                             if (s == AttendanceState.present) {
+                              if (r != null &&
+                                  r.departureStatus != DepartureStatus.unset &&
+                                  r.id.isNotEmpty) {
+                                await pointageProv.resetDepartureStatus(r);
+                              }
                               await setPresent();
                               if (mounted) {
                                 setState(() => _manualStatusEditMode.remove(e.id));
                               }
                             } else if (s == AttendanceState.absent) {
+                              if (r != null &&
+                                  r.departureStatus != DepartureStatus.unset &&
+                                  r.id.isNotEmpty) {
+                                await pointageProv.resetDepartureStatus(r);
+                              }
                               await setAbsent();
                               if (mounted) {
                                 setState(() => _manualStatusEditMode.remove(e.id));
@@ -597,6 +798,12 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           presentLabel: 'Présent',
                           absentLabel: 'Absent',
                         ),
+                        if (_manualStatusEditMode.contains(e.id))
+                          TextButton(
+                            onPressed: () => setState(() => _manualStatusEditMode.remove(e.id)),
+                            child: const Text('Annuler'),
+                          ),
+                      ],
                     ],
                     if (reportConfirmed && (present || absent))
                       Chip(
@@ -651,11 +858,15 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
+                                  isArrangement
+                                      ? (arrangementPending
+                                          ? 'Arrangement — 8h comptées après le retour de l\'autre'
+                                          : 'Arrangement — 8h comptées automatiquement (E)')
+                                      : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
                                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                                 ),
                                 const SizedBox(height: 6),
-                                if (present)
+                                if (present && !isArrangement)
                                   Align(
                                     alignment: Alignment.centerLeft,
                                     child: Container(
@@ -740,11 +951,15 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
+                                        isArrangement
+                                            ? (arrangementPending
+                                                ? 'Arrangement — 8h comptées après le retour de l\'autre'
+                                                : 'Arrangement — 8h comptées automatiquement (E)')
+                                            : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
                                         style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                                       ),
                                       const SizedBox(height: 6),
-                                      if (present)
+                                      if (present && !isArrangement)
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                           decoration: BoxDecoration(
@@ -829,12 +1044,13 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   final present = <String>[];
                   final absent = <String>[];
                   final absentReasons = <String?>[];
-                  for (final e in members) {
-                    final r = recFor(e.id);
+                  for (final row in pointageMembers) {
+                    if (row.isArrangement || row.isAwayOnRenfort) continue;
+                    final r = recordForRow(row);
                     if (r?.chefStatus == ChefPointageStatus.present) {
-                      present.add(e.nom);
+                      present.add(row.employe.nom);
                     } else if (r?.chefStatus == ChefPointageStatus.absent) {
-                      absent.add(e.nom);
+                      absent.add(row.employe.nom);
                       absentReasons.add(r?.absenceReason);
                     }
                   }
@@ -900,7 +1116,8 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       equipeId: 'distribution:${g.id}',
                     );
                     if (!context.mounted) return;
-                    setState(() => _reloadCounter++);
+                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
+                    if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Pointage d\'hier réinitialisé pour ce groupe.')),
                     );
@@ -911,6 +1128,23 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                     style: TextStyle(color: Colors.red),
                   ),
                 ),
+              if (!isReviewer && unmarkedNames.isNotEmpty && !reportConfirmed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Pointage incomplet (Présent/Absent requis) : ${unmarkedNames.join(', ')}',
+                    style: TextStyle(fontSize: 12, color: Colors.orange[800]),
+                  ),
+                ),
+              if (!isReviewer && canConfirmAll && incompleteForConfirm.isNotEmpty && !reportConfirmed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'À la confirmation, la sortie sera enregistrée automatiquement pour : '
+                    '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')}',
+                    style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
+                  ),
+                ),
               if (!isReviewer) const SizedBox(height: 8),
               if (!isReviewer)
                 ElevatedButton.icon(
@@ -918,24 +1152,124 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: (!canConfirmAll || reportConfirmed) ? null : () async {
+                onPressed: reportConfirmed
+                    ? null
+                    : () async {
+                  if (!canConfirmAll) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          unmarkedNames.isNotEmpty
+                              ? 'Marquez Présent ou Absent pour : ${unmarkedNames.join(', ')}'
+                              : 'Complétez le pointage de tous les membres.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
                   try {
                     await withLoadingDialog<void>(
                       context,
                       (() async {
-                        await pointageProv.submitChefReportForDateManual('distribution:${g.id}', day);
+                        final shiftEnd = _shiftEndFor(shift, day);
+                        final chefNameConfirm = auth.currentUser?.nom ?? 'Responsable Distribution';
+                        for (final row in pointageMembers) {
+                          if (row.isArrangement || row.isAwayOnRenfort) continue;
+                          var rec = recordForRow(row);
+                          if (rec == null || rec.chefStatus == ChefPointageStatus.unset) {
+                            await pointageProv.markDistributionAttendanceForDate(
+                              employeId: row.employe.id,
+                              employeNom: row.employe.nom,
+                              employeCin: row.employe.cin,
+                              equipeId: currentEquipeId,
+                              equipeName: 'Distribution: ${g.nom}',
+                              chefName: chefNameConfirm,
+                              chefStatus: ChefPointageStatus.absent,
+                              pointageDate: day,
+                              chefId: auth.currentUser?.id,
+                            );
+                          }
+                          rec = recordForRow(row);
+                          if (rec != null &&
+                              rec.chefStatus == ChefPointageStatus.present &&
+                              rec.departureStatus == DepartureStatus.unset) {
+                            await pointageProv.setDepartureStatus(
+                              record: rec,
+                              status: DepartureStatus.finished,
+                              overtimeMinutes: 0,
+                              departureAt: shiftEnd,
+                              bypassTimeWindows: true,
+                            );
+                          }
+                        }
+                        await pointageProv.submitChefReportForDateManual(currentEquipeId, day);
+                        final isRest = distShiftsProv.hasRotationSlotForGroup(g.id) &&
+                            distShiftsProv.getShiftForGroup(g.id, day) == ShiftType.rest;
+                        final empSnapshots = <({
+                          String employeId,
+                          String employeNom,
+                          String employeCin,
+                          String status,
+                          String? absenceReason,
+                          bool isRestDay,
+                        })>[];
+                        for (final row in pointageMembers) {
+                          if (row.isAwayOnRenfort) continue;
+                          if (row.isArrangement) {
+                            empSnapshots.add((
+                              employeId: row.employe.id,
+                              employeNom: row.employe.nom,
+                              employeCin: row.employe.cin,
+                              status: row.arrangementPending ? 'arrangement_pending' : 'arrangement',
+                              absenceReason: null,
+                              isRestDay: isRest,
+                            ));
+                            continue;
+                          }
+                          final rec = recordForRow(row);
+                          final status = PointageExportService.resolveSnapshotStatus(
+                            rec: rec,
+                            isGroupScope: false,
+                            isDistributionScope: true,
+                          );
+                          empSnapshots.add((
+                            employeId: row.employe.id,
+                            employeNom: row.employe.nom,
+                            employeCin: row.employe.cin,
+                            status: status,
+                            absenceReason:
+                                status == 'absent' ? rec?.absenceReason : null,
+                            isRestDay: isRest,
+                          ));
+                        }
+                        if (empSnapshots.isNotEmpty) {
+                          await _snapshotRepo.saveEquipeSnapshot(
+                            equipeId: currentEquipeId,
+                            equipeName: 'Distribution: ${g.nom}',
+                            date: day,
+                            confirmedById: auth.currentUser?.id ?? '',
+                            employees: empSnapshots,
+                          );
+                        }
                         if (!context.mounted) return;
-                        setState(() => _reloadCounter++);
+                        await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Rapport Distribution confirmé pour hier.')),
+                          const SnackBar(content: Text('Rapport Distribution confirmé.')),
                         );
                       })(),
                       message: 'Envoi en cours...',
                     );
-                  } catch (_) {}
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erreur : $e')),
+                      );
+                    }
+                  }
                 },
                   icon: const Icon(Icons.check_circle),
-                  label: const Text('Confirmer pointage (hier)'),
+                  label: Text('Confirmer pointage (${day.day}/${day.month})'),
                 ),
             ],
           ),

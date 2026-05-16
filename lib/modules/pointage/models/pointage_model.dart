@@ -142,6 +142,11 @@ class PointageRecord {
   /// معرّف الفريق الأصلي عند التحويل المؤقت
   final String? originalEquipeId;
 
+  /// Échange Distribution : journée « E » (8h) chez le groupe d'origine, sans présence physique.
+  final bool distSwapArrangement;
+  final bool distSwapArrangementPending;
+  final String? distSwapId;
+
   /// حالة الشاف للساعات الإضافية (نظام Renfort القديم — محتفظ به للتوافق)
   final ChefPointageStatus overtimeChefStatus;
   final String? overtimeMarkedByChefId;
@@ -191,6 +196,9 @@ class PointageRecord {
     this.absenceReason,
     this.tempAssigned = false,
     this.originalEquipeId,
+    this.distSwapArrangement = false,
+    this.distSwapArrangementPending = false,
+    this.distSwapId,
     this.overtimeChefStatus = ChefPointageStatus.unset,
     this.overtimeMarkedByChefId,
     this.overtimeArrivalMarkedAt,
@@ -220,6 +228,9 @@ class PointageRecord {
     final c = chefStatus;
     // Chef d'equipe decision is the source of truth whenever provided.
     // Driver input is helper/fallback only when chef didn't mark.
+    if (distSwapArrangement && !distSwapArrangementPending) {
+      return ReconciledStatus.confirmedPresent;
+    }
     if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
     if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
     // Distribution : pas de chauffeur — la présence suit uniquement le responsable (chef).
@@ -287,6 +298,9 @@ class PointageRecord {
     'absenceReason': absenceReason,
     'tempAssigned': tempAssigned,
     'originalEquipeId': originalEquipeId,
+    'distSwapArrangement': distSwapArrangement,
+    'distSwapArrangementPending': distSwapArrangementPending,
+    'distSwapId': distSwapId,
     'overtimeChefStatus': overtimeChefStatus.name,
     'overtimeMarkedByChefId': overtimeMarkedByChefId,
     'overtimeArrivalMarkedAt': overtimeArrivalMarkedAt?.toIso8601String(),
@@ -360,6 +374,9 @@ class PointageRecord {
     absenceReason: map['absenceReason'] as String?,
     tempAssigned: map['tempAssigned'] as bool? ?? false,
     originalEquipeId: map['originalEquipeId'] as String?,
+    distSwapArrangement: map['distSwapArrangement'] as bool? ?? false,
+    distSwapArrangementPending: map['distSwapArrangementPending'] as bool? ?? false,
+    distSwapId: map['distSwapId'] as String?,
     overtimeChefStatus: ChefPointageStatus.values.firstWhere(
       (e) => e.name == (map['overtimeChefStatus'] as String?),
       orElse: () => ChefPointageStatus.unset,
@@ -404,6 +421,9 @@ class PointageRecord {
     String? absenceReason,
     bool? tempAssigned,
     String? originalEquipeId,
+    bool? distSwapArrangement,
+    bool? distSwapArrangementPending,
+    String? distSwapId,
     ChefPointageStatus? overtimeChefStatus,
     String? overtimeMarkedByChefId,
     DateTime? overtimeArrivalMarkedAt,
@@ -443,6 +463,9 @@ class PointageRecord {
     absenceReason: absenceReason ?? this.absenceReason,
     tempAssigned: tempAssigned ?? this.tempAssigned,
     originalEquipeId: originalEquipeId ?? this.originalEquipeId,
+    distSwapArrangement: distSwapArrangement ?? this.distSwapArrangement,
+    distSwapArrangementPending: distSwapArrangementPending ?? this.distSwapArrangementPending,
+    distSwapId: distSwapId ?? this.distSwapId,
     overtimeChefStatus: overtimeChefStatus ?? this.overtimeChefStatus,
     overtimeMarkedByChefId: overtimeMarkedByChefId ?? this.overtimeMarkedByChefId,
     overtimeArrivalMarkedAt: overtimeArrivalMarkedAt ?? this.overtimeArrivalMarkedAt,

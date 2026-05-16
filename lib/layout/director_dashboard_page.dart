@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -38,7 +38,7 @@ bool _leaveCoversDay(LeaveRequest r, DateTime day) {
 class DirectorDashboardPage extends StatefulWidget {
   const DirectorDashboardPage({super.key});
 
-  static const Color primary = Color(0xFF1565C0);
+  static const Color primary = Color(0xFF000966);
   static const Color bg = Color(0xFFF1F5F9);
   static const Color textPrimary = Color(0xFF0F172A);
   static const Color textSecondary = Color(0xFF64748B);
@@ -257,7 +257,7 @@ class _DirectorDashboardPageState extends State<DirectorDashboardPage> {
                             value: '$employesCount',
                             hint: 'Effectif dans le périmètre',
                             icon: Icons.groups_2_rounded,
-                            accent: const Color(0xFF2563EB),
+                            accent: const Color(0xFF000966),
                           ),
                           _MetricSpec(
                             label: 'Présents (${_formatShort(_day)})',
@@ -686,7 +686,7 @@ class _DateFilterBar extends StatelessWidget {
             icon: const Icon(Icons.calendar_month_rounded, size: 20),
             label: Text('Choisir… ($dayLabel)'),
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFEFF6FF),
+              backgroundColor: const Color(0xFFE8E9F3),
               foregroundColor: DirectorDashboardPage.primary,
             ),
           ),
@@ -727,14 +727,14 @@ class _HeroHeader extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFF1565C0),
-            Color(0xFF0D47A1),
+            Color(0xFF000966),
+            Color(0xFF00044D),
           ],
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1565C0).withValues(alpha: 0.35),
+            color: const Color(0xFF000966).withValues(alpha: 0.35),
             blurRadius: 24,
             offset: const Offset(0, 12),
           ),

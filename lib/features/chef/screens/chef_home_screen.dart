@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/locale/app_locale.dart';
@@ -144,18 +144,18 @@ class _ChefHomeScreenState extends State<ChefHomeScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
+                color: AppColors.brandLight,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.blue.shade200),
+                border: Border.all(color: AppColors.brandBorder),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
+                  Icon(Icons.info_outline, size: 18, color: AppColors.brand),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       tr(context, 'use_pointage_tab'),
-                      style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
+                      style: TextStyle(fontSize: 12, color: AppColors.brand),
                     ),
                   ),
                 ],

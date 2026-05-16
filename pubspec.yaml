@@ -76,6 +76,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/logo.png
+    - assets/images/dips_logo.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -84,12 +85,12 @@ flutter:
 
 # أيقونة التطبيق: استخدام الشعار لجميع المنصات (Android, iOS, Windows)
 flutter_launcher_icons:
-  image_path: "assets/images/logo.png"
+  image_path: "assets/images/dips_logo.png"
   android: true
   ios: true
   windows:
     generate: true
-    image_path: "assets/images/logo.png"
+    image_path: "assets/images/dips_logo.png"
     icon_size: 256
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/images/logo.png"
+  adaptive_icon_foreground: "assets/images/dips_logo.png"

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/locale/app_locale.dart';
 import '../../../shared/widgets/smart_avatar.dart';
@@ -192,9 +192,9 @@ class EmployeeDetailDialog extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               TabBar(
-                labelColor: const Color(0xFF1565C0),
+                labelColor: const Color(0xFF000966),
                 unselectedLabelColor: Colors.grey,
-                indicatorColor: const Color(0xFF1565C0),
+                indicatorColor: const Color(0xFF000966),
                 tabs: const [
                   Tab(icon: Icon(Icons.person, size: 18), text: 'Identité'),
                   Tab(icon: Icon(Icons.work, size: 18), text: 'Contrat'),

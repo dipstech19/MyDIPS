@@ -11,6 +11,7 @@ class DailyEmployeeSnapshot {
   final String equipeName;
   final DateTime date;
   /// present | absent | leave | formation | rest | paid_absence
+  /// | arrangement | arrangement_pending (échange Distribution « E »)
   final String status;
   /// سبب الغياب إن وُجد
   final String? absenceReason;

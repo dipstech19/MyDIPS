@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import '../firebase_bootstrap.dart';
@@ -87,7 +88,7 @@ class _LoginPageState extends State<LoginPage> {
       children: [
         Expanded(
           child: Container(
-            color: const Color(0xFF1565C0),
+            color: const Color(0xFF000966),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -203,7 +204,7 @@ class _LoginPageState extends State<LoginPage> {
           child: ElevatedButton(
             onPressed: _loading ? null : _login,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1565C0),
+              backgroundColor: const Color(0xFF000966),
               foregroundColor: Colors.white,
               padding: EdgeInsets.symmetric(vertical: isMobile ? 14 : 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -227,16 +228,16 @@ class _LoginPageState extends State<LoginPage> {
         Container(
           padding: EdgeInsets.all(isMobile ? 10 : 12),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppColors.brandLight,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Comptes:', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
+              Text('Comptes:', style: TextStyle(color: AppColors.brand, fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 4),
-              Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
-              Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
+              Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: AppColors.brand, fontSize: 12)),
+              Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: AppColors.brand, fontSize: 12)),
             ],
           ),
         ),

@@ -307,10 +307,41 @@ class ChefStatusChips extends StatelessWidget {
   final ValueChanged<AttendanceState> onSelect;
   final String presentLabel;
   final String absentLabel;
-  const ChefStatusChips({super.key, required this.current, required this.onSelect, required this.presentLabel, required this.absentLabel});
+  /// Affiche toujours Présent + Absent (mode modification).
+  final bool showBothOptions;
+  const ChefStatusChips({
+    super.key,
+    required this.current,
+    required this.onSelect,
+    required this.presentLabel,
+    required this.absentLabel,
+    this.showBothOptions = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    if (showBothOptions || current == AttendanceState.unmarked) {
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          _StatusChip(
+            label: presentLabel,
+            icon: Icons.check,
+            color: AppColors.green,
+            selected: current == AttendanceState.present,
+            onTap: () => onSelect(AttendanceState.present),
+          ),
+          _StatusChip(
+            label: absentLabel,
+            icon: Icons.close,
+            color: AppColors.red,
+            selected: current == AttendanceState.absent,
+            onTap: () => onSelect(AttendanceState.absent),
+          ),
+        ],
+      );
+    }
     if (current == AttendanceState.present) return _StatusChip(label: presentLabel, icon: Icons.check, color: AppColors.green, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
     if (current == AttendanceState.absent) return _StatusChip(label: absentLabel, icon: Icons.close, color: AppColors.red, selected: true, onTap: () => onSelect(AttendanceState.unmarked));
     return Wrap(

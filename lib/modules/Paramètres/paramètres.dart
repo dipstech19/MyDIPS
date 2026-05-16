@@ -1,7 +1,8 @@
-import 'dart:io' as dart_io;
+﻿import 'dart:io' as dart_io;
 import 'dart:math';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -3575,7 +3576,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(c.email, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                            Text('Équipe: $equipeName', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                            Text('Équipe: $equipeName', style: TextStyle(fontSize: 11, color: AppColors.brand)),
                           ],
                         ),
                         trailing: Row(
@@ -4895,7 +4896,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                           children: [
                             Text('Identifiant: ${c.username}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                             if (linkedEquipe != null)
-                              Text('Équipe: ${linkedEquipe.nom}', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                              Text('Équipe: ${linkedEquipe.nom}', style: TextStyle(fontSize: 11, color: AppColors.brand)),
                           ],
                         ),
                         trailing: Row(
@@ -5873,7 +5874,7 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
             children: [
               _SwitchSetting(label: 'Email', subtitle: 'Envoyer des notifications par email', value: _notifEmail, onChanged: (v) => setState(() => _notifEmail = v), iconColor: Colors.green),
               const Divider(height: 20),
-              _SwitchSetting(label: 'Son', subtitle: 'Jouer un son lors des notifications', value: _notifSon, onChanged: (v) => setState(() => _notifSon = v), iconColor: Colors.blue),
+              _SwitchSetting(label: 'Son', subtitle: 'Jouer un son lors des notifications', value: _notifSon, onChanged: (v) => setState(() => _notifSon = v), iconColor: AppColors.brand),
             ],
           ),
           const SizedBox(height: 20),
@@ -6035,7 +6036,7 @@ class _DatabaseSectionState extends State<_DatabaseSection> {
                 _ExportFormatBtn(
                   label: 'Exporter en JSON',
                   icon: Icons.data_object,
-                  color: Colors.blue,
+                  color: AppColors.brand,
                   loading: _exportLoading,
                   onTap: () => _doExport(context, 'json'),
                 ),
@@ -6241,12 +6242,12 @@ class _DatabaseSectionState extends State<_DatabaseSection> {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(children: const [Icon(Icons.restore, color: Colors.blue), SizedBox(width: 8), Text('Restaurer la sauvegarde')]),
+        title: Row(children: const [Icon(Icons.restore, color: AppColors.brand), SizedBox(width: 8), Text('Restaurer la sauvegarde')]),
         content: Text('Restaurer les données du $date ? Les données actuelles seront remplacées.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, elevation: 0),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.brand, foregroundColor: Colors.white, elevation: 0),
             onPressed: () { Navigator.pop(context); _showSaveSuccess(context); },
             child: const Text('Restaurer'),
           ),
@@ -7054,7 +7055,7 @@ class _LeaveTypeCard extends StatelessWidget {
           backgroundColor: isDisabled ? Colors.grey.shade200 : const Color(0xFFE3F2FD),
           child: Icon(
             Icons.beach_access,
-            color: isDisabled ? Colors.grey : const Color(0xFF0D47A1),
+            color: isDisabled ? Colors.grey : const Color(0xFF00044D),
             size: 20,
           ),
         ),

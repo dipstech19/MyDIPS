@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/app_permissions.dart';
 import '../../core/auth/auth_provider.dart';
@@ -191,7 +192,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                       onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
                       icon: const Icon(Icons.person_add, size: 20),
                       label: const Text('Nouveau Collaborateur'),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
                     ),
                   ),
                 ],
@@ -213,7 +214,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
                     icon: const Icon(Icons.person_add),
                     label: const Text('Nouveau Collaborateur'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
                   ),
               ],
             ),
@@ -304,9 +305,9 @@ class _EmployeesPageState extends State<EmployeesPage>
           // ===== TABS =====
           TabBar(
             controller: _tabController,
-            labelColor: const Color(0xFF1565C0),
+            labelColor: const Color(0xFF000966),
             unselectedLabelColor: Colors.grey,
-            indicatorColor: const Color(0xFF1565C0),
+            indicatorColor: const Color(0xFF000966),
             tabs: [
               Tab(
                 child: FittedBox(
@@ -642,10 +643,10 @@ class _EmployeesPageState extends State<EmployeesPage>
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: e.typeContrat == 'CDI' ? Colors.blue.shade50 : Colors.orange.shade50,
+                                    color: e.typeContrat == 'CDI' ? AppColors.brandLight : Colors.orange.shade50,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? Colors.blue : Colors.orange, fontWeight: FontWeight.bold)),
+                                  child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? AppColors.brand : Colors.orange, fontWeight: FontWeight.bold)),
                                 ),
                                 Text('Depuis ${e.dateDebut}', style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
                               ])),
@@ -711,7 +712,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                                           ),
                                         ),
                                         IconButton(
-                                          icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                          icon: Icon(Icons.swap_horiz, size: 18, color: AppColors.brand),
                                           tooltip: 'Changer statut',
                                           onPressed: () => _showChangeStatutDialog(context, e, prov),
                                           padding: EdgeInsets.zero,
@@ -738,7 +739,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                               : (isDirecteur
                                   ? const SizedBox.shrink()
                                   : IconButton(
-                                      icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                      icon: Icon(Icons.swap_horiz, size: 18, color: AppColors.brand),
                                       onPressed: () => _showChangeStatutDialog(context, e, prov),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -798,10 +799,10 @@ class _EmployeesPageState extends State<EmployeesPage>
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: e.typeContrat == 'CDI' ? Colors.blue.shade50 : Colors.orange.shade50,
+                                  color: e.typeContrat == 'CDI' ? AppColors.brandLight : Colors.orange.shade50,
                                   borderRadius: BorderRadius.circular(4),
                                 ),
-                                child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? Colors.blue : Colors.orange, fontWeight: FontWeight.bold)),
+                                child: Text(e.typeContrat, style: TextStyle(fontSize: mobile ? 10 : 11, color: e.typeContrat == 'CDI' ? AppColors.brand : Colors.orange, fontWeight: FontWeight.bold)),
                               ),
                               Text('Depuis ${e.dateDebut}', style: TextStyle(color: Colors.grey[500], fontSize: mobile ? 10 : 11)),
                             ])),
@@ -867,7 +868,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                                         ),
                                       ),
                                       IconButton(
-                                        icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                        icon: Icon(Icons.swap_horiz, size: 18, color: AppColors.brand),
                                         tooltip: 'Changer statut',
                                         onPressed: () => _showChangeStatutDialog(context, e, prov),
                                         padding: EdgeInsets.zero,
@@ -894,7 +895,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                             : (isDirecteur
                                 ? const SizedBox.shrink()
                                 : IconButton(
-                                    icon: Icon(Icons.swap_horiz, size: 18, color: Colors.blue[700]),
+                                    icon: Icon(Icons.swap_horiz, size: 18, color: AppColors.brand),
                                     onPressed: () => _showChangeStatutDialog(context, e, prov),
                                     padding: EdgeInsets.zero,
                                     constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -921,7 +922,7 @@ class _EmployeesPageState extends State<EmployeesPage>
         builder: (ctx, setStateD) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           title: Row(children: [
-            const Icon(Icons.swap_horiz, color: Color(0xFF1565C0)),
+            const Icon(Icons.swap_horiz, color: Color(0xFF000966)),
             const SizedBox(width: 8),
             Text('Statut - ${employe.nom}'),
           ]),
@@ -978,7 +979,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                 if (context.mounted) Navigator.pop(context);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
+                backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Enregistrer'),

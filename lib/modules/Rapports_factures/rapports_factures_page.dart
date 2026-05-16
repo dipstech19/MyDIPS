@@ -1,5 +1,6 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/utils/responsive.dart';
@@ -7,7 +8,7 @@ import '../logistique/logistique_service.dart';
 import '../logistique/vehicule_model.dart';
 
 // ── Constantes visuelles ──────────────────────────────────────────────────────
-const _kBlue = Color(0xFF1565C0);
+const _kBlue = Color(0xFF000966);
 const _kIndigo = Colors.indigo;
 
 class RapportsFacturesPage extends StatefulWidget {
@@ -581,7 +582,7 @@ class _TotalCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+          colors: [Color(0xFF000966), Color(0xFF000966)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

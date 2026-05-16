@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 //  gestion_magasin.dart — VERSION AVEC FOURNISSEURS
 //  + Page Fournisseurs dans la nav
 //  + Sélection fournisseur dans le formulaire d'entrée
@@ -523,10 +523,10 @@ extension _MouvX on Mouvement {
 //  SECTION 3 — CONSTANTES UI
 // ─────────────────────────────────────────────────────────────────────────────
 
-const Color kBlue = Color(0xFF2563EB);
-const Color kBlueDk = Color(0xFF1D4ED8);
-const Color kBlueLt = Color(0xFFEFF6FF);
-const Color kBlueMd = Color(0xFFBFDBFE);
+const Color kBlue = Color(0xFF000966);
+const Color kBlueDk = Color(0xFF00044D);
+const Color kBlueLt = Color(0xFFE8E9F3);
+const Color kBlueMd = Color(0xFFC8CBE8);
 const Color kBg = Color(0xFFF1F5F9);
 const Color kSurface = Colors.white;
 const Color kText = Color(0xFF0F172A);
