@@ -10,7 +10,7 @@ import '../../../core/site/site_provider.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
-import '../employees_provider.dart';
+import '../departements_provider.dart';
 import '../postes_provider.dart';
 import '../services/storage_service.dart';
 
@@ -81,12 +81,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       }
     }
     final postesProv = context.watch<PostesProvider>();
-    final empProv = context.watch<EmployeesProvider>();
+    final deptProv = context.watch<DepartementsProvider>();
     final posteNames = postesProv.postes
         .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    final depts = _uniqueDepartements(empProv);
+    final depts = _departementOptions(deptProv, current: _dept);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -342,8 +342,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       debugPrint('EmployeeFormDialog: Documents count: ${_tempDocuments.length}');
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
-      final empProv = context.read<EmployeesProvider>();
-      final depts = _uniqueDepartements(empProv);
+      final depts = _departementOptions(context.read<DepartementsProvider>(), current: _dept);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
@@ -521,8 +520,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     );
   }
 
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
+  List<String> _departementOptions(DepartementsProvider prov, {String? current}) {
+    final set = prov.departements.map((d) => d.nom).where((n) => n.isNotEmpty).toSet();
+    if (current != null && current.isNotEmpty) set.add(current);
     final list = set.toList()..sort();
     return list.isEmpty ? ['—'] : list;
   }

@@ -7,12 +7,15 @@ import 'package:path_provider/path_provider.dart';
 import '../employees/models/employe_model.dart';
 import 'models/pointage_model.dart';
 import 'data/pointage_repository.dart';
+import 'data/daily_snapshot_repository.dart';
+import 'data/daily_confirmation_repository.dart';
 import '../distribution/data/distribution_swaps_repository.dart';
 import '../distribution/services/distribution_swap_service.dart';
 import '../distribution/models/distribution_swap_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
+import '../../core/notifications/pointage_notifications_service.dart';
 
 /// Ù†Ø§ÙØ°Ø© ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø´Ø§Ù: Ø§Ù„Ø¯Ø®ÙˆÙ„ (âˆ’30 Ø¯ â†’ Ø¨Ø¯Ø§ÙŠØ© + 2h) Ø£Ùˆ Ø§Ù„Ø®Ø±ÙˆØ¬ (âˆ’30 Ø¯ â†’ Ù†Ù‡Ø§ÙŠØ© + 2h) â€” Ù„Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„ØªÙ‚Ø±ÙŠØ± ÙŠÙÙƒÙ…Ù‘Ù„ Ø§Ù„ØºÙŠØ§Ø¨ ÙÙŠ Ù†Ø§ÙØ°Ø© Ø§Ù„Ø®Ø±ÙˆØ¬.
 bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
@@ -70,6 +73,33 @@ class _DriverReportPendingPayload {
 class PointageProvider extends ChangeNotifier {
   final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
   PointageRepository? _repo;
+  final DailySnapshotRepository _dailySnapshotRepo = DailySnapshotRepository();
+  final DailyConfirmationRepository _dailyConfirmationRepo = DailyConfirmationRepository();
+  /// Clé i18n [AppTranslations] — consommée par l’UI (SnackBar) après invalidation export.
+  String? _exportReconfirmHintKey;
+
+  /// Retourne et efface le message à afficher à l’utilisateur (réconfirmation pointage / Excel).
+  String? takeExportReconfirmHint() {
+    final k = _exportReconfirmHintKey;
+    _exportReconfirmHintKey = null;
+    return k;
+  }
+
+  Future<void> _invalidateDailyConfirmationAfterMutation(String equipeId, DateTime date) async {
+    if (!_firebaseAvailable || equipeId.isEmpty) return;
+    final day = DateTime(date.year, date.month, date.day);
+    try {
+      final wasConfirmed = await _dailyConfirmationRepo.isConfirmed(equipeId, day);
+      await _dailyConfirmationRepo.unconfirmEquipe(equipeId, day);
+      await _dailySnapshotRepo.deleteEquipeSnapshot(equipeId, day);
+      if (wasConfirmed) {
+        _exportReconfirmHintKey = 'pointage_export_confirmation_reset';
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('PointageProvider: invalidate daily confirmation/snapshot: $e');
+    }
+  }
 
   PointageRepository? get repository => _repo;
 
@@ -422,6 +452,11 @@ class PointageProvider extends ChangeNotifier {
       _chefReportRetryTimer?.cancel();
       _chefReportRetryTimer = null;
       await _clearPendingChefSyncFromDisk();
+      unawaited(PointageNotificationsService.instance.onChefReportSubmitted(
+        equipeId: p.equipeId,
+        equipeName: p.equipeName,
+        chefName: p.chefName,
+      ));
       notifyListeners();
       return true;
     } catch (_) {
@@ -866,6 +901,7 @@ class PointageProvider extends ChangeNotifier {
       markedByName: markedByName,
     );
     await _repo!.markAttendance(record);
+    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
   }
 
   /// ÙŠÙØ±Ø¬Ø¹ true Ø¥Ø°Ø§ ØªÙ… Ø§Ù„ØªØ³Ø¬ÙŠÙ„ØŒ false Ø¥Ø°Ø§ ÙƒØ§Ù† Ø®Ø§Ø±Ø¬ ÙˆÙ‚Øª Ø§Ù„Ø¨ÙˆØ§Ù†ØªØ§Ø¬.
@@ -906,6 +942,7 @@ class PointageProvider extends ChangeNotifier {
       driverId,
       ignoreLock: _ignoreTimeWindowsForTest,
     );
+    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
     return true;
   }
 
@@ -950,6 +987,7 @@ class PointageProvider extends ChangeNotifier {
       absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
       ignoreLock: _ignoreTimeWindowsForTest,
     );
+    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
     return true;
   }
 
@@ -993,6 +1031,7 @@ class PointageProvider extends ChangeNotifier {
       arrivalAt: arrivalAt,
       departureAt: departureAt,
     );
+    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
     return true;
   }
 
@@ -1017,6 +1056,7 @@ class PointageProvider extends ChangeNotifier {
       absenceReason: chefStatus == ChefPointageStatus.absent ? absenceReason : null,
       ignoreLock: _ignoreTimeWindowsForTest,
     );
+    await _invalidateDailyConfirmationAfterMutation(renfortRecord.equipeId, renfortRecord.date);
     return true;
   }
 
@@ -1072,10 +1112,20 @@ class PointageProvider extends ChangeNotifier {
   }
 
   /// Distribution: ØªØ£ÙƒÙŠØ¯ ØªÙ‚Ø±ÙŠØ± Ø§Ù„Ø´Ø§Ù Ù„ØªØ§Ø±ÙŠØ® Ù…Ø­Ø¯Ø¯ Ø¨Ø¯ÙˆÙ† Ù†Ø§ÙØ°Ø© ØªÙˆÙ‚ÙŠØª.
-  Future<void> submitChefReportForDateManual(String equipeId, DateTime date) async {
+  Future<void> submitChefReportForDateManual(
+    String equipeId,
+    DateTime date, {
+    String equipeName = 'Équipe',
+    String chefName = 'Chef',
+  }) async {
     if (!_firebaseAvailable || _repo == null || equipeId.isEmpty) return;
     final day = DateTime(date.year, date.month, date.day);
     await _repo!.submitChefReport(equipeId, day);
+    unawaited(PointageNotificationsService.instance.onChefReportSubmitted(
+      equipeId: equipeId,
+      equipeName: equipeName,
+      chefName: chefName,
+    ));
   }
 
   /// Avant envoi du rapport chef : complÃ©ter les non-marquÃ©s en Â« absent Â» (Firestore batch, moins de requÃªtes).
@@ -1136,6 +1186,7 @@ class PointageProvider extends ChangeNotifier {
       chefId: chefId,
       ignoreLock: _ignoreTimeWindowsForTest,
     );
+    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
   }
 
   /// ØªØ³Ø¬ÙŠÙ„ Ø­Ø§Ù„Ø© Ø§Ù„Ø®Ø±ÙˆØ¬: Ù„Ø§ ÙŠØ²Ø§Ù„ ÙŠØ¹Ù…Ù„ | Ø§Ù†ØªÙ‡Ù‰ (Ù…Ø¹ Ø§Ø®ØªÙŠØ§Ø±ÙŠ Ø³Ø§Ø¹Ø§Øª Ø¥Ø¶Ø§ÙÙŠØ©).
@@ -1197,6 +1248,7 @@ class PointageProvider extends ChangeNotifier {
       workedMinutesBeforeStop: workedMinutesBeforeStop,
       departureAt: departureAt,
     );
+    await _invalidateDailyConfirmationAfterMutation(record.equipeId, record.date);
     if (status == DepartureStatus.finished) {
       await _tryConfirmDistributionSwapArrangements(record);
     }
@@ -1232,6 +1284,7 @@ class PointageProvider extends ChangeNotifier {
     final docId = record.id.isNotEmpty ? record.id : '';
     if (docId.isEmpty) return;
     await _repo!.resetDepartureStatus(docId);
+    await _invalidateDailyConfirmationAfterMutation(record.equipeId, record.date);
   }
 
   Future<void> setAdminOverride(
@@ -1241,7 +1294,7 @@ class PointageProvider extends ChangeNotifier {
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
   }) async {
-    if (!_firebaseAvailable) return;
+    if (!_firebaseAvailable || _repo == null) return;
     await _repo!.setAdminOverride(
       pointageDocId,
       status,
@@ -1249,6 +1302,10 @@ class PointageProvider extends ChangeNotifier {
       trainingStartAt: status == AttendanceStatus.training ? trainingStartAt : null,
       trainingEndAt: status == AttendanceStatus.training ? trainingEndAt : null,
     );
+    final rec = await _repo!.getByDocId(pointageDocId);
+    if (rec != null) {
+      await _invalidateDailyConfirmationAfterMutation(rec.equipeId, rec.date);
+    }
   }
 
   /// ØªØ¹ÙŠÙŠÙ† Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠ Ù…Ù† Ø§Ù„Ø£Ø¯Ù…Ù† (ÙŠÙÙ†Ø´Ø¦ Ø³Ø¬Ù„Ø§Ù‹ Ø¥Ù† Ù„Ù… ÙŠÙƒÙ† Ù…ÙˆØ¬ÙˆØ¯Ø§Ù‹). ÙŠØ¯Ø¹Ù… Ø£ÙŠ ØªØ§Ø±ÙŠØ® [viewDate].
@@ -1308,6 +1365,7 @@ class PointageProvider extends ChangeNotifier {
       );
       await _repo!.createRecordWithAdminOverride(record);
     }
+    await _invalidateDailyConfirmationAfterMutation(equipeId, day);
   }
 
   /// Affectation temporaire d'un employÃ© vers une autre Ã©quipe pour une journÃ©e (renfort).
@@ -1343,6 +1401,8 @@ class PointageProvider extends ChangeNotifier {
       shiftOverride: shiftOverride,
       defaultOvertimeMinutes: defaultOvertimeMinutes,
     );
+    await _invalidateDailyConfirmationAfterMutation(originalEquipeId, d);
+    await _invalidateDailyConfirmationAfterMutation(targetEquipeId, d);
   }
 
   Future<void> submitDailyReport({
@@ -1386,6 +1446,9 @@ class PointageProvider extends ChangeNotifier {
   Future<void> clearPointageAndReportsForDay(DateTime day, {String? equipeId}) async {
     if (!_firebaseAvailable || _repo == null) return;
     await _repo!.clearPointageAndReportsForDay(day, equipeId: equipeId);
+    if (equipeId != null && equipeId.isNotEmpty) {
+      await _invalidateDailyConfirmationAfterMutation(equipeId, day);
+    }
     if (_selectedReportDate != null) {
       selectReportDate(_selectedReportDate);
     }

@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:image/image.dart' as img;
 
 void main() async {
-  final logoPath = 'assets/images/dips_logo.png';
+  final logoPath = 'assets/images/logo.png';
   final logoFile = File(logoPath);
   if (!await logoFile.exists()) {
     print('ERROR: $logoPath not found.');

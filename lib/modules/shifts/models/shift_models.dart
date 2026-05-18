@@ -27,6 +27,31 @@ class DoubleDay {
   }
 }
 
+/// Jour férié (sans travail) — export Excel OCP « Hors équipe » : marqueur **JF**.
+class PublicHoliday {
+  final DateTime date;
+  final String? label;
+
+  PublicHoliday({required this.date, this.label});
+
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toMap() => {
+        'date': dateKey,
+        'label': label ?? '',
+      };
+
+  static PublicHoliday fromMap(Map<String, dynamic> map) {
+    final raw = map['date'] as String? ?? '';
+    final parts = raw.split('-');
+    final dt = parts.length == 3
+        ? DateTime(int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 1, int.tryParse(parts[2]) ?? 1)
+        : DateTime.now();
+    return PublicHoliday(date: DateTime(dt.year, dt.month, dt.day), label: map['label'] as String?);
+  }
+}
+
 extension ShiftTypeExt on ShiftType {
   String get timeRange {
     switch (this) {

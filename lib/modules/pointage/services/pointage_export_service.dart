@@ -14,6 +14,7 @@ import '../models/absence_reason_config.dart';
 import '../../employees/models/employe_model.dart';
 import '../../overtime/models/overtime_model.dart';
 import '../data/daily_snapshot_repository.dart';
+import '../pointage_data.dart';
 
 class PointageExportRow {
   final String employeId;
@@ -37,6 +38,7 @@ class PointageExportRow {
   final Map<DateTime, String> hoursByDay;
   /// Code de statut par jour pour le formatage Excel.
   /// present | absent | paid_absence | formation | rest
+  /// Texte des cellules « jour » dans l’Excel standard (ex. P, G, ABS, AP).
   final Map<DateTime, String> dayStatusByDay;
   /// لكل يوم غياب، معرف السبب (للتلوين في Excel).
   final Map<DateTime, String?> absenceReasonIdByDay;
@@ -70,6 +72,18 @@ class PointageExportRow {
 class PointageExportService {
   static final _dateFormat = DateFormat('dd/MM/yyyy');
   static final _timeFormat = DateFormat('HH:mm');
+
+  /// Cellule calendrier (Excel) : absence réelle (non payée / déductible).
+  static const String excelDayTrueAbsentMarker = 'ABS';
+  /// Cellule calendrier (Excel) : absence payée ou rémunérée selon [AbsenceReasonConfig].
+  static const String excelDayPaidAbsentMarker = 'AP';
+
+  /// Hors équipe (Chef de zone) : repos le dimanche.
+  static bool isHorsEquipeRestDay(DateTime date, String equipeId) =>
+      equipeId == 'hors_equipe' && date.weekday == DateTime.sunday;
+
+  /// Jour férié — export OCP (Hors équipe / Groupes), sans lien avec présence/absence.
+  static const String excelDayPublicHolidayMarker = 'JF';
 
   /// Particules de patronyme (Maghreb) : rattachées au mot suivant dans la colonne Nom.
   static bool _isOcpFamilyNamePrefix(String token) {
@@ -124,24 +138,40 @@ class PointageExportService {
   }
 
   /// Gabarit feuille OCP (Excel) : cellule avec « 1 » ou vide — pas de G/F/A.
-  /// Présence, congé et formation → « 1 » ; absence / repos / sans travail → vide.
+  /// Présence, congé, formation, attente sortie (comme dans l’app) → « 1 » ;
+  /// absence / repos / sans travail → vide.
   static String ocpExcelDayMarker(String status, String fallback) {
-    if (status == 'present' || status == 'leave' || status == 'formation') {
+    if (status == 'public_holiday') {
+      return excelDayPublicHolidayMarker;
+    }
+    if (status == 'present' ||
+        status == 'leave' ||
+        status == 'formation' ||
+        status == 'arrangement' ||
+        status == 'pending_exit') {
       return '1';
     }
     if (status == 'paid_absence' ||
         status == 'absent' ||
         status == 'rest' ||
-        status == 'pending_exit') {
+        status == 'arrangement_pending') {
       return '';
     }
     if (status.isEmpty) {
       final t = fallback.trim();
       final u = t.toUpperCase();
+      if (u == excelDayPublicHolidayMarker) {
+        return excelDayPublicHolidayMarker;
+      }
+      // Entrée OK mais sortie non confirmée (même libellé que la grille standard).
+      if (t.startsWith('Att.') || u.startsWith('ATT.')) {
+        return '1';
+      }
       if (t == '1' ||
           u == 'P' ||
           u == 'G' ||
           u == 'F' ||
+          u == 'E' ||
           t == '+' ||
           u == 'X') {
         return '1';
@@ -312,7 +342,7 @@ class PointageExportService {
           _presenceCell('Nom', header: true),
           _presenceCell('Entré.', header: true, align: pw.TextAlign.center, maxLines: 1),
           _presenceCell('Sortie', header: true, align: pw.TextAlign.center, maxLines: 1),
-          _presenceCell('Abs.', header: true, align: pw.TextAlign.center, maxLines: 1),
+          _presenceCell('ABS', header: true, align: pw.TextAlign.center, maxLines: 1),
           _presenceCell('Raison absence', header: true, maxLines: 2),
         ],
       ),
@@ -359,7 +389,7 @@ class PointageExportService {
             _presenceCell(absentNames[i]),
             _presenceCell('', align: pw.TextAlign.center),
             _presenceCell('', align: pw.TextAlign.center),
-            _presenceCell('X', align: pw.TextAlign.center),
+            _presenceCell(excelDayTrueAbsentMarker, align: pw.TextAlign.center),
             _presenceCell(reason),
           ],
         ),
@@ -388,7 +418,7 @@ class PointageExportService {
         1: const pw.FlexColumnWidth(3.2),
         2: const pw.FixedColumnWidth(34), // Prés.
         3: const pw.FixedColumnWidth(38), // Sortie
-        4: const pw.FixedColumnWidth(34), // Abs.
+        4: const pw.FixedColumnWidth(38), // ABS
         5: const pw.FlexColumnWidth(3.0), // Raison
       },
       defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
@@ -1673,6 +1703,9 @@ class PointageExportService {
       required String fallback,
       required bool isWeekend,
     }) {
+      if (marker == excelDayPublicHolidayMarker) {
+        return baseStyle(bg: '#E1BEE7', fg: '#4A148C', align: excel.HorizontalAlign.Center);
+      }
       if (marker == '1') {
         return baseStyle(bg: '#E3F2FD', fg: '#0D47A1', align: excel.HorizontalAlign.Center);
       }
@@ -1722,15 +1755,31 @@ class PointageExportService {
     final headcountRealByShift = <String, int>{};
     final presentAtLeastOnceByShift = <String, int>{};
     final presentOnceByBucket = <String, int>{};
+    final headcountByVisualMergeKey = <String, int>{};
     for (final r in exportRowsForSheet) {
       if (isOcpSkeletonExportRow(r)) continue;
       final sc = shiftCodeForRow(r);
       if (!isAllowedExportShift(sc)) continue;
       final bk = ocpBucketKeyForCountRow(r);
-      if (bk == null || bk.endsWith('_autres')) continue;
-      final key = '$sc|$bk';
-      actualPrevuByShiftBucket[key] = (actualPrevuByShiftBucket[key] ?? 0) + 1;
+      final countKey = PointageExportService._ocpEffectifBucketKey(sc, bk);
+      actualPrevuByShiftBucket[countKey] =
+          (actualPrevuByShiftBucket[countKey] ?? 0) + 1;
       headcountRealByShift[sc] = (headcountRealByShift[sc] ?? 0) + 1;
+
+      var p5b = ocpP5Bucket(r);
+      var vmk = sc;
+      if (sc == 'P5' && (p5b == null || p5b.endsWith('_autres'))) {
+        vmk = '$sc|autres';
+      } else if (sc == 'P4') {
+        final p4b = ocpP4Bucket(r);
+        if (p4b != null && !p4b.endsWith('_autres')) vmk = '$sc|$p4b';
+      } else if (sc == 'P6') {
+        final p6b = ocpP6Bucket(r);
+        if (p6b != null && !p6b.endsWith('_autres')) vmk = '$sc|$p6b';
+      }
+      headcountByVisualMergeKey[vmk] =
+          (headcountByVisualMergeKey[vmk] ?? 0) + 1;
+
       var hasPresentOne = false;
       for (final d in days) {
         final status = exportRowDayStatusForDay(r, d);
@@ -1742,7 +1791,7 @@ class PointageExportService {
       }
       if (hasPresentOne) {
         presentAtLeastOnceByShift[sc] = (presentAtLeastOnceByShift[sc] ?? 0) + 1;
-        presentOnceByBucket[key] = (presentOnceByBucket[key] ?? 0) + 1;
+        presentOnceByBucket[countKey] = (presentOnceByBucket[countKey] ?? 0) + 1;
       }
     }
 
@@ -1777,6 +1826,7 @@ class PointageExportService {
     final posteRanges = <({int start, int end})>[];
     final ocpEntiteVerticalMerges = <({int start, int end, bool mergePrevu})>[];
     final ocpThickSepEndRows = <int>{};
+    final ocpThickSepStartRows = <int>{};
     int? ocpEntBlocStartRow;
     var ocpEntBlocMergePrevu = false;
     String? currentVisualMergeKey;
@@ -1939,9 +1989,18 @@ class PointageExportService {
         cellStyle: baseStyle(align: excel.HorizontalAlign.Center, bg: '#F3F6FB'),
       );
 
+      final hadPreviousOcpEntiteBloc = ocpEntBlocStartRow != null;
+      // Séparateur épais uniquement entre grands blocs métier (ex. P2 Sychem / ION),
+      // pas entre les bandes Entité / Prévu du P1.
+      final thickEntiteBandSep = hadPreviousOcpEntiteBloc &&
+          (shiftCode == 'P2' || shiftCode == 'P3');
       if (showOcpEntite) {
-        if (ocpEntBlocStartRow != null) {
-          recordOcpEntiteVerticalMerge(rowIndex - 1);
+        if (hadPreviousOcpEntiteBloc) {
+          recordOcpEntiteVerticalMerge(
+            rowIndex - 1,
+            thickSeparator: thickEntiteBandSep,
+          );
+          if (thickEntiteBandSep) ocpThickSepStartRows.add(rowIndex);
         }
         final ({String label, int ePrev}) hdr = shiftCode == 'P1' && p1b != null
             ? ocpP1BucketHeader(p1b)
@@ -1956,7 +2015,6 @@ class PointageExportService {
                             : shiftCode == 'P6' && p6b != null
                                 ? ocpP6BucketHeader(p6b)
                                 : (label: '', ePrev: 0);
-        final ocpBandTop = borderThin;
         sheet.updateCell(
           excel.CellIndex.indexByColumnRow(columnIndex: colEntite, rowIndex: rowIndex),
           excel.TextCellValue(hdr.label),
@@ -1964,7 +2022,7 @@ class PointageExportService {
             align: excel.HorizontalAlign.Center,
             bold: true,
             bg: '#ECEFF1',
-            top: ocpBandTop,
+            top: borderThin,
             vAlign: excel.VerticalAlign.Center,
             wrap: excel.TextWrapping.WrapText,
           ),
@@ -1982,9 +2040,9 @@ class PointageExportService {
                             : shiftCode == 'P6'
                                 ? p6b
                                 : null;
-        final prevuReel = bkForPrevu != null
-            ? (actualPrevuByShiftBucket['$shiftCode|$bkForPrevu'] ?? 0)
-            : 0;
+        final prevuReel = actualPrevuByShiftBucket[
+            PointageExportService._ocpEffectifBucketKey(shiftCode, bkForPrevu)] ??
+            0;
         final prevuAffiche =
             (shiftCode == 'P1' || shiftCode == 'P2') ? hdr.ePrev : prevuReel;
         if (hdr.ePrev > 0) {
@@ -2037,11 +2095,13 @@ class PointageExportService {
       if (showMergeBlock && isAllowedExportShift(shiftCode)) {
         final String? bkEnt = shiftCode == 'P5' ? p5b : null;
         final int effectifBloc = ocpEffectifCibleFixe(shiftCode) ??
-            (shiftCode == 'P5' &&
-                    bkEnt != null &&
-                    !bkEnt.endsWith('_autres')
-                ? (actualPrevuByShiftBucket['$shiftCode|$bkEnt'] ?? 0)
-                : (headcountRealByShift[shiftCode] ?? 0));
+            (actualPrevuByShiftBucket[
+                    PointageExportService._ocpEffectifBucketKey(
+                      shiftCode,
+                      bkEnt,
+                    )] ??
+                headcountRealByShift[shiftCode] ??
+                0);
         sheet.updateCell(
           excel.CellIndex.indexByColumnRow(columnIndex: colTotalBloc, rowIndex: rowIndex),
           excel.IntCellValue(effectifBloc),
@@ -2140,27 +2200,22 @@ class PointageExportService {
       }
 
       for (final rg in shiftRanges) {
+        final rowsInBlock = rg.end - rg.start + 1;
+        final bucketCountKey = PointageExportService._ocpEffectifBucketKey(
+          rg.shiftCode,
+          rg.ocpBucket,
+        );
+        final vmk = rg.ocpBucket != null
+            ? '${rg.shiftCode}|${rg.ocpBucket}'
+            : rg.shiftCode;
+        final headInBlock = headcountByVisualMergeKey[vmk] ??
+            actualPrevuByShiftBucket[bucketCountKey] ??
+            rowsInBlock;
         final effectifCibleReel = ocpEffectifCibleFixe(rg.shiftCode) ??
-            (rg.ocpBucket != null
-                ? (actualPrevuByShiftBucket['${rg.shiftCode}|${rg.ocpBucket}'] ?? 0)
-                : (headcountRealByShift[rg.shiftCode] ?? 0));
-        // Blocs fusionnés P4/P5/P6 : si aucun jour ne remonte en « présent » mais des lignes
-        // existent sur la feuille, afficher au moins l'effectif réel (sinon « disponible » reste 0).
-        final int baseEffectifDispo = rg.ocpBucket != null
-            ? (presentOnceByBucket['${rg.shiftCode}|${rg.ocpBucket}'] ?? 0)
-            : (presentAtLeastOnceByShift[rg.shiftCode] ?? 0);
-        final int headOnSheet = headcountRealByShift[rg.shiftCode] ?? 0;
-        // P3 : effectif réel sur la feuille (pas seulement présents ≥1 jour).
-        final effectifDispoReel = rg.shiftCode == 'P3'
-            ? headOnSheet
-            : (rg.ocpBucket == null &&
-                    (rg.shiftCode == 'P4' ||
-                        rg.shiftCode == 'P5' ||
-                        rg.shiftCode == 'P6') &&
-                    baseEffectifDispo == 0 &&
-                    headOnSheet > 0
-                ? headOnSheet
-                : baseEffectifDispo);
+            (headInBlock > 0 ? headInBlock : rowsInBlock);
+        // Effectif disponible = nombre réel de personnes sur la feuille dans ce bloc.
+        final effectifDispoReel =
+            headInBlock > 0 ? headInBlock : rowsInBlock;
 
         sheet.updateCell(
           excel.CellIndex.indexByColumnRow(columnIndex: colShift, rowIndex: rg.start),
@@ -2384,12 +2439,25 @@ class PointageExportService {
         }
       }
 
+      bool skipThickSepColumn(int cc) =>
+          cc == colEntite || cc == colPrevuDt;
+
       for (final endRow in ocpThickSepEndRows) {
         if (endRow < headerRow + 1 || endRow > rowIndex - 1) continue;
         for (int cc = 1; cc <= lastDataCol; cc++) {
+          if (skipThickSepColumn(cc)) continue;
           final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: endRow);
           final cell = sheet.cell(idx);
           cell.cellStyle = (cell.cellStyle ?? baseStyle()).copyWith(bottomBorderVal: borderSep);
+        }
+      }
+      for (final startRow in ocpThickSepStartRows) {
+        if (startRow < headerRow + 1 || startRow > rowIndex - 1) continue;
+        for (int cc = 1; cc <= lastDataCol; cc++) {
+          if (skipThickSepColumn(cc)) continue;
+          final idx = excel.CellIndex.indexByColumnRow(columnIndex: cc, rowIndex: startRow);
+          final cell = sheet.cell(idx);
+          cell.cellStyle = (cell.cellStyle ?? baseStyle()).copyWith(topBorderVal: borderSep);
         }
       }
     }
@@ -2594,6 +2662,8 @@ class PointageExportService {
               style = makeDayStyle(bg: '#FFF9C4', fg: '#F57F17');
             case 'arrangement_pending':
               style = makeDayStyle(bg: '#FFFDE7', fg: '#FF8F00');
+            case 'public_holiday':
+              style = makeDayStyle(bg: '#E1BEE7', fg: '#4A148C');
             default:
               style = makeDayStyle();
           }
@@ -2750,11 +2820,23 @@ class PointageExportService {
     }
   }
 
+  static String _exportStatusWhenMarkedAbsent(
+    PointageRecord rec,
+    List<AbsenceReasonConfig>? reasonConfigs,
+  ) {
+    if (_isPaidAbsenceByReason(rec.absenceReason, reasonConfigs)) {
+      return 'paid_absence';
+    }
+    return 'absent';
+  }
+
   /// Statut snapshot pour export / confirmation admin.
+  /// [adminFinalStatus] (chef d'atelier / RH) prime sur chef, chauffeur et entrée-sortie.
   static String resolveSnapshotStatus({
     required PointageRecord? rec,
     required bool isGroupScope,
     required bool isDistributionScope,
+    List<AbsenceReasonConfig>? reasonConfigs,
   }) {
     if (rec == null) return 'absent';
     if (rec.distSwapArrangement) {
@@ -2767,11 +2849,24 @@ class PointageExportService {
           admin == AttendanceStatus.leave) {
         return 'present';
       }
+      if (admin == AttendanceStatus.absent) {
+        return _exportStatusWhenMarkedAbsent(rec, reasonConfigs);
+      }
       return 'absent';
     }
     if (rec.adminFinalStatus == AttendanceStatus.training) return 'formation';
-    if (rec.adminFinalStatus == AttendanceStatus.leave || rec.status == AttendanceStatus.leave) {
+    if (rec.adminFinalStatus == AttendanceStatus.leave ||
+        rec.status == AttendanceStatus.leave) {
       return 'leave';
+    }
+    if (rec.adminFinalStatus == AttendanceStatus.present) {
+      return 'present';
+    }
+    if (rec.adminFinalStatus == AttendanceStatus.absent) {
+      return _exportStatusWhenMarkedAbsent(rec, reasonConfigs);
+    }
+    if (rec.chefStatus == ChefPointageStatus.absent) {
+      return _exportStatusWhenMarkedAbsent(rec, reasonConfigs);
     }
     if (rec.isFinalPresent ||
         rec.chefStatus == ChefPointageStatus.present ||
@@ -2791,13 +2886,180 @@ class PointageExportService {
     DateTime day,
   ) {
     final d = _dayKey(day);
+    PointageRecord? fallback;
     for (final r in records) {
       if (r.employeId != employeId || !r.distSwapArrangement) continue;
-      if (r.equipeId != equipeId) continue;
       if (_dayKey(r.date) != d) continue;
-      return r;
+      if (equipeId.isNotEmpty && r.equipeId == equipeId) return r;
+      fallback ??= r;
+    }
+    return fallback;
+  }
+
+  /// Clé de regroupement effectifs OCP (shift + sous-bloc).
+  static String _ocpEffectifBucketKey(String shiftCode, String? bucket) {
+    if (bucket == null ||
+        bucket == 'autres' ||
+        bucket.endsWith('_autres')) {
+      return '$shiftCode|__shift__';
+    }
+    return '$shiftCode|$bucket';
+  }
+
+  /// Présence réelle sur un jour d'après les enregistrements pointage (hors snapshot).
+  static String? _inferDayStatusFromPointageRecords(
+    List<PointageRecord> dayRecords, {
+    required bool isGroupScope,
+    required bool isDistributionScope,
+    List<AbsenceReasonConfig>? reasonConfigs,
+    String? preferredEquipeId,
+  }) {
+    if (dayRecords.isEmpty) return null;
+    for (final r in dayRecords) {
+      if (r.distSwapArrangement) {
+        return r.distSwapArrangementPending ? 'arrangement_pending' : 'arrangement';
+      }
+    }
+    final best = _bestPointageRecordForExport(
+      dayRecords: dayRecords,
+      equipeId: preferredEquipeId,
+    );
+    if (best != null) {
+      return resolveSnapshotStatus(
+        rec: best,
+        isGroupScope: isGroupScope,
+        isDistributionScope: isDistributionScope,
+        reasonConfigs: reasonConfigs,
+      );
+    }
+    return 'absent';
+  }
+
+  /// Snapshot confirmé pour un employé/jour (équipe courante puis toute équipe).
+  static DailyEmployeeSnapshot? _snapshotForEmployeeDay(
+    Map<String, Map<String, Map<DateTime, DailyEmployeeSnapshot>>> byEmpEquipe,
+    String employeId,
+    String? equipeId,
+    DateTime day,
+  ) {
+    final dayK = _dayKey(day);
+    final eqId = (equipeId ?? '').trim();
+    if (eqId.isNotEmpty) {
+      final snap = byEmpEquipe[employeId]?[eqId]?[dayK];
+      if (snap != null) return snap;
+    }
+    final byEquipe = byEmpEquipe[employeId];
+    if (byEquipe == null) return null;
+    for (final dayMap in byEquipe.values) {
+      final snap = dayMap[dayK];
+      if (snap != null) return snap;
     }
     return null;
+  }
+
+  static List<PointageRecord> _pointageRecordsForEmployeeDay(
+    Map<String, Map<DateTime, List<PointageRecord>>> byEmpDay,
+    String employeId,
+    DateTime day,
+  ) {
+    return byEmpDay[employeId]?[_dayKey(day)] ?? const <PointageRecord>[];
+  }
+
+  static PointageRecord? _bestPointageRecordForExport({
+    required List<PointageRecord> dayRecords,
+    required String? equipeId,
+  }) {
+    if (dayRecords.isEmpty) return null;
+    final eqId = (equipeId ?? '').trim();
+    if (eqId.isNotEmpty) {
+      for (final r in dayRecords) {
+        if (r.equipeId == eqId) return r;
+      }
+    }
+    return dayRecords.first;
+  }
+
+  /// Applique le statut journalier sur les compteurs / maps d'une ligne export.
+  static void _applyExportDayStatus({
+    required String effectiveStatus,
+    required DailyEmployeeSnapshot? snap,
+    required double dayOt,
+    required List<AbsenceReasonConfig>? reasonConfigs,
+    required DateTime d,
+    required Map<DateTime, String> hoursByDay,
+    required Map<DateTime, String> dayStatusByDay,
+    required Map<DateTime, String?> absenceReasonIdByDay,
+    required void Function() onDaysWorked,
+    required void Function() onDaysAbsent,
+    required void Function() onRestDay,
+    required void Function(double hours) onTotalHours,
+    required void Function(double hours) onOvertimeHours,
+  }) {
+    switch (effectiveStatus) {
+      case 'arrangement':
+        onDaysWorked();
+        onTotalHours(hoursPerDay);
+        hoursByDay[d] = 'E';
+        dayStatusByDay[d] = 'arrangement';
+        break;
+      case 'arrangement_pending':
+        hoursByDay[d] = 'E*';
+        dayStatusByDay[d] = 'arrangement_pending';
+        break;
+      case 'present':
+        onDaysWorked();
+        onTotalHours(hoursPerDay);
+        onOvertimeHours(dayOt);
+        hoursByDay[d] = 'P';
+        dayStatusByDay[d] = 'present';
+        break;
+      case 'formation':
+        onDaysWorked();
+        onTotalHours(hoursPerDay);
+        onOvertimeHours(dayOt);
+        hoursByDay[d] = 'F';
+        dayStatusByDay[d] = 'formation';
+        break;
+      case 'leave':
+        onDaysWorked();
+        onTotalHours(hoursPerDay);
+        onOvertimeHours(dayOt);
+        hoursByDay[d] = 'G';
+        dayStatusByDay[d] = 'leave';
+        break;
+      case 'paid_absence':
+        final isPaidByReason =
+            _isPaidAbsenceByReason(snap?.absenceReason, reasonConfigs);
+        onDaysAbsent();
+        hoursByDay[d] = isPaidByReason ? excelDayPaidAbsentMarker : excelDayTrueAbsentMarker;
+        dayStatusByDay[d] = isPaidByReason ? 'paid_absence' : 'absent';
+        if (isPaidByReason) onTotalHours(hoursPerDay);
+        if (snap?.absenceReason != null) {
+          absenceReasonIdByDay[d] = snap!.absenceReason;
+        }
+        break;
+      case 'rest':
+        hoursByDay[d] = 'repos';
+        dayStatusByDay[d] = 'rest';
+        onRestDay();
+        break;
+      default:
+        final absReason = snap?.absenceReason;
+        final isPaid = _isPaidAbsenceByReason(absReason, reasonConfigs);
+        if (isPaid) {
+          onTotalHours(hoursPerDay);
+          onDaysAbsent();
+          hoursByDay[d] = excelDayPaidAbsentMarker;
+          dayStatusByDay[d] = 'paid_absence';
+          absenceReasonIdByDay[d] = absReason;
+        } else {
+          onDaysAbsent();
+          hoursByDay[d] = excelDayTrueAbsentMarker;
+          dayStatusByDay[d] = 'absent';
+          if (absReason != null) absenceReasonIdByDay[d] = absReason;
+        }
+        break;
+    }
   }
 
   static List<PointageExportRow> computeExcelRows({
@@ -2807,6 +3069,8 @@ class PointageExportService {
     required List<PointageRecord> records,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
+    /// Jours fériés (JF) — Hors équipe / Groupes (voir [exportUsesPublicHolidayJf]).
+    bool Function(DateTime date)? isPublicHoliday,
     /// إذا true: الحضور لا يُحسب إلا إذا كان الدخول والخروج مؤكدين.
     /// غير المؤكدين يُحوّلون تلقائيًا إلى غياب في الـ Excel.
     bool requireConfirmedEntryExit = false,
@@ -2866,7 +3130,15 @@ class PointageExportService {
       }
 
       for (final d in days) {
-        if (emp.equipeId != null && isRestDay != null && isRestDay(d, emp.equipeId!)) {
+        final equipeIdForRest = emp.equipeId ?? horsEquipeVirtualId;
+        if (exportUsesPublicHolidayJf(emp.equipeId) &&
+            isPublicHoliday != null &&
+            isPublicHoliday(d)) {
+          hoursByDay[d] = excelDayPublicHolidayMarker;
+          dayStatusByDay[d] = 'public_holiday';
+          continue;
+        }
+        if (isRestDay != null && isRestDay(d, equipeIdForRest)) {
           hoursByDay[d] = 'repos';
           dayStatusByDay[d] = 'rest';
           restDaysCount++;
@@ -2932,20 +3204,25 @@ class PointageExportService {
             // Fallback élargi : couvre tous les signaux de présence réels
             // (chef seul, driver seul, status direct, leave non confirmé par admin, etc.)
             if (!canCountAsPresent && !requireConfirmedEntryExit) {
-              canCountAsPresent =
-                  // Statut direct sur le document
-                  r.status == AttendanceStatus.present ||
-                  r.status == AttendanceStatus.training ||
-                  r.status == AttendanceStatus.leave ||
-                  // Chef a marqué présent (même sans driver)
-                  r.chefStatus == ChefPointageStatus.present ||
-                  // Driver a marqué présent ou en véhicule (même sans chef)
-                  r.driverStatus == DriverPointageStatus.present ||
-                  r.driverStatus == DriverPointageStatus.enVehicule ||
-                  // Override admin
-                  r.adminFinalStatus == AttendanceStatus.present ||
-                  r.adminFinalStatus == AttendanceStatus.training ||
-                  r.adminFinalStatus == AttendanceStatus.leave;
+              final markedAbsentByChefOrAdmin =
+                  r.chefStatus == ChefPointageStatus.absent ||
+                      r.adminFinalStatus == AttendanceStatus.absent;
+              if (!markedAbsentByChefOrAdmin) {
+                canCountAsPresent =
+                    // Statut direct sur le document
+                    r.status == AttendanceStatus.present ||
+                    r.status == AttendanceStatus.training ||
+                    r.status == AttendanceStatus.leave ||
+                    // Chef a marqué présent (même sans driver)
+                    r.chefStatus == ChefPointageStatus.present ||
+                    // Driver a marqué présent ou en véhicule (même sans chef)
+                    r.driverStatus == DriverPointageStatus.present ||
+                    r.driverStatus == DriverPointageStatus.enVehicule ||
+                    // Override admin
+                    r.adminFinalStatus == AttendanceStatus.present ||
+                    r.adminFinalStatus == AttendanceStatus.training ||
+                    r.adminFinalStatus == AttendanceStatus.leave;
+              }
             }
             if (canCountAsPresent) {
               hasAnyFinalPresent = true;
@@ -2968,12 +3245,20 @@ class PointageExportService {
             if (r.adminFinalStatus == AttendanceStatus.leave || r.status == AttendanceStatus.leave) {
               return false;
             }
+            if (r.chefStatus == ChefPointageStatus.absent ||
+                r.adminFinalStatus == AttendanceStatus.absent) {
+              return false;
+            }
             return r.arrivalMarkedAt != null && r.departureStatus == DepartureStatus.finished;
           });
 
           final anyPendingExitOnly = !hasLeaveDay &&
               dayRecords.any((r) {
                 if (r.adminFinalStatus == AttendanceStatus.training) return false;
+                if (r.chefStatus == ChefPointageStatus.absent ||
+                    r.adminFinalStatus == AttendanceStatus.absent) {
+                  return false;
+                }
                 if (r.arrivalMarkedAt == null || r.departureStatus == DepartureStatus.finished) {
                   return false;
                 }
@@ -3002,8 +3287,9 @@ class PointageExportService {
                 (r?.chefStatus == ChefPointageStatus.absent ? r?.absenceReason : null);
             final isPaidAbsence = absReason != null &&
                 !isAbsenceReasonDeductFromSalary(absReason, reasonConfigs);
-            // Paid absence stays an absence in the grid (A) but keeps payable hours.
-            hoursByDay[d] = 'A';
+            // Paid absence : [excelDayPaidAbsentMarker] ; absence réelle : [excelDayTrueAbsentMarker].
+            hoursByDay[d] =
+                isPaidAbsence ? excelDayPaidAbsentMarker : excelDayTrueAbsentMarker;
             dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
             daysAbsentCount++;
             if (absReason != null) {
@@ -3068,6 +3354,7 @@ class PointageExportService {
     required List<DailyEmployeeSnapshot> snapshots,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
+    bool Function(DateTime date)? isPublicHoliday,
     List<OvertimeAssignment>? overtimeAssignments,
     Map<String, String>? ocpExcelSegmentByEmployeId,
     Map<String, bool>? ocpForceSalleControleByEmployeId,
@@ -3091,6 +3378,13 @@ class PointageExportService {
           .putIfAbsent(s.equipeId, () => <DateTime, DailyEmployeeSnapshot>{})[dayK] = s;
     }
     final allPointageRecords = pointageRecords ?? const <PointageRecord>[];
+    final recordsByEmpDay = <String, Map<DateTime, List<PointageRecord>>>{};
+    for (final r in allPointageRecords) {
+      recordsByEmpDay
+          .putIfAbsent(r.employeId, () => <DateTime, List<PointageRecord>>{})
+          .putIfAbsent(_dayKey(r.date), () => <PointageRecord>[])
+          .add(r);
+    }
 
     // تجميع overtime_assignments لكل موظف
     final overtimeByEmploye = <String, Map<DateTime, double>>{};
@@ -3107,10 +3401,9 @@ class PointageExportService {
 
     final rows = <PointageExportRow>[];
     for (final emp in employees) {
-      final empEquipeId = emp.equipeId ?? '';
-      final empSnaps = empEquipeId.isEmpty
-          ? <DateTime, DailyEmployeeSnapshot>{}
-          : (snapshotsByEmpEquipe[emp.id]?[empEquipeId] ?? {});
+      final empEquipeId = emp.equipeId;
+      final isGroupScope = (empEquipeId ?? '').startsWith('groupe:');
+      final isDistributionScope = (empEquipeId ?? '').startsWith('distribution:');
       final empOtByDay = overtimeByEmploye[emp.id] ?? {};
 
       int daysWorked = 0;
@@ -3123,19 +3416,36 @@ class PointageExportService {
       final absenceReasonIdByDay = <DateTime, String?>{};
 
       for (final d in days) {
-        // يوم راحة
-        if (emp.equipeId != null && isRestDay != null && isRestDay(d, emp.equipeId!)) {
-          hoursByDay[d] = 'repos';
-          dayStatusByDay[d] = 'rest';
+        final dayKey = _dayKey(d);
+        final equipeIdForHors = emp.equipeId ?? horsEquipeVirtualId;
+        if (exportUsesPublicHolidayJf(emp.equipeId) &&
+            isPublicHoliday != null &&
+            isPublicHoliday(d)) {
+          hoursByDay[dayKey] = excelDayPublicHolidayMarker;
+          dayStatusByDay[dayKey] = 'public_holiday';
+          continue;
+        }
+
+        final snap = _snapshotForEmployeeDay(
+          snapshotsByEmpEquipe,
+          emp.id,
+          empEquipeId,
+          d,
+        );
+        // يوم راحة (planning ou snapshot confirmé)
+        final equipeIdForRest = equipeIdForHors;
+        if ((isRestDay != null && isRestDay(d, equipeIdForRest)) ||
+            snap?.isRestDay == true) {
+          hoursByDay[dayKey] = 'repos';
+          dayStatusByDay[dayKey] = 'rest';
           restDaysCount++;
           // ساعات إضافية في يوم الراحة
-          final dayOt = empOtByDay[d] ?? 0;
+          final dayOt = empOtByDay[dayKey] ?? empOtByDay[d] ?? 0;
           if (dayOt > 0) overtimeHours += dayOt;
           continue;
         }
 
-        final snap = empSnaps[d];
-        final dayOt = empOtByDay[d] ?? 0;
+        final dayOt = empOtByDay[dayKey] ?? empOtByDay[d] ?? 0;
 
         String effectiveStatus = snap?.status ?? '';
         if (effectiveStatus != 'arrangement' &&
@@ -3145,7 +3455,7 @@ class PointageExportService {
             allPointageRecords,
             emp.id,
             emp.equipeId!,
-            d,
+            dayKey,
           );
           if (arrRec != null) {
             effectiveStatus =
@@ -3153,70 +3463,80 @@ class PointageExportService {
           }
         }
 
-        if (snap == null && effectiveStatus.isEmpty) {
-          // No confirmed snapshot for this day: keep neutral marker (not auto-absent).
-          hoursByDay[d] = '-';
-          dayStatusByDay[d] = '';
-        } else {
-          switch (effectiveStatus) {
-            case 'arrangement':
-              daysWorked++;
-              totalHours += hoursPerDay;
-              hoursByDay[d] = 'E';
-              dayStatusByDay[d] = 'arrangement';
-            case 'arrangement_pending':
-              hoursByDay[d] = 'E*';
-              dayStatusByDay[d] = 'arrangement_pending';
-            case 'present':
-              daysWorked++;
-              totalHours += hoursPerDay;
-              overtimeHours += dayOt;
-              hoursByDay[d] = 'P';
-              dayStatusByDay[d] = 'present';
-            case 'formation':
-              daysWorked++;
-              totalHours += hoursPerDay;
-              overtimeHours += dayOt;
-              hoursByDay[d] = 'F';
-              dayStatusByDay[d] = 'formation';
-            case 'leave':
-              daysWorked++;
-              totalHours += hoursPerDay;
-              overtimeHours += dayOt;
-              hoursByDay[d] = 'G';
-              dayStatusByDay[d] = 'leave';
-            case 'paid_absence':
-              final isPaidByReason =
-                  _isPaidAbsenceByReason(snap?.absenceReason, reasonConfigs);
-              daysAbsentCount++;
-              hoursByDay[d] = 'A';
-              dayStatusByDay[d] = isPaidByReason ? 'paid_absence' : 'absent';
-              if (isPaidByReason) {
-                totalHours += hoursPerDay;
-              }
-              if (snap?.absenceReason != null) {
-                absenceReasonIdByDay[d] = snap!.absenceReason;
-              }
-            case 'rest':
-              hoursByDay[d] = 'repos';
-              dayStatusByDay[d] = 'rest';
-              restDaysCount++;
-            default: // 'absent' ou autre
-              final absReason = snap?.absenceReason;
-              final isPaid = _isPaidAbsenceByReason(absReason, reasonConfigs);
-              if (isPaid) {
-                totalHours += hoursPerDay;
-                daysAbsentCount++;
-                hoursByDay[d] = 'A';
-                dayStatusByDay[d] = 'paid_absence';
-                absenceReasonIdByDay[d] = absReason;
-              } else {
-                daysAbsentCount++;
-                hoursByDay[d] = 'A';
-                dayStatusByDay[d] = 'absent';
-                if (absReason != null) absenceReasonIdByDay[d] = absReason;
-              }
+        final dayRecords = _pointageRecordsForEmployeeDay(
+          recordsByEmpDay,
+          emp.id,
+          d,
+        );
+        final recForDay = dayRecords.isEmpty
+            ? null
+            : _bestPointageRecordForExport(
+                dayRecords: dayRecords,
+                equipeId: empEquipeId,
+              );
+
+        // Décision chef d'atelier / RH (adminFinalStatus) : prime sur snapshot confirmé.
+        if (recForDay?.adminFinalStatus != null) {
+          effectiveStatus = resolveSnapshotStatus(
+            rec: recForDay,
+            isGroupScope: isGroupScope,
+            isDistributionScope: isDistributionScope,
+            reasonConfigs: reasonConfigs,
+          );
+        } else if (dayRecords.isNotEmpty &&
+            (snap == null || effectiveStatus.isEmpty)) {
+          final inferred = _inferDayStatusFromPointageRecords(
+            dayRecords,
+            isGroupScope: isGroupScope,
+            isDistributionScope: isDistributionScope,
+            reasonConfigs: reasonConfigs,
+            preferredEquipeId: empEquipeId,
+          );
+          if (inferred != null) {
+            effectiveStatus = inferred;
           }
+        } else if (recForDay != null &&
+            effectiveStatus != 'rest' &&
+            effectiveStatus != 'arrangement_pending' &&
+            recForDay.chefStatus == ChefPointageStatus.absent) {
+          effectiveStatus =
+              _exportStatusWhenMarkedAbsent(recForDay, reasonConfigs);
+        } else if (dayRecords.isNotEmpty &&
+            (effectiveStatus == 'absent' || effectiveStatus == 'paid_absence')) {
+          final inferredLive = _inferDayStatusFromPointageRecords(
+            dayRecords,
+            isGroupScope: isGroupScope,
+            isDistributionScope: isDistributionScope,
+            reasonConfigs: reasonConfigs,
+            preferredEquipeId: empEquipeId,
+          );
+          if (inferredLive == 'present' ||
+              inferredLive == 'formation' ||
+              inferredLive == 'leave') {
+            effectiveStatus = inferredLive!;
+          }
+        }
+
+        if (effectiveStatus.isEmpty) {
+          // Toujours aucune donnée (ni snapshot ni pointage).
+          hoursByDay[dayKey] = '-';
+          dayStatusByDay[dayKey] = '';
+        } else {
+          _applyExportDayStatus(
+            effectiveStatus: effectiveStatus,
+            snap: snap,
+            dayOt: dayOt,
+            reasonConfigs: reasonConfigs,
+            d: dayKey,
+            hoursByDay: hoursByDay,
+            dayStatusByDay: dayStatusByDay,
+            absenceReasonIdByDay: absenceReasonIdByDay,
+            onDaysWorked: () => daysWorked++,
+            onDaysAbsent: () => daysAbsentCount++,
+            onRestDay: () => restDaysCount++,
+            onTotalHours: (h) => totalHours += h,
+            onOvertimeHours: (h) => overtimeHours += h,
+          );
         }
       }
 

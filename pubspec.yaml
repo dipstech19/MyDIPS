@@ -1,5 +1,5 @@
 name: dips_managment
-description: "DIPS Management — application interne (Windows / Android)."
+description: "My DIPS — application interne (Windows / Android)."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -37,6 +37,8 @@ dependencies:
   cloud_firestore:
   firebase_storage:
   firebase_messaging:
+  flutter_local_notifications: ^19.0.0
+  timezone: ^0.10.0
   pdf:
   printing:
   file_picker:
@@ -85,12 +87,12 @@ flutter:
 
 # أيقونة التطبيق: استخدام الشعار لجميع المنصات (Android, iOS, Windows)
 flutter_launcher_icons:
-  image_path: "assets/images/dips_logo.png"
+  image_path: "assets/images/logo.png"
   android: true
   ios: true
   windows:
     generate: true
-    image_path: "assets/images/dips_logo.png"
+    image_path: "assets/images/logo.png"
     icon_size: 256
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/images/dips_logo.png"
+  adaptive_icon_foreground: "assets/images/logo.png"

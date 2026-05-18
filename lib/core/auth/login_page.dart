@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import '../firebase_bootstrap.dart';
 import '../utils/responsive.dart';
+import '../locale/app_locale.dart';
 import '../widgets/dips_brand_logo.dart';
 import 'auth_provider.dart';
 
@@ -71,7 +72,7 @@ class _LoginPageState extends State<LoginPage> {
                 children: [
                   const DipsBrandLogo(height: 72),
                   const SizedBox(height: 12),
-                  Text('Système de Gestion', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  Text(tr(context, 'app_title'), style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                 ],
               ),
             ),
@@ -94,7 +95,7 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 const DipsBrandLogo(height: 100),
                 const SizedBox(height: 16),
-                const Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 18)),
+                Text(tr(context, 'app_title'), style: const TextStyle(color: Colors.white70, fontSize: 18)),
                 const SizedBox(height: 40),
                 const _FeatureItem(icon: Icons.people, text: 'Gestion des Collaborateurs'),
                 const _FeatureItem(icon: Icons.access_time, text: 'Pointage'),

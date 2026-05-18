@@ -72,6 +72,14 @@ class PointageRepository {
     return PointageRecord.fromMap({...doc.data()!, 'id': doc.id});
   }
 
+  /// Récupère un enregistrement par id Firestore (ex. renfort, docId personnalisé).
+  Future<PointageRecord?> getByDocId(String docId) async {
+    if (docId.isEmpty) return null;
+    final doc = await _firestore.collection(_pointageCollection).doc(docId).get();
+    if (!doc.exists || doc.data() == null) return null;
+    return PointageRecord.fromMap({...doc.data()!, 'id': doc.id});
+  }
+
   /// جلب كل سجلات البوانتاج ليوم معيّن (للسائق في وردية ليلية قبل 07:00).
   Future<List<PointageRecord>> getPointageForDate(DateTime date) async {
     final day = DateTime(date.year, date.month, date.day);

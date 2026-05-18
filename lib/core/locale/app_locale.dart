@@ -23,7 +23,7 @@ class LocaleProvider extends ChangeNotifier {
 /// ترجمات التطبيق — فرنسية وعربية
 class AppTranslations {
   static const Map<String, String> fr = {
-    'app_title': 'DIPS - Système de Gestion',
+    'app_title': 'My DIPS',
     'nav_dashboard': 'Tableau de bord',
     'nav_employees': 'Collaborateurs',
     'nav_pointage': 'Pointage',
@@ -232,12 +232,14 @@ class AppTranslations {
     'pointage_excel_to': 'Au',
     'pointage_export_ok': 'Export réussi',
     'pointage_export_excel_saved': 'Fichier Excel enregistré',
+    'pointage_export_confirmation_reset':
+        'Le pointage de cette équipe pour ce jour a été modifié après confirmation. Veuillez confirmer à nouveau pour que l’export Excel reflète les changements.',
     'pointage_overtime_select_shift_title': 'Choisir la shift pour les heures supplémentaires',
     'pointage_overtime_badge': 'Heures supplémentaires',
   };
 
   static const Map<String, String> ar = {
-    'app_title': 'DIPS - نظام الإدارة',
+    'app_title': 'My DIPS',
     'nav_dashboard': 'لوحة التحكم',
     'nav_employees': 'المتعاونون',
     'nav_pointage': 'الحضور',
@@ -446,6 +448,8 @@ class AppTranslations {
     'pointage_excel_to': 'إلى',
     'pointage_export_ok': 'تم التصدير بنجاح',
     'pointage_export_excel_saved': 'تم حفظ ملف Excel',
+    'pointage_export_confirmation_reset':
+        'تم تعديل الحضور لهذا الفريق في هذا اليوم بعد التأكيد. يرجى التأكيد مرة أخرى حتى يعكس ملف Excel التغييرات.',
     'pointage_overtime_select_shift_title': 'اختر الوردية لساعات العمل الإضافية',
     'pointage_overtime_badge': 'ساعات إضافية',
   };

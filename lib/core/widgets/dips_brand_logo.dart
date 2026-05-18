@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
-/// Logo entreprise (`assets/images/dips_logo.png`) — connexion et barre latérale.
+/// Logo entreprise (`assets/images/logo.png`) — connexion et barre latérale.
 class DipsBrandLogo extends StatelessWidget {
   const DipsBrandLogo({
     super.key,
@@ -19,7 +19,7 @@ class DipsBrandLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Image.asset(
-      'assets/images/dips_logo.png',
+      'assets/images/logo.png',
       height: height,
       width: width,
       fit: fit,

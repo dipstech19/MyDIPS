@@ -250,6 +250,8 @@ class _ShiftsPageState extends State<ShiftsPage> {
               ),
               SizedBox(height: 32),
               _DoubleDaysSection(isAdmin: isAdmin),
+              SizedBox(height: 32),
+              _PublicHolidaysSection(isAdmin: isAdmin),
             ],
       ],
     );
@@ -1595,5 +1597,216 @@ class _MonthDoubleDaysCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ─── Jours fériés (JF — export OCP Hors équipe) ─────────────────────────────
+
+class _PublicHolidaysSection extends StatefulWidget {
+  final bool isAdmin;
+  const _PublicHolidaysSection({required this.isAdmin});
+
+  @override
+  State<_PublicHolidaysSection> createState() => _PublicHolidaysSectionState();
+}
+
+class _PublicHolidaysSectionState extends State<_PublicHolidaysSection> {
+  int _filterYear = DateTime.now().year;
+
+  @override
+  Widget build(BuildContext context) {
+    final shifts = context.watch<ShiftsProvider>();
+    final allDays = shifts.publicHolidays;
+    final years = <int>{for (final d in allDays) d.date.year, _filterYear};
+    final sortedYears = years.toList()..sort();
+    final filtered = allDays.where((d) => d.date.year == _filterYear).toList();
+    final calendarDays =
+        filtered.map((d) => DoubleDay(date: d.date, label: d.label)).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.shade600,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'JF',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Jours fériés',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            DropdownButton<int>(
+              value: _filterYear,
+              underline: const SizedBox(),
+              items: sortedYears.map((y) => DropdownMenuItem(value: y, child: Text('$y'))).toList(),
+              onChanged: (v) => setState(() => _filterYear = v ?? _filterYear),
+            ),
+            if (widget.isAdmin) ...[
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.deepPurple.shade600,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                onPressed: () => _showAddPublicHolidayDialog(context, shifts),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Ajouter', style: TextStyle(fontSize: 13)),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Marqueur JF dans Excel OCP : Hors équipe (Chef de zone) et Groupes (Chef d\'atelier) — indépendant du pointage.',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 14),
+        if (calendarDays.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Text(
+              'Aucun jour férié pour $_filterYear',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+            ),
+          )
+        else
+          _DoubleDaysCalendarView(
+            days: calendarDays,
+            year: _filterYear,
+            isAdmin: widget.isAdmin,
+            onRemove: (d) => shifts.removePublicHoliday(d.date),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showAddPublicHolidayDialog(BuildContext context, ShiftsProvider shifts) async {
+    DateTime? pickedDate;
+    final labelCtrl = TextEditingController();
+    bool useRange = false;
+    DateTime? rangeStart;
+    DateTime? rangeEnd;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Text('Ajouter jour(s) férié(s)'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Plage de dates'),
+                  value: useRange,
+                  onChanged: (v) => setS(() => useRange = v),
+                ),
+                if (!useRange)
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final p = await showDatePicker(
+                        context: ctx,
+                        initialDate: pickedDate ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035),
+                      );
+                      if (p != null) setS(() => pickedDate = p);
+                    },
+                    icon: const Icon(Icons.calendar_today, size: 18),
+                    label: Text(
+                      pickedDate == null
+                          ? 'Choisir la date'
+                          : '${pickedDate!.day}/${pickedDate!.month}/${pickedDate!.year}',
+                    ),
+                  )
+                else ...[
+                  OutlinedButton(
+                    onPressed: () async {
+                      final p = await showDatePicker(
+                        context: ctx,
+                        initialDate: rangeStart ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035),
+                      );
+                      if (p != null) setS(() => rangeStart = p);
+                    },
+                    child: Text(rangeStart == null
+                        ? 'Date début'
+                        : 'Du ${rangeStart!.day}/${rangeStart!.month}/${rangeStart!.year}'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: () async {
+                      final p = await showDatePicker(
+                        context: ctx,
+                        initialDate: rangeEnd ?? rangeStart ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035),
+                      );
+                      if (p != null) setS(() => rangeEnd = p);
+                    },
+                    child: Text(rangeEnd == null
+                        ? 'Date fin'
+                        : 'Au ${rangeEnd!.day}/${rangeEnd!.month}/${rangeEnd!.year}'),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: labelCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Libellé (optionnel)',
+                    hintText: 'Ex. Fête du travail',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            FilledButton(
+              onPressed: () async {
+                final label = labelCtrl.text.trim();
+                if (!useRange) {
+                  if (pickedDate == null) return;
+                  await shifts.setPublicHoliday(pickedDate!, label: label);
+                } else {
+                  if (rangeStart == null || rangeEnd == null) return;
+                  final a = DateTime(rangeStart!.year, rangeStart!.month, rangeStart!.day);
+                  final b = DateTime(rangeEnd!.year, rangeEnd!.month, rangeEnd!.day);
+                  final from = a.isBefore(b) ? a : b;
+                  final to = a.isBefore(b) ? b : a;
+                  for (var i = 0; i <= to.difference(from).inDays; i++) {
+                    await shifts.setPublicHoliday(from.add(Duration(days: i)), label: label);
+                  }
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
+    labelCtrl.dispose();
   }
 }

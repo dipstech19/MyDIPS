@@ -145,6 +145,18 @@ class PointageHoursConfig {
     final winEnd = shiftEnd.add(kPointageDepartureWindow);
     return '${_fmt(winStart)} – ${_fmt(winEnd)}';
   }
+
+  DateTime arrivalWindowStartOn(DateTime logicalDay) {
+    return _shiftStartDateTime(this, logicalDay).subtract(kPointageWindowOpenBefore);
+  }
+
+  DateTime departureWindowStartOn(DateTime logicalDay) {
+    return shiftEndMomentOn(logicalDay).subtract(kPointageWindowOpenBefore);
+  }
+
+  DateTime departureWindowEndOn(DateTime logicalDay) {
+    return shiftEndMomentOn(logicalDay).add(kPointageDepartureWindow);
+  }
 }
 
 bool _isOvernight(PointageHoursConfig c) {

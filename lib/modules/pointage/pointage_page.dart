@@ -266,6 +266,7 @@ class _PointagePageState extends State<PointagePage> {
   final DailyConfirmationRepository _confirmationRepo =
       DailyConfirmationRepository();
   final DailySnapshotRepository _snapshotRepo = DailySnapshotRepository();
+  PointageProvider? _pointageExportHintListenTarget;
   final ScrollController _adminActionsScrollController = ScrollController();
   final ScrollController _adminTabsScrollController = ScrollController();
   final ScrollController _adminTeamScopeScrollController = ScrollController();
@@ -509,6 +510,22 @@ class _PointagePageState extends State<PointagePage> {
             auth.hasPermission(AppPermissions.groupsManage));
   }
 
+  void _onPointageProviderExportHint() {
+    if (!mounted) return;
+    final p = _pointageExportHintListenTarget;
+    if (p == null) return;
+    final key = p.takeExportReconfirmHint();
+    if (key == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(trOf(context, key)),
+        backgroundColor: Colors.orange.shade800,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 7),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -517,10 +534,18 @@ class _PointagePageState extends State<PointagePage> {
       if (!mounted) return;
       setState(() {});
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final p = context.read<PointageProvider>();
+      _pointageExportHintListenTarget = p;
+      p.addListener(_onPointageProviderExportHint);
+    });
   }
 
   @override
   void dispose() {
+    _pointageExportHintListenTarget?.removeListener(_onPointageProviderExportHint);
+    _pointageExportHintListenTarget = null;
     _pointageClockRefreshTimer?.cancel();
     _adminActionsScrollController.dispose();
     _adminTabsScrollController.dispose();
@@ -1100,6 +1125,15 @@ class _PointagePageState extends State<PointagePage> {
       final gid = 'groupe:${g.id}';
       if (isWeeklyRestForGroupe(gid, logicalDay)) {
         effectiveNonWorkingIds.add(gid);
+      }
+    }
+    if (isHorsEquipeWeeklyRestDay(logicalDay)) {
+      effectiveNonWorkingIds.add(horsEquipeVirtualId);
+    }
+    if (shiftsProvider.isPublicHoliday(logicalDay)) {
+      effectiveNonWorkingIds.add(horsEquipeVirtualId);
+      for (final g in groupes) {
+        effectiveNonWorkingIds.add('groupe:${g.id}');
       }
     }
     bool isRoboEquipe(Equipe eq) {
@@ -2246,6 +2280,9 @@ class _PointagePageState extends State<PointagePage> {
                   ) async {
                     final isGroupScope = t.equipeId == 'hors_equipe' || t.equipeId.startsWith('groupe:');
                     final isDistributionScope = _isDistributionEquipeId(t.equipeId);
+                    final reasonConfigsList = context.read<AbsenceReasonsProvider>().reasons;
+                    final reasonConfigsForSnapshot =
+                        reasonConfigsList.isEmpty ? null : reasonConfigsList;
                     final teamWorkers = t.workers;
                     int presentC = 0, absentC = 0, sortieOkC = 0;
                     final nightTeamMobile = _isNightShiftEntryOnlyAdminContext(t.equipeId, logicalDay, equipes, shiftsProvider);
@@ -2339,16 +2376,24 @@ class _PointagePageState extends State<PointagePage> {
                         rec: rec,
                         isGroupScope: isGroupScope,
                         isDistributionScope: isDistributionScope,
+                        reasonConfigs: reasonConfigsForSnapshot,
                       );
                       final absenceReason =
                           status == 'absent' || status == 'paid_absence' ? rec?.absenceReason : null;
+                      final workerRestDay = t.equipeId == horsEquipeVirtualId
+                          ? (isHorsEquipeWeeklyRestDay(logicalDay) ||
+                              shiftsProvider.isPublicHoliday(logicalDay))
+                          : (t.equipeId.startsWith('groupe:')
+                              ? (isWeeklyRestForGroupe(t.equipeId, logicalDay) ||
+                                  shiftsProvider.isPublicHoliday(logicalDay))
+                              : isWeeklyRestForGroupe(t.equipeId, logicalDay));
                       return (
                         employeId: w.id,
                         employeNom: w.nom,
                         employeCin: w.cin ?? '',
                         status: status,
                         absenceReason: absenceReason,
-                        isRestDay: false,
+                        isRestDay: workerRestDay,
                       );
                     }).toList();
                     await _snapshotRepo.saveEquipeSnapshot(
@@ -2821,9 +2866,17 @@ class _PointagePageState extends State<PointagePage> {
                                     itemBuilder: (context, i) {
                                       final t = visibleTeams[i];
                                       final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
-                                      final shiftLabel = t.equipeId == 'hors_equipe'
-                                          ? null
-                                          : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay)?.shortLabel;
+                                      final shiftLabel = t.equipeId == horsEquipeVirtualId
+                                          ? (shiftsProvider.isPublicHoliday(logicalDay)
+                                              ? 'JF'
+                                              : (isHorsEquipeWeeklyRestDay(logicalDay) ? 'Repos' : null))
+                                          : t.equipeId.startsWith('groupe:')
+                                              ? (shiftsProvider.isPublicHoliday(logicalDay)
+                                                  ? 'JF'
+                                                  : (isWeeklyRestForGroupe(t.equipeId, logicalDay)
+                                                      ? 'Repos'
+                                                      : null))
+                                              : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay)?.shortLabel;
                                       final isSpecialScope =
                                           t.equipeId == 'hors_equipe' || t.equipeId.startsWith('groupe:');
                                       final showPhaseBadge = isViewingToday && !isSpecialScope;
@@ -3279,6 +3332,10 @@ class _PointagePageState extends State<PointagePage> {
                                                           }
                                                           final auth = context.read<AuthProvider>();
                                                           final confirmedById = auth.currentUser?.id ?? '';
+                                                          final reasonConfigsList =
+                                                              context.read<AbsenceReasonsProvider>().reasons;
+                                                          final reasonConfigsForSnapshot =
+                                                              reasonConfigsList.isEmpty ? null : reasonConfigsList;
 
                                                           // بناء قائمة snapshots لكل موظف في الفريق
                                                           final empSnapshots = teamWorkers.map((w) {
@@ -3287,18 +3344,23 @@ class _PointagePageState extends State<PointagePage> {
                                                               rec: rec,
                                                               isGroupScope: isGroupScope,
                                                               isDistributionScope: isDistributionScope,
+                                                              reasonConfigs: reasonConfigsForSnapshot,
                                                             );
                                                             final absenceReason =
                                                                 status == 'absent' || status == 'paid_absence'
                                                                     ? rec?.absenceReason
                                                                     : null;
+                                                            final workerRestDay = t.equipeId == horsEquipeVirtualId
+                                                                ? (isHorsEquipeWeeklyRestDay(logicalDay) ||
+                                                                    shiftsProvider.isPublicHoliday(logicalDay))
+                                                                : isWeeklyRestForGroupe(t.equipeId, logicalDay);
                                                             return (
                                                               employeId: w.id,
                                                               employeNom: w.nom,
                                                               employeCin: w.cin ?? '',
                                                               status: status,
                                                               absenceReason: absenceReason,
-                                                              isRestDay: false,
+                                                              isRestDay: workerRestDay,
                                                             );
                                                           }).toList();
 
@@ -3504,7 +3566,7 @@ class _PointagePageState extends State<PointagePage> {
           nom: w.nom,
           poste: w.poste,
           equipeName: '${t.equipeName} — ${t.chefName}',
-          equipeId: null,
+          equipeId: horsEquipeVirtualId,
           salaireNet: w.salaireBase,
         ));
       }
@@ -3636,8 +3698,13 @@ class _PointagePageState extends State<PointagePage> {
     final weeklyRestByGroupeId = <String, int>{
       for (final g in groupes) g.id: g.weeklyRestWeekday,
     };
+    bool isPublicHoliday(DateTime date) =>
+        shiftsProvider.isPublicHoliday(date);
+
     bool isRestDay(DateTime date, String equipeId) {
-      if (equipeId == 'hors_equipe') return false;
+      if (equipeId == horsEquipeVirtualId) {
+        return isHorsEquipeWeeklyRestDay(date);
+      }
       if (equipeId.startsWith('distribution:')) {
         final gid = equipeId.substring('distribution:'.length);
         if (distShiftsExport.hasRotationSlotForGroup(gid)) {
@@ -3788,6 +3855,7 @@ class _PointagePageState extends State<PointagePage> {
       snapshots: snapshots.where((s) => filteredEmpIds.contains(s.employeId)).toList(),
         reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
         isRestDay: isRestDay,
+        isPublicHoliday: isPublicHoliday,
         overtimeAssignments: overtimeAssignments,
         ocpExcelSegmentByEmployeId:
             ocpExcelSegmentByEmployeId.isEmpty ? null : ocpExcelSegmentByEmployeId,

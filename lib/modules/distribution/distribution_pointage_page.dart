@@ -1167,6 +1167,9 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                     );
                     return;
                   }
+                  final reasonConfigsList = context.read<AbsenceReasonsProvider>().reasons;
+                  final reasonConfigsForSnapshot =
+                      reasonConfigsList.isEmpty ? null : reasonConfigsList;
                   try {
                     await withLoadingDialog<void>(
                       context,
@@ -1202,7 +1205,12 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                             );
                           }
                         }
-                        await pointageProv.submitChefReportForDateManual(currentEquipeId, day);
+                        await pointageProv.submitChefReportForDateManual(
+                          currentEquipeId,
+                          day,
+                          equipeName: 'Distribution: ${g.nom}',
+                          chefName: chefNameConfirm,
+                        );
                         final isRest = distShiftsProv.hasRotationSlotForGroup(g.id) &&
                             distShiftsProv.getShiftForGroup(g.id, day) == ShiftType.rest;
                         final empSnapshots = <({
@@ -1231,6 +1239,7 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                             rec: rec,
                             isGroupScope: false,
                             isDistributionScope: true,
+                            reasonConfigs: reasonConfigsForSnapshot,
                           );
                           empSnapshots.add((
                             employeId: row.employe.id,
@@ -1238,7 +1247,9 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                             employeCin: row.employe.cin,
                             status: status,
                             absenceReason:
-                                status == 'absent' ? rec?.absenceReason : null,
+                                status == 'absent' || status == 'paid_absence'
+                                    ? rec?.absenceReason
+                                    : null,
                             isRestDay: isRest,
                           ));
                         }

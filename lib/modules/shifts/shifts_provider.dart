@@ -14,6 +14,7 @@ class ShiftsProvider extends ChangeNotifier {
   Map<String, Map<String, ShiftType>> _overrides = {};
   /// Map dateKey → DoubleDay pour accès rapide.
   Map<String, DoubleDay> _doubleDays = {};
+  Map<String, PublicHoliday> _publicHolidays = {};
   bool _loading = false;
   String? _error;
 
@@ -51,6 +52,24 @@ class ShiftsProvider extends ChangeNotifier {
     return _doubleDays[key]?.label;
   }
 
+  List<PublicHoliday> get publicHolidays {
+    final list = _publicHolidays.values.toList();
+    list.sort((a, b) => a.date.compareTo(b.date));
+    return list;
+  }
+
+  bool isPublicHoliday(DateTime date) {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _publicHolidays.containsKey(key);
+  }
+
+  String? publicHolidayLabel(DateTime date) {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _publicHolidays[key]?.label;
+  }
+
   Future<void> _loadAll({bool showLoading = true}) async {
     if (showLoading) {
       _loading = true;
@@ -66,11 +85,13 @@ class ShiftsProvider extends ChangeNotifier {
           config: _config,
           overrides: _overrides.map((k, v) => MapEntry(k, Map<String, ShiftType>.from(v))),
           doubleDays: _doubleDays.values.toList(),
+          publicHolidays: _publicHolidays.values.toList(),
         ),
       );
       _config = data.config;
       _overrides = data.overrides;
       _doubleDays = {for (final d in data.doubleDays) d.dateKey: d};
+      _publicHolidays = {for (final d in data.publicHolidays) d.dateKey: d};
       await _saveCacheToDisk();
     } catch (e) {
       _error = e.toString();
@@ -105,6 +126,7 @@ class ShiftsProvider extends ChangeNotifier {
             },
       'overrides': overrides,
       'doubleDays': _doubleDays.values.map((d) => d.toMap()).toList(),
+      'publicHolidays': _publicHolidays.values.map((d) => d.toMap()).toList(),
       'savedAt': DateTime.now().toIso8601String(),
     };
   }
@@ -163,8 +185,23 @@ class ShiftsProvider extends ChangeNotifier {
         }
       }
       _doubleDays = parsedDoubleDays;
+
+      final ph = m['publicHolidays'];
+      final parsedPublicHolidays = <String, PublicHoliday>{};
+      if (ph is List) {
+        for (final item in ph) {
+          if (item is! Map) continue;
+          final asMap = item.map((k, v) => MapEntry('$k', v));
+          final day = PublicHoliday.fromMap(asMap);
+          parsedPublicHolidays[day.dateKey] = day;
+        }
+      }
+      _publicHolidays = parsedPublicHolidays;
       notifyListeners();
-      return _config != null || _overrides.isNotEmpty || _doubleDays.isNotEmpty;
+      return _config != null ||
+          _overrides.isNotEmpty ||
+          _doubleDays.isNotEmpty ||
+          _publicHolidays.isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -259,6 +296,34 @@ class ShiftsProvider extends ChangeNotifier {
     if (_repo != null) {
       try {
         await _repo!.removeDoubleDay(date);
+      } catch (_) {}
+    }
+    await _saveCacheToDisk();
+  }
+
+  Future<void> setPublicHoliday(DateTime date, {String? label}) async {
+    final day = PublicHoliday(
+      date: DateTime(date.year, date.month, date.day),
+      label: label?.trim().isEmpty == true ? null : label?.trim(),
+    );
+    _publicHolidays[day.dateKey] = day;
+    notifyListeners();
+    if (_repo != null) {
+      try {
+        await _repo!.setPublicHoliday(day);
+      } catch (_) {}
+    }
+    await _saveCacheToDisk();
+  }
+
+  Future<void> removePublicHoliday(DateTime date) async {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    _publicHolidays.remove(key);
+    notifyListeners();
+    if (_repo != null) {
+      try {
+        await _repo!.removePublicHoliday(date);
       } catch (_) {}
     }
     await _saveCacheToDisk();

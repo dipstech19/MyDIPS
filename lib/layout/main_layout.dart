@@ -437,9 +437,9 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
                   ),
                   if (expanded) ...[
                     const SizedBox(height: 6),
-                    const Text(
-                      'Système de Gestion',
-                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    Text(
+                      tr(context, 'app_title'),
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
                     ),
                   ],
                 ],

@@ -12,6 +12,7 @@ import 'core/site/site_model.dart';
 import 'core/site/site_provider.dart';
 import 'core/theme/app_theme.dart' as theme;
 import 'core/utils/responsive.dart';
+import 'core/notifications/local_notifications_service.dart';
 import 'core/notifications/push_notifications_service.dart';
 import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
@@ -90,6 +91,7 @@ void main() async {
     firebaseBootstrapLastError = e.toString();
     debugPrint('Firebase init error: $e\n$st');
   }
+  await LocalNotificationsService.instance.initialize();
   await PushNotificationsService.instance.initialize(
     scaffoldMessengerKey: rootScaffoldMessengerKey,
   );
@@ -131,7 +133,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'DIPS - Système de Gestion',
+      title: 'My DIPS',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: scaffoldMessengerKey,
       theme: theme.appTheme,

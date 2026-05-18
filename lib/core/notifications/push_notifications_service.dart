@@ -6,10 +6,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/auth_model.dart';
+import 'local_notifications_service.dart';
+import 'pointage_notifications_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Background handler is intentionally lightweight.
+  await LocalNotificationsService.instance.initialize();
+  final n = message.notification;
+  if (n == null) return;
+  await LocalNotificationsService.instance.show(
+    id: message.hashCode,
+    title: n.title ?? 'My DIPS',
+    body: n.body ?? '',
+    channelId: LocalNotificationsService.channelAlertsId,
+  );
 }
 
 class PushNotificationsService {
@@ -73,6 +83,7 @@ class PushNotificationsService {
     leaveUnreadCount.value = 0;
     await _restartLeaveRequestsNotifications();
     await _syncTokenDocument();
+    await PointageNotificationsService.instance.bindUser(user);
   }
 
   void markLeaveNotificationsRead() {
@@ -181,11 +192,16 @@ class PushNotificationsService {
       return;
     }
 
+    final u = _currentUser!;
     await docRef.set({
       'token': _currentToken,
-      'userId': _currentUser!.id,
-      'username': _currentUser!.username,
-      'role': _currentUser!.role.name,
+      'userId': u.id,
+      'username': u.username,
+      'role': u.role.name,
+      'equipeId': u.equipeId,
+      'groupeId': u.groupeId,
+      'distributionGroupIds': u.distributionGroupIds,
+      'adminRole': u.adminRole,
       'active': true,
       'platform': defaultTargetPlatform.name,
       'updatedAt': now,
@@ -196,6 +212,12 @@ class PushNotificationsService {
     final notification = message.notification;
     final title = notification?.title ?? 'Notification';
     final body = notification?.body ?? '';
+    unawaited(LocalNotificationsService.instance.show(
+      id: message.hashCode,
+      title: title,
+      body: body.isEmpty ? title : body,
+      channelId: LocalNotificationsService.channelAlertsId,
+    ));
     final messenger = _scaffoldMessengerKey?.currentState;
     if (messenger == null) return;
     messenger.showSnackBar(
