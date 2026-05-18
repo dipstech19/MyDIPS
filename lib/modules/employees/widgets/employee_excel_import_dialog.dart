@@ -132,7 +132,7 @@ class _EmployeeExcelImportDialogState extends State<EmployeeExcelImportDialog> {
                 Icon(Icons.upload_file, color: Theme.of(context).primaryColor, size: 28),
                 const SizedBox(width: 12),
                 const Text(
-                  'Importer des employés (Excel)',
+                  'Importer des collaborateurs (Excel)',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ],
@@ -162,7 +162,7 @@ class _EmployeeExcelImportDialogState extends State<EmployeeExcelImportDialog> {
             if (_preview.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(
-                'Aperçu (${_preview.length} employé(s))',
+                'Aperçu (${_preview.length} collaborateur(s))',
                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
               ),
               const SizedBox(height: 8),
@@ -243,7 +243,7 @@ class _EmployeeExcelImportDialogState extends State<EmployeeExcelImportDialog> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.upload),
-                    label: Text(_importing ? 'Import…' : 'Importer ${_preview.length} employé(s)'),
+                    label: Text(_importing ? 'Import…' : 'Importer ${_preview.length} collaborateur(s)'),
                   ),
                 ],
               ),

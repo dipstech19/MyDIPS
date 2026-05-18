@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
@@ -6,7 +6,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 // ─── Constantes DIPS ─────────────────────────────────────────────────────────
-const _kBlue      = PdfColor.fromInt(0xFF1565C0);
+const _kBlue      = PdfColor.fromInt(0xFF000966);
 const _kBlueLight = PdfColor.fromInt(0xFF328EEE);
 const _kBlack     = PdfColor.fromInt(0xFF000000);
 const _kGrey      = PdfColor.fromInt(0xFF555555);
@@ -441,7 +441,7 @@ class DipsPdfService {
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text('Signature de l\'employé', style: pw.TextStyle(fontSize: 11)),
+              pw.Text('Signature du collaborateur', style: pw.TextStyle(fontSize: 11)),
               pw.Text('Le Directeur Général',   style: pw.TextStyle(fontSize: 11)),
             ],
           ),

@@ -1,242 +1,205 @@
 import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'models/overtime_model.dart';
 import 'data/overtime_repository.dart';
 
 class OvertimeProvider extends ChangeNotifier {
-  final bool _firebaseAvailable = Firebase.apps.isNotEmpty;
-  OvertimeRepository? _repo;
+  final _repo = OvertimeRepository();
 
-  /// تكاليف اليوم (لجميع الفرق — تُستخدم من الأدمن)
+  /// All assignments for the current equipe (admin history stream).
+  List<OvertimeAssignment> _assignments = [];
+  List<OvertimeAssignment> get assignments => List.unmodifiable(_assignments);
+
+  /// Today's assignments for a given target equipe (chef pointage view).
   List<OvertimeAssignment> _todayAssignments = [];
-
-  /// تكاليف الفريق المحدد في اليوم المحدد (تُستخدم من الشاف)
-  List<OvertimeAssignment> _equipeAssignments = [];
-
-  String? _watchedEquipeId;
-  DateTime? _watchedDate;
-
-  bool _loading = true;
-  String? _error;
-
   List<OvertimeAssignment> get todayAssignments =>
       List.unmodifiable(_todayAssignments);
-  List<OvertimeAssignment> get equipeAssignments =>
-      List.unmodifiable(_equipeAssignments);
+
+  String? _todayStreamError;
+  String? get todayStreamError => _todayStreamError;
+
+  bool _loading = false;
   bool get loading => _loading;
-  String? get error => _error;
 
-  StreamSubscription? _subToday;
-  StreamSubscription? _subEquipe;
+  StreamSubscription<List<OvertimeAssignment>>? _equipeSub;
+  StreamSubscription<List<OvertimeAssignment>>? _todaySub;
+  StreamSubscription<List<OvertimeAssignment>>? _dateSub;
 
-  OvertimeProvider() {
-    if (!_firebaseAvailable) {
-      _loading = false;
-      return;
-    }
-    _repo = OvertimeRepository();
-    _subscribeToday();
+  /// Assignments filtered by a specific date (admin view).
+  List<OvertimeAssignment> _dateAssignments = [];
+  List<OvertimeAssignment> get dateAssignments =>
+      List.unmodifiable(_dateAssignments);
+
+  /// Listen to all assignments for this equipe (history).
+  void listenForEquipe(String equipeId) {
+    _equipeSub?.cancel();
+    _equipeSub = _repo.streamForEquipe(equipeId).listen((list) {
+      _assignments = list;
+      notifyListeners();
+    });
   }
 
-  void _subscribeToday() {
-    _subToday?.cancel();
-    _subToday = _repo!.watchForDate(DateTime.now()).listen(
+  /// Listen to TODAY's overtime assignments for a target equipe (used by chef pointage).
+  void listenTodayForEquipe(String equipeId) {
+    _todaySub?.cancel();
+    _todayStreamError = null;
+    _todayAssignments = [];
+    notifyListeners();
+
+    _todaySub = _repo.streamTodayForEquipe(equipeId).listen(
       (list) {
         _todayAssignments = list;
-        _loading = false;
-        _error = null;
+        _todayStreamError = null;
         notifyListeners();
       },
       onError: (e) {
-        _error = e.toString();
-        _loading = false;
+        _todayStreamError = e.toString();
+        _todayAssignments = [];
+        notifyListeners();
+      },
+      cancelOnError: false,
+    );
+  }
+
+  /// Listen to assignments for a specific date (admin view — real-time).
+  void listenForDate(DateTime date) {
+    _dateSub?.cancel();
+    _dateAssignments = [];
+    notifyListeners();
+    _dateSub = _repo.streamForDate(date).listen(
+      (list) {
+        _dateAssignments = list;
+        notifyListeners();
+      },
+      onError: (_) {
+        _dateAssignments = [];
         notifyListeners();
       },
     );
   }
 
-  /// الشاف يستدعي هذا لمراقبة تكاليف فريقه.
-  void watchForEquipe(String equipeId) {
-    if (_watchedEquipeId == equipeId &&
-        _watchedDate != null &&
-        _isSameDay(_watchedDate!, DateTime.now())) return;
-    _watchedEquipeId = equipeId;
-    _watchedDate = DateTime.now();
-    _subEquipe?.cancel();
-    _subEquipe = _repo!
-        .watchForEquipeAndDate(equipeId, DateTime.now())
-        .listen(
-          (list) {
-            _equipeAssignments = list;
-            notifyListeners();
-          },
-          onError: (e) {
-            _error = e.toString();
-            notifyListeners();
-          },
-        );
-  }
-
-  bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  // ── Getters ────────────────────────────────────────────────────────────────
-
-  /// تكاليف الفريق المستقبِل في اليوم الحالي (من todayAssignments).
-  List<OvertimeAssignment> getAssignmentsForEquipe(String equipeId) =>
-      _todayAssignments
-          .where((a) => a.targetEquipeId == equipeId)
-          .toList();
-
-  /// سجل ساعات إضافية لموظف في فريق معيّن اليوم.
-  OvertimeAssignment? getForEmployee(String employeId, String targetEquipeId) {
-    final matches = _todayAssignments.where(
-        (a) => a.employeId == employeId && a.targetEquipeId == targetEquipeId);
-    return matches.isEmpty ? null : matches.first;
-  }
-
-  // ── Admin actions ──────────────────────────────────────────────────────────
-
-  /// الأدمن يُكلّف موظفاً بساعات إضافية في فريق آخر.
-  Future<bool> assignOvertime({
-    required String employeId,
-    required String employeNom,
-    required String employeCin,
-    required String originalEquipeId,
-    required String originalEquipeName,
-    required String targetEquipeId,
-    required String targetEquipeName,
-    required String targetChefName,
-    required DateTime date,
-    String? adminId,
-    int overtimeMinutes = 480,
-  }) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    try {
-      await _repo!.createOrUpdate(
-        employeId: employeId,
-        employeNom: employeNom,
-        employeCin: employeCin,
-        originalEquipeId: originalEquipeId,
-        originalEquipeName: originalEquipeName,
-        targetEquipeId: targetEquipeId,
-        targetEquipeName: targetEquipeName,
-        targetChefName: targetChefName,
-        date: date,
-        createdByAdminId: adminId,
-        overtimeMinutes: overtimeMinutes,
-      );
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// الأدمن يحذف تكليف ساعات إضافية.
-  Future<bool> deleteAssignment(String docId) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    try {
-      await _repo!.delete(docId);
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  // ── Chef actions ───────────────────────────────────────────────────────────
-
-  /// شاف الفريق المستقبِل يُسجّل حضور/غياب الموظف في الشيفت الإضافي.
-  Future<bool> markAttendance({
-    required OvertimeAssignment assignment,
-    required OvertimeAttendanceStatus status,
-    String? chefId,
-  }) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    try {
-      await _repo!.markAttendance(
-        docId: assignment.id,
-        status: status,
-        markedByChefId: chefId,
-      );
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// شاف الفريق يؤكد إنهاء الشيفت الإضافي.
-  Future<bool> markFinished({
-    required OvertimeAssignment assignment,
-    required int overtimeMinutes,
-    String? chefId,
-  }) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    try {
-      await _repo!.markFinished(
-        docId: assignment.id,
-        overtimeMinutes: overtimeMinutes,
-        markedByChefId: chefId,
-      );
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// شاف الفريق يُرسل التقرير ويُقفل السجل — لا يمكن التعديل بعدها.
-  Future<bool> submitAndLock({
-    required OvertimeAssignment assignment,
-    required String chefId,
-  }) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    // يجب أن تكون الحالة محددة قبل الإقفال
-    if (assignment.attendanceStatus == OvertimeAttendanceStatus.unset) return false;
-    try {
-      await _repo!.lockAssignment(
-        docId: assignment.id,
-        lockedByChefId: chefId,
-      );
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// الأدمن يفتح القفل لتعديل حالة الساعات الإضافية.
-  Future<bool> adminUnlock(String docId) async {
-    if (!_firebaseAvailable || _repo == null) return false;
-    try {
-      await _repo!.unlockAssignment(docId);
-      return true;
-    } catch (e) {
-      _error = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// جلب تكاليف نطاق تاريخ (للـ Excel Export).
-  Future<List<OvertimeAssignment>> getForDateRange(
-      DateTime start, DateTime end) async {
-    if (!_firebaseAvailable || _repo == null) return [];
-    return _repo!.getForDateRange(start, end);
-  }
-
   @override
   void dispose() {
-    _subToday?.cancel();
-    _subEquipe?.cancel();
+    _equipeSub?.cancel();
+    _todaySub?.cancel();
+    _dateSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> assignOvertime({
+    required String employeId,
+    required String employeNom,
+    required String originEquipeId,
+    required String originEquipeName,
+    required String targetEquipeId,
+    required String targetEquipeName,
+    required DateTime date,
+    required String adminId,
+  }) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      final a = OvertimeAssignment(
+        id: '',
+        employeId: employeId,
+        employeNom: employeNom,
+        originEquipeId: originEquipeId,
+        originEquipeName: originEquipeName,
+        targetEquipeId: targetEquipeId,
+        targetEquipeName: targetEquipeName,
+        date: date,
+        createdAt: DateTime.now(),
+        createdByAdminId: adminId,
+      );
+      await _repo.add(a);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Chef confirms employee ARRIVED for overtime shift.
+  Future<void> confirmOvertimeArrival(String id) async {
+    await _repo.confirmArrival(id, DateTime.now());
+    _refreshLocal(id,
+        (a) => a.copyWith(
+            attendanceStatus: OvertimeAttendanceStatus.present,
+            arrivalConfirmedAt: DateTime.now()));
+  }
+
+  /// Chef confirms employee DEPARTED (end of overtime shift) — records 8 hours.
+  Future<void> confirmOvertimeDeparture(String id) async {
+    await _repo.confirmDeparture(id, DateTime.now());
+    _refreshLocal(id,
+        (a) => a.copyWith(
+            departureConfirmedAt: DateTime.now(),
+            overtimeMinutes: 480,
+            finished: true));
+  }
+
+  /// Chef marks employee as ABSENT for overtime shift.
+  Future<void> markOvertimeAbsent(String id) async {
+    await _repo.markAbsent(id);
+    _refreshLocal(id,
+        (a) => a.copyWith(
+            attendanceStatus: OvertimeAttendanceStatus.absent,
+            overtimeMinutes: 0,
+            finished: false));
+  }
+
+  void _refreshLocal(
+      String id, OvertimeAssignment Function(OvertimeAssignment) transform) {
+    // Update in _assignments list.
+    final idx = _assignments.indexWhere((a) => a.id == id);
+    if (idx != -1) {
+      _assignments = List.from(_assignments)..[idx] = transform(_assignments[idx]);
+    }
+    // Update in _todayAssignments list.
+    final tidx = _todayAssignments.indexWhere((a) => a.id == id);
+    if (tidx != -1) {
+      _todayAssignments = List.from(_todayAssignments)
+        ..[tidx] = transform(_todayAssignments[tidx]);
+    }
+    notifyListeners();
+  }
+
+  Future<void> markAttendance(
+      String id, OvertimeAttendanceStatus status) async {
+    final idx = _assignments.indexWhere((a) => a.id == id);
+    if (idx == -1) return;
+    final updated = _assignments[idx].copyWith(attendanceStatus: status);
+    await _repo.update(updated);
+    _assignments = List.from(_assignments)..[idx] = updated;
+    notifyListeners();
+  }
+
+  Future<void> submitAndLock(String id, String chefId) async {
+    final now = DateTime.now();
+    await _repo.lock(id, chefId, now);
+    _refreshLocal(id,
+        (a) => a.copyWith(locked: true, lockedAt: now, lockedByChefId: chefId));
+  }
+
+  Future<void> adminUnlock(String id) async {
+    await _repo.unlock(id);
+    _refreshLocal(id, (a) => a.copyWith(locked: false));
+    // Also update _dateAssignments
+    final didx = _dateAssignments.indexWhere((a) => a.id == id);
+    if (didx != -1) {
+      _dateAssignments = List.from(_dateAssignments)
+        ..[didx] = _dateAssignments[didx].copyWith(locked: false);
+      notifyListeners();
+    }
+  }
+
+  Future<List<OvertimeAssignment>> getForDateRange(
+          DateTime start, DateTime end) =>
+      _repo.getForDateRange(start, end);
+
+  Future<void> deleteAssignment(String id) async {
+    await _repo.delete(id);
+    _assignments = _assignments.where((a) => a.id != id).toList();
+    _todayAssignments = _todayAssignments.where((a) => a.id != id).toList();
+    notifyListeners();
   }
 }

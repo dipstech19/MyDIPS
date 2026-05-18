@@ -112,6 +112,12 @@ class EmployeesProvider extends ChangeNotifier {
     await _repo!.deleteEquipe(id);
   }
 
+  /// Force un rechargement complet depuis Firestore (utile après un reset global).
+  void forceRefresh() {
+    if (!_firebaseAvailable) return;
+    _subscribe();
+  }
+
   @override
   void dispose() {
     _subEmployes?.cancel();

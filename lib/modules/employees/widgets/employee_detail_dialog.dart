@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/locale/app_locale.dart';
 import '../../../shared/widgets/smart_avatar.dart';
 import '../../pointage/pointage_provider.dart';
 import '../models/employe_model.dart';
+import '../../magasin/magasin_provider.dart';
 import '../services/pdf_service.dart';
 import '../employees_provider.dart';
 import '../conges_provider.dart';
@@ -32,6 +33,18 @@ class EmployeeDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final e = employe;
+    final magasin = context.watch<MagasinProvider>();
+    final nomKey = e.nom.trim().toLowerCase();
+    final equipementsSortis = magasin.loading
+        ? <Mouvement>[]
+        : magasin.sorties
+            .where((m) =>
+                (m.preneurNom ?? '').trim().toLowerCase() == nomKey)
+            .toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+
+    String fmtDate(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final maxWidth = MediaQuery.sizeOf(context).width * 0.95;
     final dialogWidth = (640 > maxWidth) ? maxWidth : 640.0;
     if (!isDirecteur) {
@@ -179,9 +192,9 @@ class EmployeeDetailDialog extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               TabBar(
-                labelColor: const Color(0xFF1565C0),
+                labelColor: const Color(0xFF000966),
                 unselectedLabelColor: Colors.grey,
-                indicatorColor: const Color(0xFF1565C0),
+                indicatorColor: const Color(0xFF000966),
                 tabs: const [
                   Tab(icon: Icon(Icons.person, size: 18), text: 'Identité'),
                   Tab(icon: Icon(Icons.work, size: 18), text: 'Contrat'),
@@ -207,6 +220,94 @@ class EmployeeDetailDialog extends StatelessWidget {
                           if (e.telephone2.isNotEmpty)
                             _row('Téléphone 2', e.telephone2),
                           _row('Email', e.email),
+                        ]),
+                        const SizedBox(height: 12),
+                        _card(children: [
+                          Text(
+                            'Équipements / Matériel sortis',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          if (!magasin.firebaseAvailable)
+                            Text(
+                              'Magasin non disponible',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else if (magasin.loading)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 12),
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          else if (equipementsSortis.isEmpty)
+                            Text(
+                              'Aucune sortie enregistrée pour ce collaborateur.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          else
+                            ...equipementsSortis
+                                .take(15)
+                                .map((m) => Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 10),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            fmtDate(m.date),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.grey.shade800,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${m.nomProduit} · ${m.categorie}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            'Réf: ${m.reference.isNotEmpty ? m.reference : "—"}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade600,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            'Qté: ${m.totalQte}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade700,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )),
                         ]),
                       ]),
                     ),
@@ -328,6 +429,7 @@ class _PresenceLeaveCard extends StatefulWidget {
 
 class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
   final _deductDaysController = TextEditingController();
+  double? _leaveExtraOverride;
 
   @override
   void dispose() {
@@ -341,6 +443,7 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
     final isDirecteur = widget.isDirecteur;
     final start = parseDateDebut(employe.dateDebut);
     final leaveAcquired = leaveDaysAcquired(employe.dateDebut);
+    final leaveExtra = _leaveExtraOverride ?? employe.leaveDaysExtra;
     final hasStart = start != null && !start.isAfter(DateTime.now());
 
     return Consumer<CongesProvider>(
@@ -362,7 +465,7 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
             ),
           );
         }
-        final available = (leaveAcquired - taken).clamp(0.0, double.infinity);
+        final available = (leaveAcquired + leaveExtra - taken).clamp(0.0, double.infinity);
 
         return _cardShell(
           context,
@@ -376,10 +479,23 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
                   : const Text('—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_acquired'),
                   Text(hasStart ? _formatLeave(leaveAcquired) : '—', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              _row(context, 'Congé additionnel/reporté',
+                  Text(_formatLeave(leaveExtra), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_taken'),
                   Text(_formatLeave(taken), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
               _row(context, tr(context, 'employee_leave_days_available'),
                   Text(hasStart ? _formatLeave(available) : '—', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green.shade700))),
+              if (isDirecteur) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => _showAddReportedLeaveDialog(context, employe, leaveExtra),
+                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                    label: const Text('Ajouter solde reporté'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 6),
               Text(tr(context, 'employee_leave_rule'), style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               if (isDirecteur && hasStart) ...[
@@ -456,6 +572,52 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
   String _formatLeave(double days) {
     if (days == days.roundToDouble()) return '${days.toInt()}';
     return days.toStringAsFixed(1).replaceAll('.', ',');
+  }
+
+  Future<void> _showAddReportedLeaveDialog(BuildContext context, Employe employe, double currentExtra) async {
+    final ctrl = TextEditingController();
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ajouter solde reporté'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Jours à ajouter',
+            hintText: 'Ex: 12',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final parsed = double.tryParse(ctrl.text.trim().replaceFirst(',', '.'));
+              if (parsed == null || parsed <= 0) return;
+              Navigator.pop(ctx, parsed);
+            },
+            child: const Text('Ajouter'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+
+    if (value == null || value <= 0) return;
+    final next = (currentExtra + value).clamp(0.0, double.infinity).toDouble();
+    await context.read<EmployeesProvider>().updateEmploye(
+          employe.copyWith(leaveDaysExtra: next),
+        );
+    if (!mounted) return;
+    setState(() => _leaveExtraOverride = next);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Solde reporté mis à jour: ${_formatLeave(next)} jour(s).')),
+    );
   }
 }
 

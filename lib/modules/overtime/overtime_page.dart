@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/utils/responsive.dart';
-import '../../shared/widgets/smart_avatar.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
 import '../employees/models/equipe_model.dart';
@@ -11,758 +11,418 @@ import '../shifts/models/shift_models.dart';
 import 'models/overtime_model.dart';
 import 'overtime_provider.dart';
 
-/// صفحة بوانتاج الساعات الإضافية.
-/// - الشاف يرى العمال المكلَّفين إليه لهذا اليوم ويُسجّل حضورهم/غيابهم.
-/// - الأدمن يرى جميع التكاليف ليوم الحالي ويمكنه إضافة/حذف.
-class OvertimePage extends StatelessWidget {
+class OvertimePage extends StatefulWidget {
   const OvertimePage({super.key});
 
   @override
+  State<OvertimePage> createState() => _OvertimePageState();
+}
+
+class _OvertimePageState extends State<OvertimePage> {
+  @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final overtime = context.watch<OvertimeProvider>();
-    final emp = context.watch<EmployeesProvider>();
-
-    if (auth.isChefEquipe && auth.equipeId != null) {
-      overtime.watchForEquipe(auth.equipeId!);
-    }
-
+    final padding = pagePadding(context);
+    final mobile = isMobile(context);
     if (auth.isDirecteur) {
-      return _AdminOvertimeView(
-        assignments: overtime.todayAssignments,
-        employes: emp.employes,
-        equipes: emp.equipes,
-      );
+      return _AdminOvertimeView(padding: padding, mobile: mobile);
     }
-
-    if (auth.isChefEquipe) {
-      final assignments =
-          overtime.getAssignmentsForEquipe(auth.equipeId ?? '');
-      return _ChefOvertimeView(
-        assignments: assignments,
-        equipeId: auth.equipeId ?? '',
-      );
-    }
-
-    return const Center(
-      child: Text('Accès non autorisé', style: TextStyle(color: Colors.grey)),
-    );
+    return _ChefOvertimeView(padding: padding, mobile: mobile);
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Vue Administrateur
-// ─────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// Vue Chef
+// ════════════════════════════════════════════════════════════════
+class _ChefOvertimeView extends StatefulWidget {
+  final double padding;
+  final bool mobile;
+  const _ChefOvertimeView({required this.padding, required this.mobile});
 
-class _AdminOvertimeView extends StatelessWidget {
-  final List<OvertimeAssignment> assignments;
-  final List<Employe> employes;
-  final List<Equipe> equipes;
+  @override
+  State<_ChefOvertimeView> createState() => _ChefOvertimeViewState();
+}
 
-  const _AdminOvertimeView({
-    required this.assignments,
-    required this.employes,
-    required this.equipes,
-  });
+class _ChefOvertimeViewState extends State<_ChefOvertimeView> {
+  String? _listeningEquipeId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.read<AuthProvider>();
+    final equipeId = auth.equipeId;
+    // Start/restart stream whenever equipeId changes.
+    if (equipeId != null &&
+        equipeId.isNotEmpty &&
+        equipeId != _listeningEquipeId) {
+      _listeningEquipeId = equipeId;
+      context.read<OvertimeProvider>().listenTodayForEquipe(equipeId);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final mobile = isMobile(context);
-    final today = DateTime.now();
+    final provider = context.watch<OvertimeProvider>();
+    final assignments = provider.todayAssignments;
+    final error = provider.todayStreamError;
+    final auth = context.read<AuthProvider>();
+    final equipeId = auth.equipeId ?? '—';
 
-    return Padding(
-      padding: EdgeInsets.all(mobile ? 14 : 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    if (error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.purple.shade50,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(Icons.more_time,
-                    color: Colors.purple.shade700, size: 24),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Heures supplémentaires',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                    Text(
-                        '${today.day}/${today.month}/${today.year} — ${assignments.length} affectation(s)',
-                        style: TextStyle(
-                            fontSize: 13, color: Colors.grey.shade600)),
-                  ],
-                ),
-              ),
+              Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
+              const SizedBox(height: 12),
+              Text('Erreur de chargement',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.red.shade700)),
+              const SizedBox(height: 6),
+              Text(error,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: () => _showAddDialog(context),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Affecter'),
-                style: FilledButton.styleFrom(
-                    backgroundColor: Colors.purple.shade600),
+                onPressed: () =>
+                    context.read<OvertimeProvider>().listenTodayForEquipe(equipeId),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Réessayer'),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (assignments.isEmpty)
-            _EmptyState(
-              icon: Icons.more_time,
-              message: 'Aucune affectation de HS pour aujourd\'hui.',
-              color: Colors.purple,
-            )
-          else
-            Expanded(
-              child: ListView.builder(
-                itemCount: assignments.length,
-                itemBuilder: (_, i) => _AdminAssignmentCard(
-                  assignment: assignments[i],
-                  employes: employes,
-                  equipes: equipes,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => _AssignOvertimeDialog(
-        employes: employes,
-        equipes: equipes,
-        date: DateTime.now(),
-      ),
-    );
-  }
-}
-
-class _AdminAssignmentCard extends StatelessWidget {
-  final OvertimeAssignment assignment;
-  final List<Employe> employes;
-  final List<Equipe> equipes;
-
-  const _AdminAssignmentCard({
-    required this.assignment,
-    required this.employes,
-    required this.equipes,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final overtime = context.read<OvertimeProvider>();
-    final e = employes.where((x) => x.id == assignment.employeId).toList();
-    final emp = e.isEmpty ? null : e.first;
-
-    Color statusColor;
-    IconData statusIcon;
-    String statusLabel;
-    switch (assignment.attendanceStatus) {
-      case OvertimeAttendanceStatus.present:
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
-        statusLabel = 'Présent';
-        break;
-      case OvertimeAttendanceStatus.absent:
-        statusColor = Colors.red;
-        statusIcon = Icons.cancel;
-        statusLabel = 'Absent';
-        break;
-      default:
-        statusColor = Colors.orange;
-        statusIcon = Icons.schedule;
-        statusLabel = 'En attente';
+        ),
+      );
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            SmartAvatar(
-              imageUrl: emp?.photoUrl,
-              fallbackText: assignment.employeNom,
-              radius: 22,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(assignment.employeNom,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(Icons.arrow_forward,
-                          size: 14, color: Colors.grey.shade600),
-                      const SizedBox(width: 4),
-                      Text(assignment.targetEquipeName,
-                          style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade700)),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '${(assignment.overtimeMinutes / 60).toStringAsFixed(0)}h',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade700,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(assignment.originalEquipeName,
-                      style: TextStyle(
-                          fontSize: 11, color: Colors.grey.shade500)),
-                ],
-              ),
-            ),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: statusColor.withValues(alpha: 0.3)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(statusIcon, size: 14, color: statusColor),
-                  const SizedBox(width: 4),
-                  Text(statusLabel,
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: statusColor,
-                          fontWeight: FontWeight.w600)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: Icon(Icons.delete_outline,
-                  color: Colors.red.shade400, size: 20),
-              tooltip: 'Supprimer',
-              onPressed: () async {
-                final ok = await overtime.deleteAssignment(assignment.id);
-                if (!ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('Erreur lors de la suppression.')),
-                  );
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Vue Shaf
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _ChefOvertimeView extends StatelessWidget {
-  final List<OvertimeAssignment> assignments;
-  final String equipeId;
-
-  const _ChefOvertimeView({
-    required this.assignments,
-    required this.equipeId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final mobile = isMobile(context);
-    final today = DateTime.now();
-
-    return Padding(
-      padding: EdgeInsets.all(mobile ? 14 : 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    if (assignments.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
+              Icon(Icons.more_time, size: 60, color: Colors.grey.shade300),
+              const SizedBox(height: 12),
+              Text('Aucune affectation d\'heures supplémentaires aujourd\'hui',
+                  style: TextStyle(fontSize: 15, color: Colors.grey.shade500),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.purple.shade50,
-                  borderRadius: BorderRadius.circular(10),
+                  color: AppColors.brandLight,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(Icons.more_time,
-                    color: Colors.purple.shade700, size: 24),
+                child: Text('Équipe : $equipeId',
+                    style: TextStyle(fontSize: 12, color: AppColors.brand)),
               ),
-              const SizedBox(width: 12),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: EdgeInsets.all(widget.padding),
+      children: [
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.deepPurple.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.deepPurple.shade100),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.notifications_active,
+                  color: Colors.deepPurple.shade500, size: 20),
+              const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Heures supplémentaires — Mon équipe',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    Text(
-                        '${today.day}/${today.month}/${today.year} — ${assignments.length} travailleur(s) HS',
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade600)),
-                  ],
+                child: Text(
+                  'Notification: ${assignments.length} personne(s) vont travailler avec vous aujourd\'hui.',
+                  style: TextStyle(
+                    color: Colors.deepPurple.shade700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (assignments.isEmpty)
-            _EmptyState(
-              icon: Icons.more_time,
-              message:
-                  'Aucun travailleur en heures supplémentaires pour votre équipe aujourd\'hui.',
-              color: Colors.purple,
-            )
-          else
-            Expanded(
-              child: ListView.builder(
-                itemCount: assignments.length,
-                itemBuilder: (_, i) => _ChefOvertimeCard(
-                  assignment: assignments[i],
-                ),
-              ),
-            ),
-        ],
-      ),
+        ),
+        ...assignments.map(
+          (a) => _ChefOvertimeCard(assignment: a, mobile: widget.mobile),
+        ),
+      ],
     );
   }
 }
 
 class _ChefOvertimeCard extends StatelessWidget {
   final OvertimeAssignment assignment;
-
-  const _ChefOvertimeCard({required this.assignment});
+  final bool mobile;
+  const _ChefOvertimeCard({required this.assignment, required this.mobile});
 
   @override
   Widget build(BuildContext context) {
+    final provider = context.read<OvertimeProvider>();
     final auth = context.read<AuthProvider>();
-    final overtime = context.read<OvertimeProvider>();
-    final isDirecteur = auth.isDirecteur;
+    final shiftsProvider = context.watch<ShiftsProvider>();
+    final ot = assignment;
+    final dateStr =
+        '${ot.date.day.toString().padLeft(2, '0')}/${ot.date.month.toString().padLeft(2, '0')}/${ot.date.year}';
 
-    final isPresent = assignment.attendanceStatus == OvertimeAttendanceStatus.present;
-    final isAbsent = assignment.attendanceStatus == OvertimeAttendanceStatus.absent;
-    final isFinished = assignment.finished;
-    final isLocked = assignment.locked;
-    final statusSet = isPresent || isAbsent;
+    final arrived  = ot.attendanceStatus == OvertimeAttendanceStatus.present;
+    final absent   = ot.attendanceStatus == OvertimeAttendanceStatus.absent;
+    final departed = ot.departureConfirmedAt != null;
+    DateTime shiftEnd(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day + 1, 6);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
 
-    // مقفل: لا يمكن التعديل إلا للأدمن
-    final canEdit = !isLocked || isDirecteur;
+    DateTime shiftStart(ShiftType shift, DateTime day) {
+      switch (shift) {
+        case ShiftType.morning:
+          return DateTime(day.year, day.month, day.day, 6);
+        case ShiftType.evening:
+          return DateTime(day.year, day.month, day.day, 14);
+        case ShiftType.night:
+          return DateTime(day.year, day.month, day.day, 22);
+        case ShiftType.rest:
+          return DateTime(day.year, day.month, day.day);
+      }
+    }
+
+    final shiftDay = DateTime(ot.date.year, ot.date.month, ot.date.day);
+    final targetShift =
+        shiftsProvider.getShiftForEquipe(ot.targetEquipeId, shiftDay);
+    final shiftStartedAt = shiftStart(targetShift, shiftDay);
+    final shiftEndedAt = shiftEnd(targetShift, shiftDay);
+    final now = DateTime.now();
+    final canStartShift = now.isAfter(shiftStartedAt) || now.isAtSameMomentAs(shiftStartedAt);
+    final canFinishShift = now.isAfter(shiftEndedAt) || now.isAtSameMomentAs(shiftEndedAt);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: isLocked ? 0 : 2,
+      margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: isLocked
-            ? BorderSide(color: Colors.grey.shade300)
-            : BorderSide.none,
+        side: BorderSide(
+          color: ot.locked
+              ? Colors.green.shade200
+              : arrived
+                  ? Colors.green.shade100
+                  : absent
+                      ? Colors.red.shade100
+                      : Colors.grey.shade200,
+        ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(mobile ? 14 : 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── En-tête ─────────────────────────────────────────────────
+            // ── Header ──────────────────────────────────────────
             Row(
               children: [
-                SmartAvatar(
-                  fallbackText: assignment.employeNom,
-                  radius: 22,
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(assignment.employeNom,
+                      Text(ot.employeNom,
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
+                              fontSize: 15, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.purple.shade50,
-                          borderRadius: BorderRadius.circular(5),
-                          border: Border.all(
-                              color: Colors.purple.shade200, width: 0.5),
+                      Row(
+                        children: [
+                          Icon(Icons.swap_horiz, size: 13, color: Colors.grey[500]),
+                          const SizedBox(width: 4),
+                          Text('${ot.originEquipeName}  →  ${ot.targetEquipeName}',
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                        ],
+                      ),
+                      Text('Date : $dateStr',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                    ],
+                  ),
+                ),
+                if (ot.locked)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.lock, size: 14, color: Colors.green.shade700),
+                      const SizedBox(width: 4),
+                      Text('Verrouillé',
+                          style: TextStyle(fontSize: 12, color: Colors.green.shade700,
+                              fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                if (!ot.locked && departed)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.indigo.shade100),
+                    ),
+                    child: Text('8h ✓',
+                        style: TextStyle(fontSize: 12, color: Colors.indigo.shade700,
+                            fontWeight: FontWeight.w600)),
+                  ),
+              ],
+            ),
+
+            if (!ot.locked) ...[
+              const SizedBox(height: 12),
+              if (!arrived && !absent) ...[
+                if (!canStartShift)
+                  Text(
+                    'Le bouton début du shift sera disponible à ${shiftStartedAt.hour.toString().padLeft(2, '0')}:${shiftStartedAt.minute.toString().padLeft(2, '0')}.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  ),
+                if (canStartShift)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () async {
+                            await provider.confirmOvertimeArrival(ot.id);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Début du shift confirmé.'),
+                                  backgroundColor: Colors.green,
+                                  behavior: SnackBarBehavior.fixed,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.login, size: 18),
+                          label: const Text('Début du shift'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                          ),
                         ),
-                        child: Text(
-                          'HS depuis: ${assignment.originalEquipeName}',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.purple.shade700,
-                              fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => provider.markOvertimeAbsent(ot.id),
+                          icon: const Icon(Icons.cancel_outlined, size: 18),
+                          label: const Text('Absent'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade700,
+                          ),
                         ),
                       ),
                     ],
                   ),
-                ),
-                if (isLocked)
-                  Tooltip(
-                    message: 'Rapport envoyé — modif. admin uniquement',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(6),
+              ],
+
+              // Show end-shift only after planned shift end time.
+              if (arrived && !departed) ...[
+                if (!canFinishShift)
+                  Text(
+                    'Fin du shift disponible à ${shiftEndedAt.hour.toString().padLeft(2, '0')}:${shiftEndedAt.minute.toString().padLeft(2, '0')}.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  ),
+                if (canFinishShift)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        final chefId = auth.currentUser?.id ?? '';
+                        await provider.confirmOvertimeDeparture(ot.id);
+                        await provider.submitAndLock(ot.id, chefId);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Fin du shift confirmée — 8h enregistrées et envoyées.'),
+                              backgroundColor: Colors.indigo,
+                              behavior: SnackBarBehavior.fixed,
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.logout, size: 18),
+                      label: const Text('Fin du shift (8h auto)'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.indigo.shade600,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.lock,
-                              size: 13, color: Colors.grey.shade600),
-                          const SizedBox(width: 4),
-                          Text('Envoyé',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade700,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '${(assignment.overtimeMinutes / 60).toStringAsFixed(0)}h prévues',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.blue.shade700,
-                          fontWeight: FontWeight.w600),
                     ),
                   ),
               ],
-            ),
-            const SizedBox(height: 14),
 
-            // ── Corps ────────────────────────────────────────────────────
-            if (isLocked && !isDirecteur)
-              // Vue lecture seule pour le chef après envoi
-              _LockedStatusDisplay(assignment: assignment)
-            else if (isFinished && !isDirecteur)
-              _FinishedDisplay(assignment: assignment)
-            else ...[
-              // Boutons présent / absent
-              Row(
-                children: [
-                  Expanded(
-                    child: _OvertimeStatusChip(
-                      label: 'Présent',
-                      icon: Icons.check,
-                      selected: isPresent,
-                      color: Colors.green,
-                      disabled: !canEdit,
-                      onTap: canEdit
-                          ? () async {
-                              await overtime.markAttendance(
-                                assignment: assignment,
-                                status: OvertimeAttendanceStatus.present,
-                                chefId: auth.currentUser?.id,
-                              );
-                            }
-                          : () {},
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _OvertimeStatusChip(
-                      label: 'Absent',
-                      icon: Icons.close,
-                      selected: isAbsent,
-                      color: Colors.red,
-                      disabled: !canEdit,
-                      onTap: canEdit
-                          ? () async {
-                              await overtime.markAttendance(
-                                assignment: assignment,
-                                status: OvertimeAttendanceStatus.absent,
-                                chefId: auth.currentUser?.id,
-                              );
-                            }
-                          : () {},
-                    ),
-                  ),
-                  if (isPresent && canEdit) ...[
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _OvertimeStatusChip(
-                        label: 'Fin HS',
-                        icon: Icons.flag,
-                        selected: isFinished,
-                        color: Colors.blue,
-                        onTap: () =>
-                            _showFinishDialog(context, overtime, auth),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-
-              // Bouton Envoyer rapport (visible quand statut est défini et non verrouillé)
-              if (statusSet && !isLocked) ...[
-                const SizedBox(height: 12),
+              // If absent chosen, allow explicit final send/lock.
+              if (absent) ...[
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.teal.shade600,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    icon: const Icon(Icons.send, size: 18),
-                    label: const Text('Envoyer & Verrouiller le rapport'),
                     onPressed: () async {
                       final chefId = auth.currentUser?.id ?? '';
-                      final ok = await overtime.submitAndLock(
-                        assignment: assignment,
-                        chefId: chefId,
-                      );
-                      if (!ok && context.mounted) {
+                      await provider.submitAndLock(ot.id, chefId);
+                      if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text(
-                                'Définissez la présence avant d\'envoyer.'),
-                            backgroundColor: Colors.orange,
+                            content: Text('Absence envoyée et verrouillée.'),
+                            backgroundColor: Colors.green,
+                            behavior: SnackBarBehavior.fixed,
                           ),
                         );
                       }
                     },
-                  ),
-                ),
-              ],
-
-              // Bouton débloquer (admin seulement)
-              if (isLocked && isDirecteur) ...[
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.lock_open, size: 16),
-                  label: const Text('Débloquer (Admin)'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange.shade700,
-                    side: BorderSide(color: Colors.orange.shade300),
-                  ),
-                  onPressed: () async {
-                    await overtime.adminUnlock(assignment.id);
-                  },
-                ),
-              ],
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showFinishDialog(
-      BuildContext context, OvertimeProvider overtime, AuthProvider auth) {
-    int minutes = assignment.overtimeMinutes;
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Confirmer la fin des HS'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(assignment.employeNom,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Text('Heures effectuées :',
-                  style: TextStyle(
-                      color: Colors.grey.shade700, fontSize: 13)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline),
-                    onPressed: minutes >= 60
-                        ? () => setState(() => minutes -= 60)
-                        : null,
-                  ),
-                  Expanded(
-                    child: Container(
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.purple.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${(minutes / 60).toStringAsFixed(1)}h ($minutes min)',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.purple.shade700),
-                      ),
+                    icon: const Icon(Icons.send, size: 18),
+                    label: const Text('Envoyer absence'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle_outline),
-                    onPressed: () => setState(() => minutes += 60),
-                  ),
-                ],
+                ),
+              ],
+            ],
+
+            // ── Admin: déverrouiller ────────────────────────
+            if (ot.locked && auth.isDirecteur) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await provider.adminUnlock(ot.id);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Déverrouillé avec succès.'),
+                          behavior: SnackBarBehavior.fixed,
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.lock_open, size: 18),
+                  label: const Text('Déverrouiller (Admin)'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange.shade700),
+                ),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Annuler'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: Colors.purple.shade600),
-              onPressed: () async {
-                await overtime.markFinished(
-                  assignment: assignment,
-                  overtimeMinutes: minutes,
-                  chefId: auth.currentUser?.id,
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-              child: const Text('Confirmer'),
-            ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-// عرض حالة مقفلة (للشاف بعد الإرسال)
-class _LockedStatusDisplay extends StatelessWidget {
-  final OvertimeAssignment assignment;
-  const _LockedStatusDisplay({required this.assignment});
-
-  @override
-  Widget build(BuildContext context) {
-    final isPresent =
-        assignment.attendanceStatus == OvertimeAttendanceStatus.present;
-    final isAbsent =
-        assignment.attendanceStatus == OvertimeAttendanceStatus.absent;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isPresent
-            ? Colors.green.shade50
-            : isAbsent
-                ? Colors.red.shade50
-                : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isPresent
-              ? Colors.green.shade200
-              : isAbsent
-                  ? Colors.red.shade200
-                  : Colors.grey.shade300,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            isPresent
-                ? Icons.check_circle
-                : isAbsent
-                    ? Icons.cancel
-                    : Icons.schedule,
-            color: isPresent
-                ? Colors.green.shade600
-                : isAbsent
-                    ? Colors.red.shade600
-                    : Colors.grey.shade500,
-            size: 18,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isPresent
-                      ? 'Présent — ${(assignment.overtimeMinutes / 60).toStringAsFixed(1)}h'
-                      : isAbsent
-                          ? 'Absent'
-                          : 'En attente',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                    color: isPresent
-                        ? Colors.green.shade700
-                        : isAbsent
-                            ? Colors.red.shade700
-                            : Colors.grey.shade600,
-                  ),
-                ),
-                Text('Rapport envoyé — verrouillé',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade500)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// عرض حالة منتهي (shift terminé)
-class _FinishedDisplay extends StatelessWidget {
-  final OvertimeAssignment assignment;
-  const _FinishedDisplay({required this.assignment});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.green.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.green.shade200),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.check_circle, color: Colors.green.shade600, size: 18),
-          const SizedBox(width: 8),
-          Text(
-            'Shift terminé — ${(assignment.overtimeMinutes / 60).toStringAsFixed(1)}h confirmées',
-            style: TextStyle(
-                color: Colors.green.shade700,
-                fontWeight: FontWeight.w600,
-                fontSize: 13),
-          ),
-        ],
       ),
     );
   }
@@ -773,66 +433,272 @@ class _OvertimeStatusChip extends StatelessWidget {
   final IconData icon;
   final bool selected;
   final Color color;
-  final VoidCallback onTap;
   final bool disabled;
+  final VoidCallback? onTap;
 
   const _OvertimeStatusChip({
     required this.label,
     required this.icon,
     required this.selected,
     required this.color,
-    required this.onTap,
-    this.disabled = false,
+    required this.disabled,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final effectiveColor = disabled ? Colors.grey.shade400 : color;
-    return GestureDetector(
-      onTap: disabled ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: disabled
-              ? Colors.grey.shade100
-              : selected
-                  ? effectiveColor.withValues(alpha: 0.12)
-                  : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: disabled
-                ? Colors.grey.shade300
-                : selected
-                    ? effectiveColor
-                    : Colors.grey.shade300,
-            width: selected && !disabled ? 1.5 : 1,
+    return Opacity(
+      opacity: disabled && !selected ? 0.5 : 1.0,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? color.withValues(alpha: 0.12)
+                : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? color : Colors.grey.shade300,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 18,
+                  color: selected ? color : Colors.grey.shade500),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight:
+                        selected ? FontWeight.w600 : FontWeight.normal,
+                    color: selected ? color : Colors.grey.shade600,
+                  )),
+            ],
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon,
-                size: 16,
-                color: disabled
-                    ? Colors.grey.shade400
-                    : selected
-                        ? effectiveColor
-                        : Colors.grey.shade500),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: selected && !disabled
-                    ? FontWeight.bold
-                    : FontWeight.normal,
-                color: disabled
-                    ? Colors.grey.shade400
-                    : selected
-                        ? effectiveColor
-                        : Colors.grey.shade600,
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Vue Admin
+// ════════════════════════════════════════════════════════════════
+class _AdminOvertimeView extends StatefulWidget {
+  final double padding;
+  final bool mobile;
+  const _AdminOvertimeView({required this.padding, required this.mobile});
+
+  @override
+  State<_AdminOvertimeView> createState() => _AdminOvertimeViewState();
+}
+
+class _AdminOvertimeViewState extends State<_AdminOvertimeView> {
+  DateTime _filterDate = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<OvertimeProvider>().listenForDate(_filterDate);
+    });
+  }
+
+  void _changeDate(DateTime date) {
+    setState(() => _filterDate = date);
+    context.read<OvertimeProvider>().listenForDate(date);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final equipes = context.watch<EmployeesProvider>().equipes;
+    final employes = context.watch<EmployeesProvider>().employes;
+    final auth = context.watch<AuthProvider>();
+    final assignments = context.watch<OvertimeProvider>().dateAssignments;
+    final dateStr =
+        '${_filterDate.day}/${_filterDate.month}/${_filterDate.year}';
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          await showDialog(
+            context: context,
+            builder: (_) => _AssignOvertimeDialog(
+                equipes: equipes, employes: employes),
+          );
+          // Stream auto-updates — no manual reload needed.
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('Affecter heures supp.'),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: EdgeInsets.all(widget.padding),
+            child: InkWell(
+              onTap: () async {
+                final p = await showDatePicker(
+                  context: context,
+                  initialDate: _filterDate,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (p != null && mounted) _changeDate(p);
+              },
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .primaryColor
+                      .withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: Theme.of(context)
+                          .primaryColor
+                          .withValues(alpha: 0.25)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_today,
+                        size: 18,
+                        color: Theme.of(context).primaryColor),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text('Affectations du : $dateStr',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600)),
+                    ),
+                    Icon(Icons.edit, size: 16, color: Colors.grey[400]),
+                  ],
+                ),
               ),
+            ),
+          ),
+          Expanded(
+            child: assignments.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.more_time,
+                            size: 60, color: Colors.grey.shade300),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Aucune affectation pour cette date.',
+                          style: TextStyle(
+                              fontSize: 14, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: widget.padding),
+                    itemCount: assignments.length,
+                    itemBuilder: (context, i) => _AdminAssignmentCard(
+                      assignment: assignments[i],
+                      mobile: widget.mobile,
+                      onDelete: () => context
+                          .read<OvertimeProvider>()
+                          .deleteAssignment(assignments[i].id),
+                      onUnlock: auth.isDirecteur
+                          ? () => context
+                              .read<OvertimeProvider>()
+                              .adminUnlock(assignments[i].id)
+                          : null,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminAssignmentCard extends StatelessWidget {
+  final OvertimeAssignment assignment;
+  final bool mobile;
+  final VoidCallback onDelete;
+  final VoidCallback? onUnlock;
+
+  const _AdminAssignmentCard({
+    required this.assignment,
+    required this.mobile,
+    required this.onDelete,
+    this.onUnlock,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ot = assignment;
+    Color statusColor;
+    String statusLabel;
+    switch (ot.attendanceStatus) {
+      case OvertimeAttendanceStatus.present:
+        statusColor = Colors.green;
+        statusLabel = 'Présent';
+        break;
+      case OvertimeAttendanceStatus.absent:
+        statusColor = Colors.red;
+        statusLabel = 'Absent';
+        break;
+      case OvertimeAttendanceStatus.unset:
+        statusColor = Colors.grey;
+        statusLabel = 'Non enregistré';
+    }
+
+    return Card(
+      margin: EdgeInsets.only(bottom: mobile ? 10 : 8),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        contentPadding: EdgeInsets.symmetric(
+            horizontal: mobile ? 14 : 12, vertical: 6),
+        leading: CircleAvatar(
+          backgroundColor: statusColor.withValues(alpha: 0.15),
+          child: Icon(Icons.person, color: statusColor, size: 22),
+        ),
+        title: Text(ot.employeNom,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${ot.originEquipeName}  →  ${ot.targetEquipeName}',
+                style:
+                    TextStyle(fontSize: 12, color: Colors.grey[600])),
+            Text('Statut : $statusLabel',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: statusColor,
+                    fontWeight: FontWeight.w500)),
+            if (ot.locked)
+              Text('Verrouillé ✓',
+                  style: TextStyle(
+                      fontSize: 11, color: Colors.green.shade700)),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (ot.locked && onUnlock != null)
+              IconButton(
+                icon: Icon(Icons.lock_open,
+                    color: Colors.orange.shade600),
+                tooltip: 'Déverrouiller',
+                onPressed: onUnlock,
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              tooltip: 'Supprimer',
+              onPressed: onDelete,
             ),
           ],
         ),
@@ -841,567 +707,279 @@ class _OvertimeStatusChip extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dialog: تكليف موظف بساعات إضافية (الأدمن) — اختيار فريق → موظف → فريق مستقبِل
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
+// Dialogue d'affectation des heures supplémentaires
+// ════════════════════════════════════════════════════════════════
 class _AssignOvertimeDialog extends StatefulWidget {
-  final List<Employe> employes;
   final List<Equipe> equipes;
-  final DateTime date;
+  final List<Employe> employes;
 
-  const _AssignOvertimeDialog({
-    required this.employes,
-    required this.equipes,
-    required this.date,
-  });
+  const _AssignOvertimeDialog(
+      {required this.equipes, required this.employes});
 
   @override
-  State<_AssignOvertimeDialog> createState() => _AssignOvertimeDialogState();
+  State<_AssignOvertimeDialog> createState() =>
+      _AssignOvertimeDialogState();
 }
 
 class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
-  // الخطوة 1: اختيار الفريق الأصلي
-  String? _selectedOrigEquipeId;
-  // الخطوة 2: اختيار الموظف من الفريق
-  String? _selectedEmployeId;
-  // الخطوة 3: تاريخ ووقت الفريق المستقبِل
-  late DateTime _targetDate;
-  String? _selectedTargetEquipeId;
-  int _overtimeMinutes = 480;
+  int _step = 0;
+  Equipe? _originEquipe;
+  Employe? _selectedEmployee;
+  Equipe? _targetEquipe;
+  DateTime _targetDate =
+      DateTime.now().add(const Duration(days: 1));
 
-  @override
-  void initState() {
-    super.initState();
-    // نبدأ بتاريخ اليوم التالي كافتراض منطقي
-    _targetDate = DateTime(
-      widget.date.year,
-      widget.date.month,
-      widget.date.day,
-    ).add(const Duration(days: 1));
+  List<Equipe> get _equipes =>
+      List<Equipe>.from(widget.equipes)
+        ..sort((a, b) => a.nom.compareTo(b.nom));
+
+  List<Employe> get _membersOfOrigin {
+    if (_originEquipe == null) return [];
+    return widget.employes
+        .where((e) => _originEquipe!.membreIds.contains(e.id))
+        .toList();
   }
 
-  List<Equipe> get _sortedEquipes => List<Equipe>.from(widget.equipes)
-    ..sort((a, b) => a.nom.compareTo(b.nom));
-
-  /// وقت بداية شيفت معين في يوم معين
-  DateTime _shiftStartOnDay(ShiftType shift, DateTime day) {
-    final d = DateTime(day.year, day.month, day.day);
+  DateTime _shiftEnd(ShiftType shift, DateTime day) {
     switch (shift) {
       case ShiftType.morning:
-        return DateTime(d.year, d.month, d.day, 6, 0);
+        return DateTime(day.year, day.month, day.day, 14);
       case ShiftType.evening:
-        return DateTime(d.year, d.month, d.day, 14, 0);
+        return DateTime(day.year, day.month, day.day, 22);
       case ShiftType.night:
-        return DateTime(d.year, d.month, d.day, 22, 0);
+        return DateTime(day.year, day.month, day.day + 1, 6);
       case ShiftType.rest:
-        return d;
+        return DateTime(day.year, day.month, day.day);
     }
   }
 
-  /// أعضاء الفريق المختار النشطون
-  List<Employe> get _membersOfSelectedEquipe {
-    if (_selectedOrigEquipeId == null) return [];
-    final eq = widget.equipes
-        .where((e) => e.id == _selectedOrigEquipeId)
-        .toList();
-    if (eq.isEmpty) return [];
-    final memberIds = eq.first.membreIds.toSet();
-    return widget.employes
-        .where((e) =>
-            memberIds.contains(e.id) && e.statut == EmployeStatut.enService)
-        .toList()
-      ..sort((a, b) => a.nom.compareTo(b.nom));
+  DateTime _shiftStart(ShiftType shift, DateTime day) {
+    switch (shift) {
+      case ShiftType.morning:
+        return DateTime(day.year, day.month, day.day, 6);
+      case ShiftType.evening:
+        return DateTime(day.year, day.month, day.day, 14);
+      case ShiftType.night:
+        return DateTime(day.year, day.month, day.day, 22);
+      case ShiftType.rest:
+        return DateTime(day.year, day.month, day.day);
+    }
   }
+
+  bool get canConfirm =>
+      _originEquipe != null &&
+      _selectedEmployee != null &&
+      _targetEquipe != null;
 
   @override
   Widget build(BuildContext context) {
-    final overtime = context.read<OvertimeProvider>();
-    final auth = context.read<AuthProvider>();
-    final shiftsProvider = context.read<ShiftsProvider>();
-    final now = widget.date;
+    final shiftsProvider = context.watch<ShiftsProvider>();
+    final today = DateTime.now();
+    final todayDay = DateTime(today.year, today.month, today.day);
 
-    final origEq = _selectedOrigEquipeId != null
-        ? widget.equipes
-            .where((e) => e.id == _selectedOrigEquipeId)
-            .toList()
-            .firstOrNull
-        : null;
-
-    // شيفت الموظف في يوم التكليف (now)
-    final origShift = origEq != null
-        ? shiftsProvider.getShiftForEquipe(origEq.id, now)
-        : null;
-    // وقت انتهاء شيفت الموظف الأصلي
-    final origShiftEnd = origShift != null && origShift != ShiftType.rest
-        ? origShift.getShiftEnd(now)
-        : null;
-
-    final selectedEmp = _selectedEmployeId != null
-        ? widget.employes
-            .where((e) => e.id == _selectedEmployeId)
-            .toList()
-            .firstOrNull
-        : null;
-
-    // كل الفرق عدا الفريق الأصلي — مرتبة
-    final allTargetEquipes = _sortedEquipes
-        .where((eq) => eq.id != (_selectedOrigEquipeId ?? ''))
-        .toList();
-
-    // لكل فريق: احسب شيفته في _targetDate وتحقق منطقياً
-    // فريق مقبول = يعمل (ليس RH) في _targetDate + شيفته يبدأ بعد انتهاء شيفت الموظف (إذا نفس اليوم)
-    bool isTargetValid(Equipe eq) {
-      final shift = shiftsProvider.getShiftForEquipe(eq.id, _targetDate);
-      if (shift == ShiftType.rest) return false;
-      // إذا كان يوم _targetDate = يوم now، تحقق من ترتيب الشيفت
-      final isSameDay = _targetDate.year == now.year &&
-          _targetDate.month == now.month &&
-          _targetDate.day == now.day;
-      if (isSameDay && origShiftEnd != null) {
-        // وقت بدء شيفت الفريق المستقبِل
-        final targetStart = _shiftStartOnDay(shift, _targetDate);
-        // يجب أن يبدأ الشيفت المستقبِل بعد (أو عند) انتهاء شيفت الموظف
-        if (targetStart.isBefore(origShiftEnd)) return false;
-      }
-      return true;
+    ShiftType? origShift;
+    DateTime? origShiftEnd;
+    if (_originEquipe != null && shiftsProvider.hasConfig) {
+      origShift =
+          shiftsProvider.getShiftForEquipe(_originEquipe!.id, today);
+      origShiftEnd = _shiftEnd(origShift, today);
     }
-
-    // الفريق المستقبِل المختار وشيفته
-    final targetEq = _selectedTargetEquipeId != null
-        ? widget.equipes
-            .where((eq) => eq.id == _selectedTargetEquipeId)
-            .toList()
-            .firstOrNull
-        : null;
-    final targetShift = targetEq != null
-        ? shiftsProvider.getShiftForEquipe(targetEq.id, _targetDate)
-        : null;
-    final targetIsRest = targetShift == ShiftType.rest;
-    final targetIsInvalid = targetEq != null && !isTargetValid(targetEq);
-
-    final canConfirm = selectedEmp != null &&
-        _selectedTargetEquipeId != null &&
-        !targetIsRest &&
-        !targetIsInvalid;
 
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.more_time, color: Colors.purple.shade600, size: 22),
+          Icon(Icons.more_time, color: Theme.of(context).primaryColor),
           const SizedBox(width: 8),
-          const Expanded(
-            child: Text('Affecter en Heures Supplémentaires',
-                style: TextStyle(fontSize: 16)),
-          ),
+          const Text('Affecter des heures supplémentaires'),
         ],
       ),
       content: SizedBox(
-        width: 420,
+        width: 480,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // En-tête date
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.purple.shade50,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
+              _StepLabel(number: 1, label: 'Choisir l\'équipe d\'origine', active: true),
+              DropdownButtonFormField<Equipe>(
+                value: _originEquipe,
+                hint: const Text('Choisir l\'équipe'),
+                items: _equipes
+                    .map((eq) => DropdownMenuItem(
+                        value: eq, child: Text(eq.nom)))
+                    .toList(),
+                onChanged: (eq) => setState(() {
+                  _originEquipe = eq;
+                  _selectedEmployee = null;
+                  _targetEquipe = null;
+                  if (eq != null) _step = 1;
+                }),
+                decoration:
+                    const InputDecoration(border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 14),
+
+              if (_step >= 1) ...[
+                _StepLabel(
+                    number: 2, label: 'Choisir le collaborateur', active: true),
+                if (_membersOfOrigin.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text('Aucun collaborateur dans cette équipe.',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.orange.shade700)),
+                  )
+                else
+                  DropdownButtonFormField<Employe>(
+                    value: _selectedEmployee,
+                    hint: const Text('Choisir le collaborateur'),
+                    items: _membersOfOrigin
+                        .map((e) => DropdownMenuItem(
+                            value: e, child: Text(e.nom)))
+                        .toList(),
+                    onChanged: (e) => setState(() {
+                      _selectedEmployee = e;
+                      _targetEquipe = null;
+                      if (e != null) _step = 2;
+                    }),
+                    decoration: const InputDecoration(
+                        border: OutlineInputBorder()),
+                  ),
+                const SizedBox(height: 14),
+              ],
+
+              if (_step >= 2) ...[
+                _StepLabel(
+                    number: 3,
+                    label: 'Choisir la date et l\'équipe',
+                    active: true),
+                Row(
                   children: [
-                    Icon(Icons.calendar_today,
-                        size: 13, color: Colors.purple.shade600),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${now.day}/${now.month}/${now.year}',
-                      style: TextStyle(
-                          color: Colors.purple.shade700,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12),
+                    _DateChip(
+                      label: 'Aujourd\'hui',
+                      selected: _targetDate.year == todayDay.year &&
+                          _targetDate.month == todayDay.month &&
+                          _targetDate.day == todayDay.day,
+                      onTap: () => setState(() {
+                        _targetDate = todayDay;
+                        _targetEquipe = null;
+                      }),
+                    ),
+                    const SizedBox(width: 8),
+                    _DateChip(
+                      label: 'Demain',
+                      selected: DateTime(_targetDate.year,
+                                  _targetDate.month, _targetDate.day)
+                              .difference(todayDay)
+                              .inDays ==
+                          1,
+                      onTap: () => setState(() {
+                        _targetDate =
+                            todayDay.add(const Duration(days: 1));
+                        _targetEquipe = null;
+                      }),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final p = await showDatePicker(
+                          context: context,
+                          initialDate: _targetDate,
+                          firstDate: todayDay,
+                          lastDate: todayDay
+                              .add(const Duration(days: 30)),
+                        );
+                        if (p != null) {
+                          setState(() {
+                            _targetDate = p;
+                            _targetEquipe = null;
+                          });
+                        }
+                      },
+                      icon: const Icon(Icons.calendar_month, size: 16),
+                      label: Text(
+                          '${_targetDate.day}/${_targetDate.month}/${_targetDate.year}'),
+                      style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8)),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 18),
+                const SizedBox(height: 10),
 
-              // ── ÉTAPE 1 : Équipe source ──────────────────────────────────
-              _StepLabel(number: '1', label: 'Sélectionner l\'équipe source'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _selectedOrigEquipeId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  hintText: 'Équipe du travailleur',
-                ),
-                items: _sortedEquipes.map((eq) {
-                  final shift = shiftsProvider.getShiftForEquipe(eq.id, now);
-                  return DropdownMenuItem(
-                    value: eq.id,
-                    child: Row(
-                      children: [
-                        Expanded(
-                            child: Text(eq.nom,
-                                overflow: TextOverflow.ellipsis)),
-                        _ShiftBadge(shift: shift),
-                      ],
-                    ),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() {
-                  _selectedOrigEquipeId = v;
-                  _selectedEmployeId = null;
-                  _selectedTargetEquipeId = null;
-                }),
-              ),
-
-              // ── ÉTAPE 2 : Employé de l'équipe ────────────────────────────
-              if (_selectedOrigEquipeId != null) ...[
-                const SizedBox(height: 16),
-                _StepLabel(number: '2', label: 'Sélectionner le travailleur'),
-                const SizedBox(height: 8),
-                if (_membersOfSelectedEquipe.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning_amber,
-                            size: 16, color: Colors.orange.shade700),
-                        const SizedBox(width: 8),
-                        Text('Aucun membre actif dans cette équipe.',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.orange.shade800)),
-                      ],
-                    ),
-                  )
-                else
-                  DropdownButtonFormField<String>(
-                    value: _selectedEmployeId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      hintText: 'Choisir le travailleur',
-                    ),
-                    items: _membersOfSelectedEquipe
-                        .map((e) => DropdownMenuItem(
-                              value: e.id,
-                              child: Text(e.nom,
-                                  overflow: TextOverflow.ellipsis),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _selectedEmployeId = v;
-                      _selectedTargetEquipeId = null;
-                    }),
-                  ),
-              ],
-
-              // ── ÉTAPE 3 : Équipe cible ───────────────────────────────────
-              if (_selectedEmployeId != null) ...[
-                const SizedBox(height: 16),
-                _StepLabel(
-                    number: '3',
-                    label: 'Équipe cible (qui reçoit le travailleur)'),
-                const SizedBox(height: 8),
-
-                // ── منتقي تاريخ الشيفت المستقبِل ─────────────────────────
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: ListTile(
-                    dense: true,
-                    leading: Icon(Icons.calendar_month,
-                        color: Colors.blue.shade600, size: 20),
-                    title: Text(
-                      'Date du shift cible',
-                      style: TextStyle(
-                          fontSize: 12, color: Colors.blue.shade700),
-                    ),
-                    subtitle: Text(
-                      '${_targetDate.day}/${_targetDate.month}/${_targetDate.year}',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color: Colors.blue.shade900),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // زر اليوم نفسه
-                        _DateChip(
-                          label: 'Auj.',
-                          selected: _targetDate.day == now.day &&
-                              _targetDate.month == now.month &&
-                              _targetDate.year == now.year,
-                          onTap: () => setState(() {
-                            _targetDate = DateTime(
-                                now.year, now.month, now.day);
-                            _selectedTargetEquipeId = null;
-                          }),
-                        ),
-                        const SizedBox(width: 6),
-                        // زر اليوم التالي
-                        _DateChip(
-                          label: 'Dem.',
-                          selected: _targetDate.day != now.day ||
-                              _targetDate.month != now.month ||
-                              _targetDate.year != now.year,
-                          onTap: () => setState(() {
-                            _targetDate = DateTime(
-                                now.year, now.month, now.day)
-                                .add(const Duration(days: 1));
-                            _selectedTargetEquipeId = null;
-                          }),
-                        ),
-                        const SizedBox(width: 6),
-                        // منتقي تاريخ مخصص
-                        IconButton(
-                          tooltip: 'Choisir une date',
-                          icon: Icon(Icons.edit_calendar,
-                              size: 18, color: Colors.blue.shade600),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _targetDate,
-                              firstDate: DateTime(now.year, now.month,
-                                  now.day),
-                              lastDate: now
-                                  .add(const Duration(days: 30)),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _targetDate = picked;
-                                _selectedTargetEquipeId = null;
-                              });
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-
-                // معلومة شيفت الموظف الأصلي
                 if (origShift != null && origShift != ShiftType.rest)
                   Container(
                     margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
+                        horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.orange.shade200),
+                      color: AppColors.brandLight,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.brandLight),
                     ),
                     child: Row(
                       children: [
                         Icon(Icons.info_outline,
-                            size: 14, color: Colors.orange.shade700),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Shift actuel de l\'employé : ${origShift.shortLabel} (${origShift.timeRange}) — '
-                            'Seuls les shifts commençant après sa fin sont disponibles.',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.orange.shade800),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Liste des équipes cibles avec badge shift et indicateur actif/repos
-                ...allTargetEquipes.map((eq) {
-                  final shift =
-                      shiftsProvider.getShiftForEquipe(eq.id, _targetDate);
-                  final isRest = shift == ShiftType.rest;
-                  final isInvalid = !isTargetValid(eq);
-                  final isDisabled = isRest || isInvalid;
-                  final isSelected = eq.id == _selectedTargetEquipeId;
-
-                  String? disabledReason;
-                  if (isRest) {
-                    disabledReason = 'En repos ce jour-là';
-                  } else if (isInvalid) {
-                    disabledReason =
-                        'Shift avant la fin du shift de l\'employé';
-                  }
-
-                  return GestureDetector(
-                    onTap: isDisabled
-                        ? null
-                        : () => setState(() => _selectedTargetEquipeId =
-                            isSelected ? null : eq.id),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      margin: const EdgeInsets.only(bottom: 6),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: isDisabled
-                            ? Colors.grey.shade100
-                            : isSelected
-                                ? Colors.purple.shade50
-                                : Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isDisabled
-                              ? Colors.grey.shade300
-                              : isSelected
-                                  ? Colors.purple.shade400
-                                  : Colors.grey.shade300,
-                          width: isSelected ? 1.5 : 1,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            isSelected
-                                ? Icons.radio_button_checked
-                                : Icons.radio_button_unchecked,
-                            size: 18,
-                            color: isDisabled
-                                ? Colors.grey.shade400
-                                : isSelected
-                                    ? Colors.purple.shade600
-                                    : Colors.grey.shade400,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  eq.nom,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                    color: isDisabled
-                                        ? Colors.grey.shade400
-                                        : Colors.black87,
-                                  ),
-                                ),
-                                Text(
-                                  disabledReason ??
-                                      shift.timeRange,
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: isInvalid
-                                          ? Colors.red.shade400
-                                          : Colors.grey.shade500),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          _ShiftBadge(shift: shift, large: true),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-
-                // تحذير إذا لا توجد فرق متاحة
-                if (allTargetEquipes
-                    .every((eq) => !isTargetValid(eq)))
-                  Container(
-                    margin: const EdgeInsets.only(top: 4),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.amber.shade300),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning_amber,
-                            size: 16,
-                            color: Colors.amber.shade700),
+                            size: 16, color: AppColors.brand),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Aucune équipe disponible pour ce créneau. '
-                            'Essayez "Demain" ou choisissez une autre date.',
+                            'Shift actuel du collaborateur : ${origShift.shortLabel} (${origShift.timeRange})\n'
+                            'Même jour : uniquement les shifts démarrant après la fin de son shift.',
                             style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.amber.shade800),
+                                color: AppColors.brandDark),
                           ),
                         ),
                       ],
                     ),
                   ),
 
-                const SizedBox(height: 16),
-
-                // ── Durée prévue ─────────────────────────────────────────
-                _StepLabel(number: '4', label: 'Durée des HS prévue'),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.remove_circle_outline,
-                            color: Colors.purple.shade400),
-                        onPressed: _overtimeMinutes >= 60
-                            ? () =>
-                                setState(() => _overtimeMinutes -= 60)
-                            : null,
-                      ),
-                      const SizedBox(width: 8),
-                      Column(
-                        children: [
-                          Text(
-                            '${(_overtimeMinutes / 60).toStringAsFixed(0)}h',
-                            style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.purple.shade700),
-                          ),
-                          Text('$_overtimeMinutes min',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade500)),
-                        ],
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.add_circle_outline,
-                            color: Colors.purple.shade400),
-                        onPressed: () =>
-                            setState(() => _overtimeMinutes += 60),
-                      ),
-                    ],
-                  ),
-                ),
+                ..._equipes
+                    .where((eq) => eq.id != _originEquipe?.id)
+                    .map((eq) {
+                  if (!shiftsProvider.hasConfig) {
+                    return _TargetEquipeTile(
+                      equipe: eq,
+                      shiftLabel: null,
+                      disabled: false,
+                      disabledReason: null,
+                      selected: _targetEquipe?.id == eq.id,
+                      onTap: () => setState(() => _targetEquipe = eq),
+                    );
+                  }
+                  final targetShift =
+                      shiftsProvider.getShiftForEquipe(eq.id, _targetDate);
+                  String? disabledReason;
+                  if (targetShift == ShiftType.rest) {
+                    disabledReason = 'En repos ce jour-là';
+                  } else if (origShift != null && origShiftEnd != null) {
+                    final isSameDay = DateTime(_targetDate.year,
+                            _targetDate.month, _targetDate.day) ==
+                        todayDay;
+                    if (isSameDay) {
+                      final targetStart =
+                          _shiftStart(targetShift, _targetDate);
+                      if (targetStart.isBefore(origShiftEnd)) {
+                        disabledReason =
+                            'Le shift commence avant la fin du shift du collaborateur';
+                      }
+                    }
+                  }
+                  return _TargetEquipeTile(
+                    equipe: eq,
+                    shiftLabel:
+                        '${targetShift.shortLabel} (${targetShift.timeRange})',
+                    disabled: disabledReason != null,
+                    disabledReason: disabledReason,
+                    selected: _targetEquipe?.id == eq.id,
+                    onTap: disabledReason == null
+                        ? () => setState(() => _targetEquipe = eq)
+                        : null,
+                  );
+                }),
               ],
             ],
           ),
@@ -1409,68 +987,171 @@ class _AssignOvertimeDialogState extends State<_AssignOvertimeDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Annuler'),
+          onPressed: () => Navigator.pop(context),
+          child:
+              Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-              backgroundColor: canConfirm
-                  ? Colors.purple.shade600
-                  : Colors.grey.shade300),
-          icon: const Icon(Icons.check, size: 18),
-          label: const Text('Confirmer'),
+        FilledButton(
           onPressed: canConfirm
               ? () async {
-                  if (targetEq == null || selectedEmp == null) return;
-
-                  // Resolve chef name from chefId
-                  final chefEmp = widget.employes
-                      .where((x) => x.id == targetEq.chefId)
-                      .toList();
-                  final chefName = chefEmp.isEmpty
-                      ? targetEq.chefId
-                      : chefEmp.first.nom;
-
-                  final ok = await overtime.assignOvertime(
-                    employeId: selectedEmp.id,
-                    employeNom: selectedEmp.nom,
-                    employeCin: selectedEmp.cin,
-                    originalEquipeId: origEq?.id ?? '',
-                    originalEquipeName: origEq?.nom ?? '',
-                    targetEquipeId: targetEq.id,
-                    targetEquipeName: targetEq.nom,
-                    targetChefName: chefName,
-                    date: _targetDate,
-                    adminId: auth.currentUser?.id,
-                    overtimeMinutes: _overtimeMinutes,
-                  );
-                  if (context.mounted) {
-                    Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(ok
-                            ? '${selectedEmp.nom} affecté en HS dans ${targetEq.nom}'
-                            : 'Erreur lors de l\'affectation.'),
-                        backgroundColor:
-                            ok ? Colors.green : Colors.red,
-                      ),
-                    );
-                  }
+                  final auth = context.read<AuthProvider>();
+                  await context.read<OvertimeProvider>().assignOvertime(
+                        employeId: _selectedEmployee!.id,
+                        employeNom: _selectedEmployee!.nom,
+                        originEquipeId: _originEquipe!.id,
+                        originEquipeName: _originEquipe!.nom,
+                        targetEquipeId: _targetEquipe!.id,
+                        targetEquipeName: _targetEquipe!.nom,
+                        date: _targetDate,
+                        adminId: auth.currentUser?.id ?? '',
+                      );
+                  if (context.mounted) Navigator.pop(context);
                 }
               : null,
+          child: const Text('Confirmer l\'affectation'),
         ),
       ],
     );
   }
 }
 
-// زر تاريخ سريع (اليوم / الغد)
+// ── Widgets utilitaires ──────────────────────────────────────────────
+
+class _TargetEquipeTile extends StatelessWidget {
+  final Equipe equipe;
+  final String? shiftLabel;
+  final bool disabled;
+  final String? disabledReason;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _TargetEquipeTile({
+    required this.equipe,
+    required this.shiftLabel,
+    required this.disabled,
+    required this.disabledReason,
+    required this.selected,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: disabled ? 0.5 : 1.0,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 6),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(
+            color: selected
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade300,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Icon(Icons.groups,
+                    size: 20,
+                    color: selected
+                        ? Theme.of(context).primaryColor
+                        : Colors.grey.shade600),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(equipe.nom,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: disabled ? Colors.grey.shade600 : null,
+                          )),
+                      if (shiftLabel != null)
+                        Text(shiftLabel!,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600)),
+                      if (disabledReason != null)
+                        Text(disabledReason!,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.orange.shade700)),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(Icons.check_circle,
+                      color: Theme.of(context).primaryColor, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StepLabel extends StatelessWidget {
+  final int number;
+  final String label;
+  final bool active;
+
+  const _StepLabel(
+      {required this.number,
+      required this.label,
+      required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: active
+                  ? Theme.of(context).primaryColor
+                  : Colors.grey.shade300,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text('$number',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: active ? null : Colors.grey.shade500,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
 class _DateChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
+
   const _DateChip(
-      {required this.label, required this.selected, required this.onTap});
+      {required this.label,
+      required this.selected,
+      required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1479,146 +1160,25 @@ class _DateChip extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? Colors.blue.shade600 : Colors.blue.shade100,
+          color: selected
+              ? Theme.of(context).primaryColor
+              : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: selected ? Colors.white : Colors.blue.shade800,
+          border: Border.all(
+            color: selected
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade300,
           ),
         ),
-      ),
-    );
-  }
-}
-
-// Badge compact pour le type de shift
-class _ShiftBadge extends StatelessWidget {
-  final ShiftType shift;
-  final bool large;
-
-  const _ShiftBadge({required this.shift, this.large = false});
-
-  @override
-  Widget build(BuildContext context) {
-    Color bg;
-    Color fg;
-    switch (shift) {
-      case ShiftType.morning:
-        bg = Colors.amber.shade100;
-        fg = Colors.amber.shade800;
-        break;
-      case ShiftType.evening:
-        bg = Colors.blue.shade100;
-        fg = Colors.blue.shade800;
-        break;
-      case ShiftType.night:
-        bg = Colors.indigo.shade100;
-        fg = Colors.indigo.shade800;
-        break;
-      case ShiftType.rest:
-        bg = Colors.grey.shade200;
-        fg = Colors.grey.shade600;
-        break;
-    }
-    return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: large ? 8 : 5, vertical: large ? 4 : 2),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        large ? '${shift.shortLabel} · ${shift.timeRange}' : shift.shortLabel,
-        style: TextStyle(
-            fontSize: large ? 11 : 10,
-            fontWeight: FontWeight.bold,
-            color: fg),
-      ),
-    );
-  }
-}
-
-// رقم خطوة + تسمية
-class _StepLabel extends StatelessWidget {
-  final String number;
-  final String label;
-
-  const _StepLabel({required this.number, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.purple.shade600,
-            shape: BoxShape.circle,
-          ),
-          child: Text(number,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold)),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(label,
-              style: const TextStyle(
-                  fontWeight: FontWeight.w600, fontSize: 13)),
-        ),
-      ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Widgets communs
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _EmptyState extends StatelessWidget {
-  final IconData icon;
-  final String message;
-  final Color color;
-
-  const _EmptyState({
-    required this.icon,
-    required this.message,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, size: 40, color: color.withValues(alpha: 0.5)),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-            ),
-          ],
-        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight:
+                  selected ? FontWeight.w600 : FontWeight.normal,
+              color: selected ? Colors.white : null,
+            )),
       ),
     );
   }

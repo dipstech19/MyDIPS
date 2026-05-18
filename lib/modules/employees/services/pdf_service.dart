@@ -1,3 +1,4 @@
+﻿import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -124,7 +125,7 @@ class PdfService {
               crossAxisAlignment: pw.CrossAxisAlignment.end,
               children: [
                 pw.Text(
-                  'Fiche Employé',
+                  'Fiche Collaborateur',
                   style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
@@ -325,7 +326,9 @@ class PdfService {
     try {
       // Check if it's a network URL
       if (path.startsWith('http://') || path.startsWith('https://')) {
-        final response = await http.get(Uri.parse(path));
+        final response = await http
+            .get(Uri.parse(path))
+            .timeout(const Duration(seconds: 25), onTimeout: () => throw TimeoutException('photo_url'));
         if (response.statusCode == 200) {
           return response.bodyBytes;
         }

@@ -1,7 +1,12 @@
-import 'dart:io' as dart_io;
+﻿import 'dart:io' as dart_io;
+import 'dart:math';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
+import '../../core/auth/app_permissions.dart';
 import '../../core/locale/app_locale.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/utils/responsive.dart';
@@ -12,6 +17,10 @@ import '../employees/departements_provider.dart';
 import '../employees/postes_provider.dart';
 import '../groupes/groupes_provider.dart';
 import '../groupes/groupe_comptes_provider.dart';
+import '../distribution/distribution_groups_provider.dart';
+import '../distribution/distribution_comptes_provider.dart';
+import '../distribution/models/distribution_group_model.dart';
+import '../distribution/models/distribution_compte_model.dart';
 import '../groupes/models/groupe_model.dart';
 import '../groupes/models/groupe_compte_model.dart';
 import '../employees/employees_provider.dart';
@@ -24,8 +33,10 @@ import 'chef_comptes_provider.dart';
 import 'models/chauffeur_model.dart';
 import 'models/chef_compte_model.dart';
 import '../pointage/absence_reasons_provider.dart';
+import '../pointage/formation_page.dart';
 import '../pointage/models/absence_reason_config.dart';
 import '../../core/site/site_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Modèles locaux pour l'UI Chefs (affichage dérivé de Equipe + Employe)
 class _ChefEquipeView {
@@ -46,10 +57,26 @@ class _ParamChefEquipe {
   _ParamChefEquipe({required this.id, required this.nom, required this.prenom, required this.email, required this.telephone, required this.departement, required this.nbEmployes, required this.actif, required this.dateCreation, List<_ParamEmploye>? employes}) : employes = employes ?? [];
 }
 
-/// فقط الموظفون الذين منصبهم "Chef d'équipe" (بدون Chef de zone أو أعلى)
+/// Collaborateurs « chef d’équipe » ou libellé type SHEF (sans Chef de zone / atelier).
 bool _isChefEquipePoste(String poste) {
   final p = poste.trim().toLowerCase();
-  return p == "chef d'équipe" || p == "chef d’equipe" || p == "chef d'equipe" || p == "chef d equipe";
+  if (p == 'shef' || p.contains('shef')) return true;
+  return p == "chef d'équipe" ||
+      p == "chef d’equipe" ||
+      p == "chef d'equipe" ||
+      p == "chef d equipe";
+}
+
+/// Membres des groupes Distribution + chefs d’équipe / SHEF (même non listés dans membreIds).
+Set<String> _distributionComptePickerEmployeIds(
+  List<DistributionGroup> sourceGroups,
+  List<emp.Employe> employes,
+) {
+  final ids = <String>{for (final g in sourceGroups) ...g.membreIds};
+  for (final e in employes) {
+    if (_isChefEquipePoste(e.poste)) ids.add(e.id);
+  }
+  return ids;
 }
 
 /// قائمة Chef (employé) — تظهر فقط من عندهم منصب Chef/Shef
@@ -79,7 +106,7 @@ class _ChefEquipeDropdown extends StatelessWidget {
     final value = (chefId != null && chefId!.isNotEmpty && candidates.any((e) => e.id == chefId)) ? chefId! : '';
     return DropdownButtonFormField<String>(
       value: value,
-      decoration: const InputDecoration(labelText: 'Chef (employé)'),
+      decoration: const InputDecoration(labelText: 'Chef (collaborateur)'),
       items: [
         const DropdownMenuItem(value: '', child: Text('— Aucun —')),
         ...candidates.map((e) => DropdownMenuItem(value: e.id, child: Text('${e.nom} — ${e.poste}'))),
@@ -113,6 +140,20 @@ Widget _offlineBanner() {
 }
 
 // ─────────────────────────────────────────────
+//  Horizontal tab bar: mouse wheel + drag + chevrons (desktop)
+// ─────────────────────────────────────────────
+
+class _HorizontalTabScrollBehavior extends ScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      };
+}
+
+// ─────────────────────────────────────────────
 //  MAIN SETTINGS PAGE
 // ─────────────────────────────────────────────
 
@@ -126,22 +167,135 @@ class ParametresPage extends StatefulWidget {
 class _ParametresPageState extends State<ParametresPage> {
   int _selectedSectionIndex = 0;
 
+  final ScrollController _tabScrollController = ScrollController();
+
   final List<_SettingsSection> _sections = [
     _SettingsSection(icon: Icons.admin_panel_settings, label: 'Administrateurs'),
     _SettingsSection(icon: Icons.groups, label: 'Chefs d\'équipe'),
+    _SettingsSection(icon: Icons.school, label: 'Formations'),
     _SettingsSection(icon: Icons.login, label: 'Comptes Chefs'),
     _SettingsSection(icon: Icons.group_work, label: 'Groupes'),
     _SettingsSection(icon: Icons.vpn_key, label: 'Comptes Groupes'),
+    _SettingsSection(icon: Icons.groups_2, label: 'Groupes Distribution'),
+    _SettingsSection(icon: Icons.admin_panel_settings_outlined, label: 'Comptes Distribution'),
     _SettingsSection(icon: Icons.local_shipping, label: 'Chauffeurs'),
     _SettingsSection(icon: Icons.work_outline, label: 'Postes'),
     _SettingsSection(icon: Icons.account_tree_outlined, label: 'Départements'),
     _SettingsSection(icon: Icons.cancel_presentation_outlined, label: 'Raisons d\'absence'),
+    _SettingsSection(icon: Icons.beach_access, label: 'Types de congé'),
     _SettingsSection(icon: Icons.tune, label: 'Général'),
     _SettingsSection(icon: Icons.notifications_active, label: 'Notifications'),
     _SettingsSection(icon: Icons.security, label: 'Sécurité'),
     _SettingsSection(icon: Icons.storage, label: 'Base de données'),
     _SettingsSection(icon: Icons.info_outline, label: 'À propos'),
   ];
+
+  bool _canAccessSection(AuthProvider auth, int index) {
+    if (!auth.isDirecteur) return true;
+    // Chef d'atelier : pas de création / comptes Distribution ni onglet Sécurité.
+    if (auth.isChefAtelierAdmin && (index == 6 || index == 7 || index == 15)) {
+      return false;
+    }
+    switch (index) {
+      case 0:
+        return auth.hasPermission(AppPermissions.adminsManage);
+      case 1:
+        return auth.hasPermission(AppPermissions.teamsManage);
+      case 2:
+        return auth.hasPermission(AppPermissions.trainingManage);
+      case 3:
+        return auth.hasPermission(AppPermissions.chefAccountsManage);
+      case 4:
+        return auth.hasPermission(AppPermissions.groupsManage);
+      case 5:
+        return auth.hasPermission(AppPermissions.groupeAccountsManage);
+      case 6:
+        return auth.hasPermission(AppPermissions.groupsManage);
+      case 7:
+        return auth.hasPermission(AppPermissions.groupeAccountsManage);
+      case 8:
+        return auth.hasPermission(AppPermissions.driversManage);
+      case 9:
+        return auth.hasPermission(AppPermissions.postesManage);
+      case 10:
+        return auth.hasPermission(AppPermissions.departementsManage);
+      case 11:
+        return auth.hasPermission(AppPermissions.absenceReasonsManage);
+      case 12:
+        return true; // Types de congé — accessible à tous les admins
+      case 13:
+        return auth.hasPermission(AppPermissions.generalManage);
+      case 14:
+        return auth.hasPermission(AppPermissions.notificationsManage);
+      case 15:
+        return auth.hasPermission(AppPermissions.securityManage);
+      case 16:
+        return auth.hasPermission(AppPermissions.databaseManage);
+      case 17:
+        return auth.hasPermission(AppPermissions.aboutView);
+      default:
+        return false;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _tabScrollController.addListener(_onTabBarScroll);
+  }
+
+  void _onTabBarScroll() {
+    if (mounted) setState(() {});
+  }
+
+  void _scrollTabBarBy(double delta) {
+    final c = _tabScrollController;
+    if (!c.hasClients) return;
+    final target = (c.offset + delta).clamp(
+      c.position.minScrollExtent,
+      c.position.maxScrollExtent,
+    );
+    c.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onTabBarPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final c = _tabScrollController;
+    if (!c.hasClients) return;
+    // Molette verticale ou Shift+molette → défilement horizontal (Windows / desktop)
+    final dy = event.scrollDelta.dy;
+    final dx = event.scrollDelta.dx;
+    final delta = dx != 0.0 ? dx : dy;
+    if (delta == 0.0) return;
+    final target = (c.offset + delta).clamp(
+      c.position.minScrollExtent,
+      c.position.maxScrollExtent,
+    );
+    c.jumpTo(target);
+  }
+
+  bool get _tabCanScrollLeft {
+    final c = _tabScrollController;
+    if (!c.hasClients) return false;
+    return c.offset > c.position.minScrollExtent + 0.5;
+  }
+
+  bool get _tabCanScrollRight {
+    final c = _tabScrollController;
+    if (!c.hasClients) return false;
+    return c.offset < c.position.maxScrollExtent - 0.5;
+  }
+
+  @override
+  void dispose() {
+    _tabScrollController.removeListener(_onTabBarScroll);
+    _tabScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,12 +305,16 @@ class _ParametresPageState extends State<ParametresPage> {
     }
     final padding = pagePadding(context);
     final mobile = isMobile(context);
-    return Column(
-      children: [
-        // ══════════════════════════════════════════
-        //  NAV BAR — blanc, accent #328EEE, moderne
-        // ══════════════════════════════════════════
-        Container(
+    final visibleSectionIndices = List<int>.generate(_sections.length, (i) => i)
+        .where((i) => _canAccessSection(auth, i))
+        .toList();
+    if (visibleSectionIndices.isEmpty) {
+      return const Center(child: Text('Aucune section autorisée'));
+    }
+    if (!visibleSectionIndices.contains(_selectedSectionIndex)) {
+      _selectedSectionIndex = visibleSectionIndices.first;
+    }
+    final navHeader = Container(
           width: double.infinity,
           decoration: BoxDecoration(
             color: Colors.white,
@@ -221,13 +379,35 @@ class _ParametresPageState extends State<ParametresPage> {
                   ],
                 ),
               ),
-              // ── Tab row (scrollable on mobile) ──
+              // ── Tab row: molette → scroll horizontal, souris drag, flèches sur desktop ──
               Padding(
                 padding: EdgeInsets.only(left: mobile ? 4 : 8, right: mobile ? 4 : 8, top: 4),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: List.generate(_sections.length, (i) {
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (!mobile)
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left, size: 22),
+                        tooltip: 'Onglets précédents',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _tabCanScrollLeft ? () => _scrollTabBarBy(-140) : null,
+                        color: const Color(0xFF328EEE),
+                      ),
+                    Expanded(
+                      child: Listener(
+                        onPointerSignal: _onTabBarPointerSignal,
+                        child: ScrollConfiguration(
+                          behavior: _HorizontalTabScrollBehavior(),
+                          child: Scrollbar(
+                            controller: _tabScrollController,
+                            thumbVisibility: !mobile,
+                            thickness: 4,
+                            radius: const Radius.circular(8),
+                            child: SingleChildScrollView(
+                              controller: _tabScrollController,
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                    children: visibleSectionIndices.map((i) {
                       final s = _sections[i];
                       final selected = _selectedSectionIndex == i;
                       return GestureDetector(
@@ -307,13 +487,46 @@ class _ParametresPageState extends State<ParametresPage> {
                           ),
                         ),
                       );
-                    }),
-                  ),
+                    }).toList(),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (!mobile)
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right, size: 22),
+                        tooltip: 'Onglets suivants',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _tabCanScrollRight ? () => _scrollTabBarBy(140) : null,
+                        color: const Color(0xFF328EEE),
+                      ),
+                  ],
                 ),
               ),
             ],
           ),
+        );
+
+    if (mobile) {
+      return NestedScrollView(
+        headerSliverBuilder: (_, __) => [
+          SliverToBoxAdapter(child: navHeader),
+        ],
+        body: Container(
+          color: const Color(0xFFF4F7FC),
+          child: _buildSection(_selectedSectionIndex),
         ),
+      );
+    }
+
+    return Column(
+      children: [
+        // ══════════════════════════════════════════
+        //  NAV BAR — blanc, accent #328EEE, moderne
+        // ══════════════════════════════════════════
+        navHeader,
         // ══════════════════════════════════════════
         //  CONTENT
         // ══════════════════════════════════════════
@@ -331,18 +544,22 @@ class _ParametresPageState extends State<ParametresPage> {
     switch (index) {
       case 0:  return const _AdminsSection();
       case 1:  return const _ChefsEquipeSection();
-      case 2:  return const _ChefComptesSection();
-      case 3:  return const _GroupesSection();
-      case 4:  return const _GroupeComptesSection();
-      case 5:  return const _ChauffeursSection();
-      case 6:  return const _PostesSection();
-      case 7:  return const _DepartementsSection();
-      case 8:  return const _AbsenceReasonsSection();
-      case 9:  return const _GeneralSection();
-      case 10: return const _NotificationsSection();
-      case 11: return const _SecuriteSection();
-      case 12: return const _DatabaseSection();
-      case 13: return const _AboutSection();
+      case 2:  return const FormationPage();
+      case 3:  return const _ChefComptesSection();
+      case 4:  return const _GroupesSection();
+      case 5:  return const _GroupeComptesSection();
+      case 6:  return const _DistributionGroupsSection();
+      case 7:  return const _DistributionComptesSection();
+      case 8:  return const _ChauffeursSection();
+      case 9:  return const _PostesSection();
+      case 10: return const _DepartementsSection();
+      case 11: return const _AbsenceReasonsSection();
+      case 12: return const _LeaveTypesSection();
+      case 13: return const _GeneralSection();
+      case 14: return const _NotificationsSection();
+      case 15: return const _SecuriteSection();
+      case 16: return const _DatabaseSection();
+      case 17: return const _AboutSection();
       default: return const Center(child: Text('Section inconnue'));
     }
   }
@@ -1264,7 +1481,7 @@ class _AdminTableRowState extends State<_AdminTableRow> {
     showDialog(
       context: context,
       barrierColor: Colors.black45,
-      builder: (_) => Dialog(
+      builder: (dialogContext) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
         child: ConstrainedBox(
@@ -1313,7 +1530,7 @@ class _AdminTableRowState extends State<_AdminTableRow> {
                       ]),
                     ]),
                   ),
-                  IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => Navigator.pop(context)),
+                  IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => Navigator.pop(dialogContext)),
                 ]),
               ),
               // ── Body ──
@@ -1367,6 +1584,39 @@ class _AdminTableRowState extends State<_AdminTableRow> {
                           ]),
                         )).toList(),
                       ),
+                      if (a.role.toLowerCase().contains('zone')) ...[
+                        const SizedBox(height: 24),
+                        Row(children: [
+                          Container(
+                              width: 3,
+                              height: 14,
+                              decoration: BoxDecoration(color: _kAccent, borderRadius: BorderRadius.circular(2))),
+                          const SizedBox(width: 8),
+                          const Text('GROUPES DISTRIBUTION',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.7,
+                                  color: Color(0xFF6B7A99))),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Divider(color: _kBorder)),
+                        ]),
+                        const SizedBox(height: 10),
+                        Builder(
+                          builder: (ctx) {
+                            final names = ctx
+                                .watch<DistributionGroupsProvider>()
+                                .groups
+                                .where((g) => a.distributionGroupIds.contains(g.id))
+                                .map((g) => g.nom)
+                                .join(', ');
+                            final text = a.distributionGroupIds.isEmpty
+                                ? 'Tous les groupes (filtre zone)'
+                                : (names.isEmpty ? a.distributionGroupIds.join(', ') : names);
+                            return Text(text, style: TextStyle(fontSize: 13, color: Colors.grey[800]));
+                          },
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1392,14 +1642,127 @@ class _AdminDrawerState extends State<_AdminDrawer> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nomCtrl, _prenomCtrl, _emailCtrl, _telCtrl, _pwdCtrl;
   String _role = 'Admin RH';
+  String? _selectedEmployeId;
   List<String> _perms = [];
   bool _actif = true;
   bool _showPwd = false;
   /// Zone: 'all' = الكل، 'jadida' أو 'safi' = موقع واحد
   String _siteId = SiteId.all;
+  String _selectedPreset = 'custom';
+  /// Groupes Distribution rattachés au compte « Chef de zone » (pointage + congés).
+  final Set<String> _chefZoneDistributionGroupIds = {};
+  final Random _pwdRandom = Random.secure();
 
-  final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage'];
-  final _allPerms = ['Employés', 'Pointage', 'Gestion Magasin', 'Rapports', 'Paramètres'];
+  final _roles = ['Admin RH', 'Admin Magasin', 'Admin Général', 'Admin Pointage', 'Chef d\'atelier', 'Chef de zone'];
+  final _allPerms = AppPermissions.allDetailed;
+
+  Map<String, List<String>> get _permissionPresets => {
+    'rh': [
+      AppPermissions.employeesView,
+      AppPermissions.employeesManage,
+      AppPermissions.employeesDelete,
+      AppPermissions.teamsManage,
+      AppPermissions.groupsManage,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.chefAccountsManage,
+      AppPermissions.groupeAccountsManage,
+      AppPermissions.driversManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.reportsView,
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.demandesView,
+      AppPermissions.logistiqueView,
+      AppPermissions.aboutView,
+    ],
+    'pointage': [
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.reportsView,
+      AppPermissions.aboutView,
+    ],
+    // Chef de zone: full admin scope with pointage access (restricted in UI to Chef d'atelier only).
+    'zone': _allPerms,
+    'atelier': [
+      AppPermissions.employeesView,
+      AppPermissions.employeesManage,
+      AppPermissions.employeesDelete,
+      AppPermissions.teamsManage,
+      AppPermissions.groupsManage,
+      AppPermissions.pointageView,
+      AppPermissions.overtimeView,
+      AppPermissions.shiftsView,
+      AppPermissions.stockView,
+      AppPermissions.reportsView,
+      AppPermissions.settingsView,
+      AppPermissions.trainingManage,
+      AppPermissions.chefAccountsManage,
+      AppPermissions.groupeAccountsManage,
+      AppPermissions.driversManage,
+      AppPermissions.absenceReasonsManage,
+      AppPermissions.generalManage,
+      AppPermissions.notificationsManage,
+      AppPermissions.databaseManage,
+      AppPermissions.aboutView,
+      AppPermissions.demandesView,
+      AppPermissions.logistiqueView,
+    ],
+  };
+
+  String _detectPreset(List<String> perms) {
+    bool same(List<String> a, List<String> b) {
+      final sa = {...a};
+      final sb = {...b};
+      return sa.length == sb.length && sa.containsAll(sb);
+    }
+
+    if (same(perms, _permissionPresets['rh']!)) return 'rh';
+    if (same(perms, _permissionPresets['pointage']!)) return 'pointage';
+    if (same(perms, _permissionPresets['atelier']!)) return 'atelier';
+    if (same(perms, _permissionPresets['zone']!)) return 'zone';
+    return 'custom';
+  }
+
+  bool _roleMatchesPoste(String role, String poste) {
+    final r = role.trim().toLowerCase();
+    final p = poste.trim().toLowerCase();
+    if (r.contains('atelier')) return p.contains('atelier');
+    if (r.contains('zone')) return p.contains('zone');
+    if (r.contains('rh')) return p == 'rh' || p.contains('ressource') || p.contains('rh');
+    if (r.contains('pointage')) return p.contains('pointage') || p.contains('chef d\'équipe');
+    return true;
+  }
+
+  void _applyEmployeToForm(emp.Employe e) {
+    final parts = e.nom.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+    final prenom = parts.isNotEmpty ? parts.first : '';
+    final nom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    setState(() {
+      _selectedEmployeId = e.id;
+      _prenomCtrl.text = prenom;
+      _nomCtrl.text = nom;
+      _telCtrl.text = e.telephone;
+    });
+  }
+
+  void _applyPreset(String key) {
+    final preset = _permissionPresets[key];
+    if (preset == null) return;
+    setState(() {
+      _selectedPreset = key;
+      _perms = List<String>.from(preset);
+      if (key == 'rh') _role = 'Admin RH';
+      if (key == 'pointage') _role = 'Admin Pointage';
+      if (key == 'atelier') _role = 'Chef d\'atelier';
+      if (key == 'zone') _role = 'Chef de zone';
+    });
+  }
 
   @override
   void initState() {
@@ -1412,12 +1775,16 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     _pwdCtrl   = TextEditingController(text: '');
     _role  = e?.role ?? 'Admin RH';
     _perms = List.from(e?.permissions ?? []);
+    _selectedPreset = _detectPreset(_perms);
     _actif = e?.actif ?? true;
     if (e?.siteIds != null && e!.siteIds.isNotEmpty && e.siteIds.first != SiteId.all) {
       _siteId = e.siteIds.first;
     } else {
       _siteId = SiteId.all;
     }
+    _chefZoneDistributionGroupIds
+      ..clear()
+      ..addAll(e?.distributionGroupIds ?? const <String>[]);
   }
 
   @override
@@ -1427,11 +1794,36 @@ class _AdminDrawerState extends State<_AdminDrawer> {
     super.dispose();
   }
 
+  String _buildGeneratedPassword({int length = 12}) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#\$%';
+    return List.generate(length, (_) => chars[_pwdRandom.nextInt(chars.length)]).join();
+  }
+
+  void _generatePassword() {
+    setState(() {
+      _pwdCtrl.text = _buildGeneratedPassword();
+      _showPwd = true;
+    });
+  }
+
+  Future<void> _copyPassword() async {
+    final v = _pwdCtrl.text.trim();
+    if (v.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: v));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Mot de passe copié')),
+    );
+  }
+
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     final isNew = widget.existing == null;
     final siteIds = _siteId == SiteId.all ? [SiteId.all] : [_siteId];
-    final pwd = isNew ? _pwdCtrl.text : (widget.existing!.password);
+    final typedPwd = _pwdCtrl.text.trim();
+    final pwd = isNew
+        ? typedPwd
+        : (typedPwd.isNotEmpty ? typedPwd : widget.existing!.password);
     widget.onSave(AdminUser(
       id: isNew ? '' : widget.existing!.id,
       nom: _nomCtrl.text.trim(),
@@ -1444,6 +1836,9 @@ class _AdminDrawerState extends State<_AdminDrawer> {
       siteIds: siteIds,
       password: pwd,
       dateCreation: widget.existing?.dateCreation ?? DateTime.now(),
+      distributionGroupIds: _role.toLowerCase().contains('zone')
+          ? _chefZoneDistributionGroupIds.toList()
+          : const <String>[],
     ));
     Navigator.of(context).pop();
   }
@@ -1463,6 +1858,62 @@ class _AdminDrawerState extends State<_AdminDrawer> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Role & Status ──
+            _DrawerSection(label: 'RÔLE & STATUT'),
+            const SizedBox(height: 10),
+            _DrawerDropdown(
+              label: 'Rôle *',
+              value: _role,
+              items: _roles,
+              onChanged: (v) => setState(() {
+                _role = v!;
+                _selectedEmployeId = null;
+              }),
+            ),
+            const SizedBox(height: 10),
+            Builder(
+              builder: (context) {
+                final empsProv = context.watch<EmployeesProvider>();
+                final candidates = empsProv.employes
+                    .where((e) => e.statut == emp.EmployeStatut.enService && _roleMatchesPoste(_role, e.poste))
+                    .toList()
+                  ..sort((a, b) => a.nom.compareTo(b.nom));
+                if (candidates.isEmpty) {
+                  return Text(
+                    'Aucun collaborateur trouvé pour ce rôle.',
+                    style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                  );
+                }
+                if (_selectedEmployeId != null &&
+                    !candidates.any((e) => e.id == _selectedEmployeId)) {
+                  _selectedEmployeId = null;
+                }
+                return DropdownButtonFormField<String>(
+                  value: _selectedEmployeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Collaborateur source *',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                  items: candidates
+                      .map((e) => DropdownMenuItem<String>(
+                            value: e.id,
+                            child: Text('${e.nom} — ${e.poste}'),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    final selected = candidates.where((e) => e.id == v).toList();
+                    if (selected.isEmpty) return;
+                    _applyEmployeToForm(selected.first);
+                  },
+                  validator: (v) => (v == null || v.isEmpty) ? 'Choisissez un collaborateur' : null,
+                );
+              },
+            ),
+            const SizedBox(height: 12),
             // ── Identity ──
             _DrawerSection(label: 'IDENTITÉ'),
             const SizedBox(height: 10),
@@ -1478,12 +1929,12 @@ class _AdminDrawerState extends State<_AdminDrawer> {
             _DrawerField(label: 'Téléphone *', controller: _telCtrl, hint: '06xx xx xx xx',
                 keyboardType: TextInputType.phone),
             const SizedBox(height: 12),
-            _DrawerSection(label: 'ZONE / الموقع'),
+            _DrawerSection(label: 'ZONE'),
             const SizedBox(height: 6),
             DropdownButtonFormField<String>(
               value: _siteId,
               decoration: const InputDecoration(
-                labelText: 'Zone (الجديدة / آسفي / الكل)',
+                labelText: 'Zone (El Jadida / Safi / Tous)',
                 isDense: true,
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                 filled: true,
@@ -1496,6 +1947,61 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               ],
               onChanged: (v) => setState(() => _siteId = v ?? SiteId.all),
             ),
+            if (_role.toLowerCase().contains('zone')) ...[
+              const SizedBox(height: 12),
+              Builder(
+                builder: (context) {
+                  final groupsProv = context.watch<DistributionGroupsProvider>();
+                  final groups = groupsProv.groups;
+                  if (groups.isEmpty) {
+                    return Text(
+                      'Aucun groupe Distribution. Définissez des groupes dans la section Distribution.',
+                      style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Groupes Distribution gérés *',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF4A5568)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Pointage (confirmation), export Excel et demandes de congé : uniquement ces groupes. Laissez vide pour autoriser tous les groupes Distribution de la zone.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: _kBorder),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: groups.map((g) {
+                            final checked = _chefZoneDistributionGroupIds.contains(g.id);
+                            return CheckboxListTile(
+                              dense: true,
+                              title: Text(g.nom, style: const TextStyle(fontSize: 12)),
+                              value: checked,
+                              onChanged: (v) => setState(() {
+                                if (v == true) {
+                                  _chefZoneDistributionGroupIds.add(g.id);
+                                } else {
+                                  _chefZoneDistributionGroupIds.remove(g.id);
+                                }
+                              }),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
             if (!isEdit) ...[
               const SizedBox(height: 12),
               // Password with eye toggle
@@ -1545,16 +2051,127 @@ class _AdminDrawerState extends State<_AdminDrawer> {
                   ),
                 ],
               ),
+            ] else ...[
+              const SizedBox(height: 12),
+              _DrawerSection(label: 'SÉCURITÉ'),
+              const SizedBox(height: 6),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Nouveau mot de passe (optionnel)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF4A5568),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  TextFormField(
+                    controller: _pwdCtrl,
+                    obscureText: !_showPwd,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Laisser vide pour conserver le mot de passe actuel',
+                      hintStyle: TextStyle(color: Colors.grey[500], fontSize: 12),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: _kAccent, width: 1.5),
+                      ),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _showPwd
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          size: 17,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () => setState(() => _showPwd = !_showPwd),
+                      ),
+                    ),
+                    validator: (v) {
+                      final val = (v ?? '').trim();
+                      if (val.isEmpty) return null;
+                      if (val.length < 4) return 'Min. 4 caractères';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _generatePassword,
+                        icon: const Icon(Icons.auto_fix_high, size: 16),
+                        label: const Text('Générer mot de passe'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _copyPassword,
+                        icon: const Icon(Icons.copy, size: 16),
+                        label: const Text('Copier'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Si vous remplissez ce champ, le mot de passe du compte sera réinitialisé.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
             ],
             const SizedBox(height: 20),
-            // ── Role & Status ──
-            _DrawerSection(label: 'RÔLE & STATUT'),
-            const SizedBox(height: 10),
-            _DrawerDropdown(
-              label: 'Rôle *',
-              value: _role,
-              items: _roles,
-              onChanged: (v) => setState(() => _role = v!),
+            const Text(
+              'Modèles de permissions',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF4A5568)),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('Admin RH'),
+                  selected: _selectedPreset == 'rh',
+                  onSelected: (_) => _applyPreset('rh'),
+                ),
+                ChoiceChip(
+                  label: const Text('Admin Pointage'),
+                  selected: _selectedPreset == 'pointage',
+                  onSelected: (_) => _applyPreset('pointage'),
+                ),
+                ChoiceChip(
+                  label: const Text('Chef d\'atelier'),
+                  selected: _selectedPreset == 'atelier',
+                  onSelected: (_) => _applyPreset('atelier'),
+                ),
+                ChoiceChip(
+                  label: const Text('Chef de zone'),
+                  selected: _selectedPreset == 'zone',
+                  onSelected: (_) => _applyPreset('zone'),
+                ),
+                ChoiceChip(
+                  label: const Text('Personnalisé'),
+                  selected: _selectedPreset == 'custom',
+                  onSelected: (_) => setState(() => _selectedPreset = 'custom'),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Row(children: [
@@ -1592,9 +2209,11 @@ class _AdminDrawerState extends State<_AdminDrawer> {
               child: Column(
                 children: _allPerms.map((p) {
                   final on = _perms.contains(p);
+                  final label = AppPermissions.labelsFr[p] ?? p;
                   return InkWell(
                     onTap: () => setState(() {
                       on ? _perms.remove(p) : _perms.add(p);
+                      _selectedPreset = _detectPreset(_perms);
                     }),
                     borderRadius: BorderRadius.circular(6),
                     child: Padding(
@@ -1617,7 +2236,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
                               : null,
                         ),
                         const SizedBox(width: 10),
-                        Text(p,
+                        Text(label,
                             style: TextStyle(
                                 fontSize: 13,
                                 color: on ? _kDark : Colors.grey[600],
@@ -2206,7 +2825,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                         color: widget.deptColor, size: 20),
                     const SizedBox(width: 10),
                     Text(
-                      existing == null ? 'Ajouter un employé' : 'Modifier l\'employé',
+                      existing == null ? 'Ajouter un collaborateur' : 'Modifier le collaborateur',
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark),
                     ),
                     const Spacer(),
@@ -2298,7 +2917,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(children: const [Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20), SizedBox(width: 8), Text('Supprimer l\'employé', style: TextStyle(fontSize: 15))]),
+        title: Row(children: const [Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20), SizedBox(width: 8), Text('Supprimer le collaborateur', style: TextStyle(fontSize: 15))]),
         content: Text('Supprimer ${emp.prenom} ${emp.nom} ?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
@@ -2389,7 +3008,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                         const SizedBox(height: 14),
                         _DetailRow(icon: Icons.email_outlined,  label: 'Email',   value: c.email),
                         _DetailRow(icon: Icons.phone_outlined,  label: 'Tél.',    value: c.telephone),
-                        _DetailRow(icon: Icons.people_outline,  label: 'Effectif', value: '${_employes.length} employé(s)'),
+                        _DetailRow(icon: Icons.people_outline,  label: 'Effectif', value: '${_employes.length} collaborateur(s)'),
                         _DetailRow(icon: Icons.calendar_today,  label: 'Créé le',
                             value: '${c.dateCreation.day.toString().padLeft(2,'0')}/${c.dateCreation.month.toString().padLeft(2,'0')}/${c.dateCreation.year}'),
                         const SizedBox(height: 16),
@@ -2459,7 +3078,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
                             child: Column(mainAxisSize: MainAxisSize.min, children: [
                               Icon(Icons.people_outline, size: 36, color: Colors.grey[300]),
                               const SizedBox(height: 8),
-                              Text('Aucun employé enregistré',
+                              Text('Aucun collaborateur enregistré',
                                   style: TextStyle(fontSize: 13, color: Colors.grey[400])),
                               const SizedBox(height: 10),
                               TextButton.icon(
@@ -2647,7 +3266,7 @@ class _ChefDrawerState extends State<_ChefDrawer> {
             ),
             const SizedBox(height: 12),
             _DrawerField(
-              label: 'Nombre d\'employés sous sa responsabilité',
+              label: 'Nombre de collaborateurs sous sa responsabilité',
               controller: _nbEmpCtrl,
               hint: '0',
               isNumber: true,
@@ -2783,7 +3402,7 @@ class _DrawerSection extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  SECTION: COMPTES CHEFS (حسابات تسجيل دخول الشافات)
+//  SECTION: COMPTES CHEFS
 // ─────────────────────────────────────────────
 
 class _ChefComptesSection extends StatefulWidget {
@@ -2842,7 +3461,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                    const Text('Comptes Chefs',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                     Text('Email + mot de passe — le chef ne voit que son équipe',
                         style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -2881,7 +3500,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
               : Row(
                   children: [
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Comptes Chefs (حسابات تسجيل دخول الشافات)',
+                      const Text('Comptes Chefs',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                       Text('Email + mot de passe — le chef ne voit que son équipe',
                           style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -2957,7 +3576,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(c.email, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                            Text('Équipe: $equipeName', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                            Text('Équipe: $equipeName', style: TextStyle(fontSize: 11, color: AppColors.brand)),
                           ],
                         ),
                         trailing: Row(
@@ -3148,6 +3767,15 @@ class _GroupesSection extends StatefulWidget {
 
 class _GroupesSectionState extends State<_GroupesSection> {
   String _q = '';
+  static const Map<int, String> _weekdayLabels = <int, String>{
+    DateTime.monday: 'Lundi',
+    DateTime.tuesday: 'Mardi',
+    DateTime.wednesday: 'Mercredi',
+    DateTime.thursday: 'Jeudi',
+    DateTime.friday: 'Vendredi',
+    DateTime.saturday: 'Samedi',
+    DateTime.sunday: 'Dimanche',
+  };
 
   void _showGroupeDialog(BuildContext context, GroupesProvider prov, EmployeesProvider emps, Groupe? existing) {
     final nameCtrl = TextEditingController(text: existing?.nom ?? '');
@@ -3155,6 +3783,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
     int sm = existing?.startMinute ?? 0;
     int eh = existing?.endHour ?? 16;
     int em = existing?.endMinute ?? 0;
+    int restWeekday = existing?.weeklyRestWeekday ?? DateTime.sunday;
     final selectedIds = <String>{...(existing?.membreIds ?? const [])};
 
     final employees = emps.employes.toList()..sort((a, b) => a.nom.compareTo(b.nom));
@@ -3242,10 +3871,22 @@ class _GroupesSectionState extends State<_GroupesSection> {
                       ],
                     ),
                     const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      value: restWeekday,
+                      decoration: const InputDecoration(
+                        labelText: 'Jour de repos hebdomadaire',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _weekdayLabels.entries
+                          .map((e) => DropdownMenuItem<int>(value: e.key, child: Text(e.value)))
+                          .toList(),
+                      onChanged: (v) => setStateD(() => restWeekday = v ?? DateTime.sunday),
+                    ),
+                    const SizedBox(height: 12),
                     const Text('Membres', style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 6),
                     Text(
-                      'Seuls les employés non affectés à une équipe ou à un autre groupe sont affichés.',
+                      'Seuls les collaborateurs non affectés à une équipe ou à un autre groupe sont affichés.',
                       style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 8),
@@ -3303,6 +3944,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
                     startMinute: sm,
                     endHour: eh,
                     endMinute: em,
+                    weeklyRestWeekday: restWeekday,
                   );
                   if (existing == null) {
                     await prov.addGroupe(g);
@@ -3568,6 +4210,505 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
   }
 }
 
+class _DistributionGroupsSection extends StatefulWidget {
+  const _DistributionGroupsSection();
+
+  @override
+  State<_DistributionGroupsSection> createState() => _DistributionGroupsSectionState();
+}
+
+class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> {
+  String _q = '';
+
+  bool _isProtectedForDistribution(String poste) {
+    final p = poste.trim().toLowerCase();
+    return p.contains('chef') ||
+        p.contains('rh') ||
+        p.contains('dev') ||
+        p.contains('it') ||
+        p.contains('admin') ||
+        p.contains('directeur') ||
+        p.contains('responsable');
+  }
+
+  void _showDialogGroup(
+      BuildContext context, DistributionGroupsProvider prov, EmployeesProvider emps, DistributionGroup? existing) {
+    final nameCtrl = TextEditingController(text: existing?.nom ?? '');
+    final selectedIds = <String>{...(existing?.membreIds ?? const [])};
+    final employees = emps.employes.toList()..sort((a, b) => a.nom.compareTo(b.nom));
+    String search = '';
+    String? selectedPoste;
+    final groupesProv = context.read<GroupesProvider>();
+
+    final usedInEquipes = <String>{
+      for (final eq in emps.equipes) ...[
+        if (eq.chefId.isNotEmpty) eq.chefId,
+        ...eq.membreIds,
+      ]
+    };
+    final usedInGroupes = <String>{
+      for (final g in groupesProv.groupes) ...g.membreIds,
+    };
+    final usedInOtherDistribution = <String>{
+      for (final g in prov.groups)
+        if (existing == null || g.id != existing.id) ...g.membreIds,
+    };
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final eligible = employees.where((e) {
+            if (selectedIds.contains(e.id)) return true; // Keep current selected visible in edit mode.
+            if (_isProtectedForDistribution(e.poste)) return false;
+            if (usedInEquipes.contains(e.id)) return false;
+            if (usedInGroupes.contains(e.id)) return false;
+            if (usedInOtherDistribution.contains(e.id)) return false;
+            return true;
+          }).toList();
+          final postes = eligible.map((e) => e.poste.trim()).where((p) => p.isNotEmpty).toSet().toList()..sort();
+          selectedPoste ??= postes.isNotEmpty ? postes.first : null;
+          final filtered = eligible.where((e) {
+            final okSearch = search.trim().isEmpty ||
+                e.nom.toLowerCase().contains(search.trim().toLowerCase()) ||
+                e.poste.toLowerCase().contains(search.trim().toLowerCase());
+            final okPoste = selectedPoste == null || selectedPoste!.isEmpty || e.poste.trim() == selectedPoste!.trim();
+            return okSearch && okPoste;
+          }).toList();
+          return AlertDialog(
+            title: Text(existing == null ? 'Nouveau groupe Distribution' : 'Modifier groupe Distribution'),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Nom', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Filtrer par nom/poste',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (v) => setStateD(() => search = v),
+                    ),
+                    const SizedBox(height: 10),
+                    if (postes.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        value: selectedPoste,
+                        decoration: const InputDecoration(labelText: 'Poste', border: OutlineInputBorder()),
+                        items: postes.map((p) => DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
+                        onChanged: (v) => setStateD(() => selectedPoste = v),
+                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Affichage: collaborateurs non affectés (hors équipes/groupes) et hors postes protégés (Chef/RH/DEV/IT...).',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 280,
+                      decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+                      child: ListView(
+                        children: filtered.map((e) {
+                          final checked = selectedIds.contains(e.id);
+                          return CheckboxListTile(
+                            value: checked,
+                            dense: true,
+                            title: Text(e.nom),
+                            subtitle: Text(e.poste),
+                            onChanged: (v) => setStateD(() {
+                              if (v == true) {
+                                selectedIds.add(e.id);
+                              } else {
+                                selectedIds.remove(e.id);
+                              }
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+              ElevatedButton(
+                onPressed: () async {
+                  final nom = nameCtrl.text.trim();
+                  if (nom.isEmpty) return;
+                  final g = DistributionGroup(id: existing?.id ?? '', nom: nom, membreIds: selectedIds.toList());
+                  if (existing == null) {
+                    await prov.addGroup(g);
+                  } else {
+                    await prov.updateGroup(g);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: Text(existing == null ? 'Créer' : 'Enregistrer'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<DistributionGroupsProvider>();
+    final emps = context.watch<EmployeesProvider>();
+    final padding = pagePadding(context);
+    final list = prov.groups.where((g) => g.nom.toLowerCase().contains(_q.toLowerCase())).toList();
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 36,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Rechercher...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      filled: true,
+                      fillColor: const Color(0xFFF7F9FC),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                    onChanged: (v) => setState(() => _q = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                onPressed: () => _showDialogGroup(context, prov, emps, null),
+                icon: const Icon(Icons.add),
+                label: const Text('Nouveau groupe'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(padding),
+            itemCount: list.length,
+            itemBuilder: (_, i) {
+              final g = list[i];
+              return Card(
+                child: ListTile(
+                  title: Text(g.nom, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('Membres: ${g.membreIds.length}'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogGroup(context, prov, emps, g)),
+                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteGroup(g.id)),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DistributionComptesSection extends StatefulWidget {
+  const _DistributionComptesSection();
+
+  @override
+  State<_DistributionComptesSection> createState() => _DistributionComptesSectionState();
+}
+
+class _DistributionComptesSectionState extends State<_DistributionComptesSection> {
+  String _q = '';
+
+  Future<String?> _pickEmployeWithFilter(
+    BuildContext context,
+    List<emp.Employe> candidates,
+  ) async {
+    String search = '';
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final filtered = candidates.where((e) {
+            final q = search.trim().toLowerCase();
+            if (q.isEmpty) return true;
+            return e.nom.toLowerCase().contains(q) || e.poste.toLowerCase().contains(q);
+          }).toList();
+          return AlertDialog(
+            title: const Text('Choisir un chef'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Rechercher (nom / poste)',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (v) => setStateD(() => search = v),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 320,
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('Aucun collaborateur trouvé.'))
+                        : ListView.builder(
+                            itemCount: filtered.length,
+                            itemBuilder: (_, i) {
+                              final e = filtered[i];
+                              return ListTile(
+                                title: Text(e.nom),
+                                subtitle: Text(e.poste),
+                                onTap: () => Navigator.pop(ctx, e.id),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDialogCompte(
+      BuildContext context,
+      DistributionComptesProvider prov,
+      DistributionGroupsProvider groupsProv,
+      EmployeesProvider empsProv,
+      DistributionCompte? existing) {
+    final nomCtrl = TextEditingController(text: existing?.nom ?? '');
+    final emailCtrl = TextEditingController(text: existing?.email ?? '');
+    final pwdCtrl = TextEditingController(text: existing?.password ?? '');
+    final selected = <String>{...(existing?.distributionGroupIds ?? const <String>[])};
+    String? selectedEmployeId = existing?.employeId;
+    bool actif = existing?.actif ?? true;
+    final groups = groupsProv.groups;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateD) {
+          final selectedGroups = groups.where((g) => selected.contains(g.id)).toList();
+          final sourceGroups = selectedGroups.isNotEmpty ? selectedGroups : groups;
+          final allowedEmployeeIds =
+              _distributionComptePickerEmployeIds(sourceGroups, empsProv.employes);
+          final candidates = empsProv.employes
+              .where((e) => allowedEmployeeIds.contains(e.id))
+              .toList()
+            ..sort((a, b) => a.nom.compareTo(b.nom));
+          if (selectedEmployeId != null && !candidates.any((e) => e.id == selectedEmployeId)) {
+            selectedEmployeId = null;
+          }
+          final selectedEmp = selectedEmployeId == null
+              ? null
+              : candidates.firstWhere((e) => e.id == selectedEmployeId);
+          if (selectedEmp != null && nomCtrl.text.trim() != selectedEmp.nom.trim()) {
+            nomCtrl.text = selectedEmp.nom;
+          }
+          return AlertDialog(
+          title: Text(existing == null ? 'Nouveau compte Distribution' : 'Modifier compte Distribution'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  TextFormField(
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Chef (depuis les ouvriers)',
+                      border: OutlineInputBorder(),
+                      suffixIcon: Icon(Icons.arrow_drop_down),
+                    ),
+                    controller: TextEditingController(
+                      text: selectedEmp == null ? '' : '${selectedEmp.nom} — ${selectedEmp.poste}',
+                    ),
+                    onTap: () async {
+                      final id = await _pickEmployeWithFilter(context, candidates);
+                      if (id == null) return;
+                      setStateD(() => selectedEmployeId = id);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nomCtrl,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Nom (auto depuis collaborateur)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (selected.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Astuce: sans groupe coché, la liste couvre tous les groupes Distribution. Les chefs d’équipe / SHEF sont proposés même s’ils ne figurent pas dans les membres du groupe.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ),
+                  if (selected.isEmpty) const SizedBox(height: 10),
+                  TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(controller: pwdCtrl, decoration: const InputDecoration(labelText: 'Mot de passe', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: groups.map((g) {
+                        final checked = selected.contains(g.id);
+                        return CheckboxListTile(
+                          value: checked,
+                          dense: true,
+                          title: Text(g.nom),
+                          onChanged: (v) => setStateD(() {
+                            if (v == true) {
+                              selected.add(g.id);
+                            } else {
+                              selected.remove(g.id);
+                            }
+                            // Si le collaborateur choisi n’est plus éligible (membre ou chef/SHEF).
+                            final scope = groups.where((gx) => selected.contains(gx.id)).toList();
+                            final source = scope.isNotEmpty ? scope : groups;
+                            final allowed = _distributionComptePickerEmployeIds(source, empsProv.employes);
+                            if (selectedEmployeId != null && !allowed.contains(selectedEmployeId)) {
+                              selectedEmployeId = null;
+                              nomCtrl.text = '';
+                            }
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile(
+                    value: actif,
+                    onChanged: (v) => setStateD(() => actif = v),
+                    title: const Text('Actif'),
+                    dense: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+            ElevatedButton(
+              onPressed: () async {
+                final nom = nomCtrl.text.trim();
+                final email = emailCtrl.text.trim().toLowerCase();
+                final pwd = pwdCtrl.text;
+                if (selectedEmployeId == null || nom.isEmpty || email.isEmpty || pwd.isEmpty || selected.isEmpty) return;
+                final c = DistributionCompte(
+                  id: existing?.id ?? '',
+                  nom: nom,
+                  email: email,
+                  password: pwd,
+                  employeId: selectedEmployeId,
+                  distributionGroupIds: selected.toList(),
+                  actif: actif,
+                  dateCreation: existing?.dateCreation,
+                );
+                if (existing == null) {
+                  await prov.addCompte(c);
+                } else {
+                  await prov.updateCompte(c);
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: Text(existing == null ? 'Créer' : 'Enregistrer'),
+            ),
+          ],
+        );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<DistributionComptesProvider>();
+    final groupsProv = context.watch<DistributionGroupsProvider>();
+    final empsProv = context.watch<EmployeesProvider>();
+    final padding = pagePadding(context);
+    final list = prov.comptes.where((c) {
+      final q = _q.toLowerCase();
+      return c.nom.toLowerCase().contains(q) || c.email.toLowerCase().contains(q);
+    }).toList();
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 36,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Rechercher...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      filled: true,
+                      fillColor: const Color(0xFFF7F9FC),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                    onChanged: (v) => setState(() => _q = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                onPressed: () => _showDialogCompte(context, prov, groupsProv, empsProv, null),
+                icon: const Icon(Icons.add),
+                label: const Text('Nouveau compte'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.all(padding),
+            itemCount: list.length,
+            itemBuilder: (_, i) {
+              final c = list[i];
+              final names = groupsProv.groups.where((g) => c.distributionGroupIds.contains(g.id)).map((e) => e.nom).join(', ');
+              return Card(
+                child: ListTile(
+                  title: Text(c.nom, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('${c.email}  •  Groupes: $names  •  ${c.actif ? 'Actif' : 'Inactif'}'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogCompte(context, prov, groupsProv, empsProv, c)),
+                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteCompte(c.id)),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 
 // ─────────────────────────────────────────────
 //  SECTION: CHAUFFEURS (السائقون)
@@ -3635,7 +4776,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Chauffeurs (السائقون)',
+                    const Text('Chauffeurs',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                     Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
                         style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -3674,7 +4815,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
               : Row(
                   children: [
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Chauffeurs (السائقون)',
+                      const Text('Chauffeurs',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kDark)),
                       Text('${prov.chauffeurs.length} chauffeur(s) — Firestore',
                           style: TextStyle(fontSize: 11, color: Colors.grey[500])),
@@ -3755,7 +4896,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                           children: [
                             Text('Identifiant: ${c.username}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                             if (linkedEquipe != null)
-                              Text('Équipe: ${linkedEquipe.nom}', style: TextStyle(fontSize: 11, color: Colors.blue[700])),
+                              Text('Équipe: ${linkedEquipe.nom}', style: TextStyle(fontSize: 11, color: AppColors.brand)),
                           ],
                         ),
                         trailing: Row(
@@ -3840,7 +4981,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                     DropdownButtonFormField<String>(
                       value: dropdownValue,
                       decoration: const InputDecoration(
-                        labelText: 'Lier à un employé (Chauffeur)',
+                        labelText: 'Lier à un collaborateur (Chauffeur)',
                         prefixIcon: Icon(Icons.local_shipping_outlined),
                       ),
                       items: [
@@ -3862,7 +5003,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          'ℹ️ Aucun employé avec le poste "Chauffeur" trouvé. Ajoutez d\'abord un employé avec ce poste.',
+                          'ℹ️ Aucun collaborateur avec le poste "Chauffeur" trouvé. Ajoutez d\'abord un collaborateur avec ce poste.',
                           style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
                         ),
                       ),
@@ -4625,7 +5766,7 @@ class _GeneralSectionState extends State<_GeneralSection> {
                     child: _DropdownSetting(
                       label: 'Langue',
                       value: _langue,
-                      items: ['Français', 'العربية', 'English'],
+                      items: ['Français', 'Arabe', 'English'],
                       onChanged: (v) => setState(() => _langue = v!),
                     ),
                   ),
@@ -4733,7 +5874,7 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
             children: [
               _SwitchSetting(label: 'Email', subtitle: 'Envoyer des notifications par email', value: _notifEmail, onChanged: (v) => setState(() => _notifEmail = v), iconColor: Colors.green),
               const Divider(height: 20),
-              _SwitchSetting(label: 'Son', subtitle: 'Jouer un son lors des notifications', value: _notifSon, onChanged: (v) => setState(() => _notifSon = v), iconColor: Colors.blue),
+              _SwitchSetting(label: 'Son', subtitle: 'Jouer un son lors des notifications', value: _notifSon, onChanged: (v) => setState(() => _notifSon = v), iconColor: AppColors.brand),
             ],
           ),
           const SizedBox(height: 20),
@@ -4895,7 +6036,7 @@ class _DatabaseSectionState extends State<_DatabaseSection> {
                 _ExportFormatBtn(
                   label: 'Exporter en JSON',
                   icon: Icons.data_object,
-                  color: Colors.blue,
+                  color: AppColors.brand,
                   loading: _exportLoading,
                   onTap: () => _doExport(context, 'json'),
                 ),
@@ -5101,12 +6242,12 @@ class _DatabaseSectionState extends State<_DatabaseSection> {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(children: const [Icon(Icons.restore, color: Colors.blue), SizedBox(width: 8), Text('Restaurer la sauvegarde')]),
+        title: Row(children: const [Icon(Icons.restore, color: AppColors.brand), SizedBox(width: 8), Text('Restaurer la sauvegarde')]),
         content: Text('Restaurer les données du $date ? Les données actuelles seront remplacées.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, elevation: 0),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.brand, foregroundColor: Colors.white, elevation: 0),
             onPressed: () { Navigator.pop(context); _showSaveSuccess(context); },
             child: const Text('Restaurer'),
           ),
@@ -5672,4 +6813,292 @@ void _showSaveSuccess(BuildContext context) {
       ),
     ),
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Section: Types de congé
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _LeaveTypesSection extends StatefulWidget {
+  const _LeaveTypesSection();
+  @override
+  State<_LeaveTypesSection> createState() => _LeaveTypesSectionState();
+}
+
+class _LeaveTypesSectionState extends State<_LeaveTypesSection> {
+  final _labelCtrl = TextEditingController();
+  final _reasonCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _labelCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addType() async {
+    final label = _labelCtrl.text.trim();
+    if (label.isEmpty) return;
+    setState(() => _saving = true);
+    await FirebaseFirestore.instance.collection('leave_types').add({
+      'label': label,
+      'defaultReason': _reasonCtrl.text.trim(),
+      'actif': true,
+      'createdAt': Timestamp.now(),
+    });
+    _labelCtrl.clear();
+    _reasonCtrl.clear();
+    if (mounted) setState(() => _saving = false);
+  }
+
+  Future<void> _editType(String docId, String currentLabel, String currentReason) async {
+    final editLabelCtrl = TextEditingController(text: currentLabel);
+    final editReasonCtrl = TextEditingController(text: currentReason);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Modifier le type de congé'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: editLabelCtrl,
+              decoration: const InputDecoration(labelText: 'Libellé *', border: OutlineInputBorder()),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: editReasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Motif par défaut',
+                hintText: 'Pré-rempli automatiquement dans le formulaire',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          FilledButton(
+            onPressed: () async {
+              final lbl = editLabelCtrl.text.trim();
+              if (lbl.isEmpty) return;
+              await FirebaseFirestore.instance.collection('leave_types').doc(docId).update({
+                'label': lbl,
+                'defaultReason': editReasonCtrl.text.trim(),
+              });
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Enregistrer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleType(String docId, bool currentActif) async {
+    await FirebaseFirestore.instance.collection('leave_types').doc(docId).update({
+      'actif': !currentActif,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(
+            title: 'Types de congé',
+            subtitle: 'Définir les types de congé disponibles et leur motif par défaut (pré-rempli automatiquement dans les formulaires).',
+          ),
+          const SizedBox(height: 20),
+          // ── Formulaire d'ajout ──
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Ajouter un nouveau type', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _labelCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Libellé du type *',
+                      hintText: 'Ex: Congé annuel, Congé maladie, Congé paternité...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _reasonCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Motif par défaut',
+                      hintText: 'Ce motif sera pré-rempli automatiquement lors de la saisie d\'une demande',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      icon: _saving
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.add),
+                      label: const Text('Ajouter'),
+                      onPressed: _saving ? null : _addType,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // ── Liste des types ──
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('leave_types')
+                .orderBy('createdAt', descending: false)
+                .snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
+              }
+              final docs = snap.data?.docs ?? const [];
+              if (docs.isEmpty) {
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Aucun type de congé défini. Ajoutez-en pour qu\'ils apparaissent dans les formulaires de demande.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    ),
+                  ),
+                );
+              }
+              final actifs = docs.where((d) => d.data()['actif'] == true).toList();
+              final inactifs = docs.where((d) => d.data()['actif'] != true).toList();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (actifs.isNotEmpty) ...[
+                    Text('Types actifs (${actifs.length})', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF328EEE))),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: actifs.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _LeaveTypeCard(
+                        doc: actifs[i],
+                        onEdit: () => _editType(actifs[i].id, (actifs[i].data()['label'] as String?) ?? '', (actifs[i].data()['defaultReason'] as String?) ?? ''),
+                        onToggle: () => _toggleType(actifs[i].id, true),
+                      ),
+                    ),
+                  ],
+                  if (inactifs.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    Text('Types désactivés (${inactifs.length})', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.grey[600])),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: inactifs.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _LeaveTypeCard(
+                        doc: inactifs[i],
+                        onEdit: () => _editType(inactifs[i].id, (inactifs[i].data()['label'] as String?) ?? '', (inactifs[i].data()['defaultReason'] as String?) ?? ''),
+                        onToggle: () => _toggleType(inactifs[i].id, false),
+                        isDisabled: true,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeaveTypeCard extends StatelessWidget {
+  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
+  final VoidCallback onEdit;
+  final VoidCallback onToggle;
+  final bool isDisabled;
+
+  const _LeaveTypeCard({
+    required this.doc,
+    required this.onEdit,
+    required this.onToggle,
+    this.isDisabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final m = doc.data();
+    final label = (m['label'] as String?)?.trim() ?? doc.id;
+    final reason = (m['defaultReason'] as String?)?.trim() ?? '';
+
+    return Card(
+      color: isDisabled ? Colors.grey.shade50 : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isDisabled ? Colors.grey.shade200 : const Color(0xFFE3F2FD),
+          child: Icon(
+            Icons.beach_access,
+            color: isDisabled ? Colors.grey : const Color(0xFF00044D),
+            size: 20,
+          ),
+        ),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: isDisabled ? Colors.grey : null,
+            decoration: isDisabled ? TextDecoration.lineThrough : null,
+          ),
+        ),
+        subtitle: reason.isNotEmpty
+            ? Text(
+                'Motif par défaut: $reason',
+                style: TextStyle(fontSize: 12, color: isDisabled ? Colors.grey : Colors.grey.shade600),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              )
+            : Text(
+                'Aucun motif par défaut',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400, fontStyle: FontStyle.italic),
+              ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isDisabled)
+              IconButton(
+                tooltip: 'Modifier',
+                icon: const Icon(Icons.edit_outlined, size: 20, color: Color(0xFF328EEE)),
+                onPressed: onEdit,
+              ),
+            IconButton(
+              tooltip: isDisabled ? 'Réactiver' : 'Désactiver',
+              icon: Icon(
+                isDisabled ? Icons.toggle_off_outlined : Icons.toggle_on_outlined,
+                size: 22,
+                color: isDisabled ? Colors.grey : Colors.orange,
+              ),
+              onPressed: onToggle,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -1,192 +1,157 @@
-/// حالة حضور الموظف في الساعات الإضافية (يُسجلها شاف الفريق المستقبِل)
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum OvertimeAttendanceStatus { unset, present, absent }
 
-extension OvertimeAttendanceStatusExt on OvertimeAttendanceStatus {
-  String get label {
-    switch (this) {
-      case OvertimeAttendanceStatus.present:
-        return 'Présent';
-      case OvertimeAttendanceStatus.absent:
-        return 'Absent';
-      case OvertimeAttendanceStatus.unset:
-        return '—';
-    }
-  }
-
-  static OvertimeAttendanceStatus fromString(String? s) {
-    switch (s) {
-      case 'present':
-        return OvertimeAttendanceStatus.present;
-      case 'absent':
-        return OvertimeAttendanceStatus.absent;
-      default:
-        return OvertimeAttendanceStatus.unset;
-    }
-  }
-}
-
-/// سجل تكليف موظف بساعات إضافية في فريق آخر ليوم معيّن.
-/// يُخزَّن في collection [overtime_assignments] بمعرف مستقل.
 class OvertimeAssignment {
   final String id;
-
-  /// بيانات الموظف
   final String employeId;
   final String employeNom;
-  final String employeCin;
-
-  /// الفريق الأصلي للموظف
-  final String originalEquipeId;
-  final String originalEquipeName;
-
-  /// الفريق المستقبِل (الذي سيعمل فيه ساعات إضافية)
+  final String originEquipeId;
+  final String originEquipeName;
   final String targetEquipeId;
   final String targetEquipeName;
-  final String targetChefName;
-
-  /// تاريخ الساعات الإضافية
   final DateTime date;
-
-  /// حالة الحضور في الشيفت الإضافي (يُسجلها شاف الفريق المستقبِل)
-  final OvertimeAttendanceStatus attendanceStatus;
-
-  /// عدد دقائق الساعات الإضافية المؤكدة (0 = غير محدد بعد، 480 = 8 ساعات افتراضي)
-  final int overtimeMinutes;
-
-  /// هل أنهى الموظف الشيفت الإضافي؟
-  final bool finished;
-
-  /// من سجّل الحضور (شاف الفريق المستقبِل)
-  final String? markedByChefId;
-
-  /// تاريخ الإنشاء
   final DateTime createdAt;
-
-  /// من أنشأ هذا التكليف (الأدمن)
-  final String? createdByAdminId;
-
-  /// هل أُقفل هذا السجل بعد إرسال التقرير؟ (لا يمكن التعديل إلا للأدمن)
+  final String createdByAdminId;
+  final OvertimeAttendanceStatus attendanceStatus;
+  final bool finished;
+  final int overtimeMinutes;
   final bool locked;
-
-  /// تاريخ الإقفال
   final DateTime? lockedAt;
-
-  /// من أقفل السجل (شاف الفريق)
   final String? lockedByChefId;
+  /// Heure à laquelle le chef a confirmé l'arrivée de l'employé.
+  final DateTime? arrivalConfirmedAt;
+  /// Heure à laquelle le chef a confirmé le départ de l'employé (= fin de la journée d'HS).
+  final DateTime? departureConfirmedAt;
 
   const OvertimeAssignment({
     required this.id,
     required this.employeId,
     required this.employeNom,
-    required this.employeCin,
-    required this.originalEquipeId,
-    required this.originalEquipeName,
+    required this.originEquipeId,
+    required this.originEquipeName,
     required this.targetEquipeId,
     required this.targetEquipeName,
-    required this.targetChefName,
     required this.date,
-    this.attendanceStatus = OvertimeAttendanceStatus.unset,
-    this.overtimeMinutes = 480,
-    this.finished = false,
-    this.markedByChefId,
     required this.createdAt,
-    this.createdByAdminId,
+    required this.createdByAdminId,
+    this.attendanceStatus = OvertimeAttendanceStatus.unset,
+    this.finished = false,
+    this.overtimeMinutes = 0,
     this.locked = false,
     this.lockedAt,
     this.lockedByChefId,
+    this.arrivalConfirmedAt,
+    this.departureConfirmedAt,
   });
-
-  bool get isPresent => attendanceStatus == OvertimeAttendanceStatus.present;
-  bool get isAbsent => attendanceStatus == OvertimeAttendanceStatus.absent;
-  bool get isPending => attendanceStatus == OvertimeAttendanceStatus.unset;
-
-  Map<String, dynamic> toMap() => {
-        'employeId': employeId,
-        'employeNom': employeNom,
-        'employeCin': employeCin,
-        'originalEquipeId': originalEquipeId,
-        'originalEquipeName': originalEquipeName,
-        'targetEquipeId': targetEquipeId,
-        'targetEquipeName': targetEquipeName,
-        'targetChefName': targetChefName,
-        'date': date.toIso8601String().substring(0, 10),
-        'attendanceStatus': attendanceStatus.name,
-        'overtimeMinutes': overtimeMinutes,
-        'finished': finished,
-        'markedByChefId': markedByChefId,
-        'createdAt': createdAt.toIso8601String(),
-        'createdByAdminId': createdByAdminId,
-        'locked': locked,
-        'lockedAt': lockedAt?.toIso8601String(),
-        'lockedByChefId': lockedByChefId,
-      };
-
-  factory OvertimeAssignment.fromMap(Map<String, dynamic> map, String docId) {
-    return OvertimeAssignment(
-      id: docId,
-      employeId: map['employeId'] as String? ?? '',
-      employeNom: map['employeNom'] as String? ?? '',
-      employeCin: map['employeCin'] as String? ?? '',
-      originalEquipeId: map['originalEquipeId'] as String? ?? '',
-      originalEquipeName: map['originalEquipeName'] as String? ?? '',
-      targetEquipeId: map['targetEquipeId'] as String? ?? '',
-      targetEquipeName: map['targetEquipeName'] as String? ?? '',
-      targetChefName: map['targetChefName'] as String? ?? '',
-      date: DateTime.tryParse(map['date'] as String? ?? '') ?? DateTime.now(),
-      attendanceStatus: OvertimeAttendanceStatusExt.fromString(map['attendanceStatus'] as String?),
-      overtimeMinutes: (map['overtimeMinutes'] as num?)?.toInt() ?? 480,
-      finished: map['finished'] as bool? ?? false,
-      markedByChefId: map['markedByChefId'] as String?,
-      createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ?? DateTime.now(),
-      createdByAdminId: map['createdByAdminId'] as String?,
-      locked: map['locked'] as bool? ?? false,
-      lockedAt: map['lockedAt'] != null
-          ? DateTime.tryParse(map['lockedAt'] as String)
-          : null,
-      lockedByChefId: map['lockedByChefId'] as String?,
-    );
-  }
 
   OvertimeAssignment copyWith({
     String? id,
     String? employeId,
     String? employeNom,
-    String? employeCin,
-    String? originalEquipeId,
-    String? originalEquipeName,
+    String? originEquipeId,
+    String? originEquipeName,
     String? targetEquipeId,
     String? targetEquipeName,
-    String? targetChefName,
     DateTime? date,
-    OvertimeAttendanceStatus? attendanceStatus,
-    int? overtimeMinutes,
-    bool? finished,
-    String? markedByChefId,
     DateTime? createdAt,
     String? createdByAdminId,
+    OvertimeAttendanceStatus? attendanceStatus,
+    bool? finished,
+    int? overtimeMinutes,
     bool? locked,
     DateTime? lockedAt,
     String? lockedByChefId,
-  }) =>
+    DateTime? arrivalConfirmedAt,
+    DateTime? departureConfirmedAt,
+  }) {
+    return OvertimeAssignment(
+      id: id ?? this.id,
+      employeId: employeId ?? this.employeId,
+      employeNom: employeNom ?? this.employeNom,
+      originEquipeId: originEquipeId ?? this.originEquipeId,
+      originEquipeName: originEquipeName ?? this.originEquipeName,
+      targetEquipeId: targetEquipeId ?? this.targetEquipeId,
+      targetEquipeName: targetEquipeName ?? this.targetEquipeName,
+      date: date ?? this.date,
+      createdAt: createdAt ?? this.createdAt,
+      createdByAdminId: createdByAdminId ?? this.createdByAdminId,
+      attendanceStatus: attendanceStatus ?? this.attendanceStatus,
+      finished: finished ?? this.finished,
+      overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
+      locked: locked ?? this.locked,
+      lockedAt: lockedAt ?? this.lockedAt,
+      lockedByChefId: lockedByChefId ?? this.lockedByChefId,
+      arrivalConfirmedAt: arrivalConfirmedAt ?? this.arrivalConfirmedAt,
+      departureConfirmedAt: departureConfirmedAt ?? this.departureConfirmedAt,
+    );
+  }
+
+  /// YYYY-MM-DD string key for simple equality Firestore queries (no composite index).
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toMap() => {
+        'employeId': employeId,
+        'employeNom': employeNom,
+        'originEquipeId': originEquipeId,
+        'originEquipeName': originEquipeName,
+        'targetEquipeId': targetEquipeId,
+        'targetEquipeName': targetEquipeName,
+        'date': Timestamp.fromDate(date),
+        'dateKey': dateKey,
+        'createdAt': Timestamp.fromDate(createdAt),
+        'createdByAdminId': createdByAdminId,
+        'attendanceStatus': attendanceStatus.name,
+        'finished': finished,
+        'overtimeMinutes': overtimeMinutes,
+        'locked': locked,
+        'lockedAt': lockedAt != null ? Timestamp.fromDate(lockedAt!) : null,
+        'lockedByChefId': lockedByChefId,
+        'arrivalConfirmedAt': arrivalConfirmedAt != null ? Timestamp.fromDate(arrivalConfirmedAt!) : null,
+        'departureConfirmedAt': departureConfirmedAt != null ? Timestamp.fromDate(departureConfirmedAt!) : null,
+      };
+
+  static DateTime _parseDate(dynamic v, DateTime fallback) {
+    if (v is Timestamp) return v.toDate();
+    if (v is String && v.isNotEmpty) {
+      final parsed = DateTime.tryParse(v);
+      if (parsed != null) return parsed;
+    }
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    return fallback;
+  }
+
+  static DateTime? _parseDateNullable(dynamic v) {
+    if (v == null) return null;
+    if (v is Timestamp) return v.toDate();
+    if (v is String && v.isNotEmpty) return DateTime.tryParse(v);
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    return null;
+  }
+
+  factory OvertimeAssignment.fromMap(String id, Map<String, dynamic> map) =>
       OvertimeAssignment(
-        id: id ?? this.id,
-        employeId: employeId ?? this.employeId,
-        employeNom: employeNom ?? this.employeNom,
-        employeCin: employeCin ?? this.employeCin,
-        originalEquipeId: originalEquipeId ?? this.originalEquipeId,
-        originalEquipeName: originalEquipeName ?? this.originalEquipeName,
-        targetEquipeId: targetEquipeId ?? this.targetEquipeId,
-        targetEquipeName: targetEquipeName ?? this.targetEquipeName,
-        targetChefName: targetChefName ?? this.targetChefName,
-        date: date ?? this.date,
-        attendanceStatus: attendanceStatus ?? this.attendanceStatus,
-        overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
-        finished: finished ?? this.finished,
-        markedByChefId: markedByChefId ?? this.markedByChefId,
-        createdAt: createdAt ?? this.createdAt,
-        createdByAdminId: createdByAdminId ?? this.createdByAdminId,
-        locked: locked ?? this.locked,
-        lockedAt: lockedAt ?? this.lockedAt,
-        lockedByChefId: lockedByChefId ?? this.lockedByChefId,
+        id: id,
+        employeId: map['employeId'] as String? ?? '',
+        employeNom: map['employeNom'] as String? ?? '',
+        originEquipeId: map['originEquipeId'] as String? ?? '',
+        originEquipeName: map['originEquipeName'] as String? ?? '',
+        targetEquipeId: map['targetEquipeId'] as String? ?? '',
+        targetEquipeName: map['targetEquipeName'] as String? ?? '',
+        date: _parseDate(map['date'], DateTime.now()),
+        createdAt: _parseDate(map['createdAt'], DateTime.now()),
+        createdByAdminId: map['createdByAdminId'] as String? ?? '',
+        attendanceStatus: OvertimeAttendanceStatus.values.firstWhere(
+          (e) => e.name == (map['attendanceStatus'] as String?),
+          orElse: () => OvertimeAttendanceStatus.unset,
+        ),
+        finished: map['finished'] as bool? ?? false,
+        overtimeMinutes: map['overtimeMinutes'] as int? ?? 0,
+        locked: map['locked'] as bool? ?? false,
+        lockedAt: _parseDateNullable(map['lockedAt']),
+        lockedByChefId: map['lockedByChefId'] as String?,
+        arrivalConfirmedAt: _parseDateNullable(map['arrivalConfirmedAt']),
+        departureConfirmedAt: _parseDateNullable(map['departureConfirmedAt']),
       );
 }

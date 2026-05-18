@@ -1,0 +1,14 @@
+DIPS Management — License Agreement
+
+Copyright (c) DIPS. All rights reserved.
+
+Use of this software is subject to the terms agreed between you and DIPS.
+If no separate agreement exists, you are granted a limited license to use
+this software for its intended purpose only.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+By installing this software, you acknowledge that you have read and accept
+these terms.

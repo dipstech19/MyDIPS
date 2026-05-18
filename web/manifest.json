@@ -1,6 +1,6 @@
 {
-    "name": "dipsmanagment",
-    "short_name": "dipsmanagment",
+    "name": "My DIPS",
+    "short_name": "My DIPS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

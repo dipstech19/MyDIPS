@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
+  /// Couleur marque DIPS (#000966).
+  static const Color brand = Color(0xFF000966);
+  static const Color brandDark = Color(0xFF00044D);
+  static const Color brandLight = Color(0xFFE8E9F3);
+  static const Color brandBorder = Color(0xFFC8CBE8);
+
   // ثيم فاتح — خلفيات فاتحة ونص داكن
   static const Color bg = Color(0xFFF5F7FA);
   static const Color surface = Color(0xFFFFFFFF);
   static const Color surface2 = Color(0xFFEEF1F5);
   static const Color border = Color(0xFFD1D5DB);
-  static const Color accent = Color(0xFF1565C0);
+  static const Color accent = brand;
   static const Color accentPurple = Color(0xFF7C3AED);
   static const Color green = Color(0xFF10B981);
   static const Color red = Color(0xFFEF4444);

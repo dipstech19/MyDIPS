@@ -85,10 +85,102 @@ class ShiftsRepository {
     await ref.set({'overrides': overrides, 'date': key});
   }
 
-  /// تحميل الإعداد + كل الـ overrides (للاستدعاء عند بدء التطبيق)
-  Future<({RotationConfig? config, Map<String, Map<String, ShiftType>> overrides})> loadAll() async {
+  // ─── Jours ×2 (jours fériés / travail doublé) ────────────────────────────
+
+  static const String _doubleDaysCollection = 'double_days';
+
+  /// Charger tous les jours ×2 depuis Firestore.
+  Future<List<DoubleDay>> getDoubleDays() async {
+    try {
+      final snap = await _firestore
+          .collection('app_config')
+          .doc(_configDoc)
+          .collection(_doubleDaysCollection)
+          .get();
+      return snap.docs.map((d) => DoubleDay.fromMap(d.data())).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Ajouter ou mettre à jour un jour ×2.
+  Future<void> setDoubleDay(DoubleDay day) async {
+    final ref = _firestore
+        .collection('app_config')
+        .doc(_configDoc)
+        .collection(_doubleDaysCollection)
+        .doc(day.dateKey);
+    await ref.set(day.toMap());
+  }
+
+  /// Supprimer un jour ×2.
+  Future<void> removeDoubleDay(DateTime date) async {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    await _firestore
+        .collection('app_config')
+        .doc(_configDoc)
+        .collection(_doubleDaysCollection)
+        .doc(key)
+        .delete();
+  }
+
+  // ─── Jours fériés (JF — Hors équipe / export OCP) ───────────────────────
+
+  static const String _publicHolidaysCollection = 'public_holidays';
+
+  Future<List<PublicHoliday>> getPublicHolidays() async {
+    try {
+      final snap = await _firestore
+          .collection('app_config')
+          .doc(_configDoc)
+          .collection(_publicHolidaysCollection)
+          .get();
+      return snap.docs.map((d) => PublicHoliday.fromMap(d.data())).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> setPublicHoliday(PublicHoliday day) async {
+    final ref = _firestore
+        .collection('app_config')
+        .doc(_configDoc)
+        .collection(_publicHolidaysCollection)
+        .doc(day.dateKey);
+    await ref.set(day.toMap());
+  }
+
+  Future<void> removePublicHoliday(DateTime date) async {
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    await _firestore
+        .collection('app_config')
+        .doc(_configDoc)
+        .collection(_publicHolidaysCollection)
+        .doc(key)
+        .delete();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// تحميل الإعداد + كل الـ overrides + أيام ×2 (للاستدعاء عند بدء التطبيق)
+  Future<
+      ({
+        RotationConfig? config,
+        Map<String, Map<String, ShiftType>> overrides,
+        List<DoubleDay> doubleDays,
+        List<PublicHoliday> publicHolidays,
+      })> loadAll() async {
     final config = await getConfig();
     final overrides = await getOverrides();
-    return (config: config, overrides: overrides);
+    final doubleDays = await getDoubleDays();
+    final publicHolidays = await getPublicHolidays();
+    return (
+      config: config,
+      overrides: overrides,
+      doubleDays: doubleDays,
+      publicHolidays: publicHolidays,
+    );
   }
 }

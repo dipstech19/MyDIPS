@@ -1,4 +1,5 @@
 import 'absence_reason_config.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// حالة من السائق: حاضر | غائب | في المركبة (سيارة/دراجة)
 enum DriverPointageStatus { present, absent, enVehicule, unset }
@@ -68,13 +69,35 @@ bool isAbsenceReasonDeductFromSalary(String? reason, [List<AbsenceReasonConfig>?
 /// نتيجة المندقية: مؤكد حاضر | مؤكد غائب | خلل | في الانتظار
 enum ReconciledStatus { confirmedPresent, confirmedAbsent, discrepancy, pending }
 
-/// للتوافق مع الكود القديم — training = في دورة تكوينية (حاضر لكن لا يظهر للشاف/السائق)
-enum AttendanceStatus { present, absent, notInVehicle, unmarked, training }
+/// للتوافق مع الكود القديم:
+/// - training = في دورة تكوينية (حاضر لكن لا يظهر للشاف/السائق)
+/// - leave = congé approuvé (حاضر بصبغة خاصة)
+enum AttendanceStatus { present, absent, notInVehicle, unmarked, training, leave }
 
 /// حالة الخروج: لم يُسجّل | لا يزال يعمل | انتهى من العمل
 enum DepartureStatus { unset, stillWorking, finished }
 
 class PointageRecord {
+  static DateTime _parseDate(dynamic v, DateTime fallback) {
+    if (v is DateTime) return v.toLocal();
+    if (v is Timestamp) return v.toDate().toLocal();
+    if (v is String && v.isNotEmpty) {
+      final parsed = DateTime.tryParse(v);
+      if (parsed != null) return parsed.toLocal();
+    }
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v).toLocal();
+    return fallback;
+  }
+
+  static DateTime? _parseDateNullable(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v.toLocal();
+    if (v is Timestamp) return v.toDate().toLocal();
+    if (v is String && v.isNotEmpty) return DateTime.tryParse(v)?.toLocal();
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v).toLocal();
+    return null;
+  }
+
   final String id;
   final String employeId;
   final String employeNom;
@@ -131,6 +154,36 @@ class PointageRecord {
   /// Optional training window end datetime (when admin marks formation).
   final DateTime? trainingEndAt;
 
+  /// هل هذا سجل Renfort (موظف محوَّل مؤقتاً لفريق آخر)؟
+  final bool tempAssigned;
+  /// معرّف الفريق الأصلي عند التحويل المؤقت
+  final String? originalEquipeId;
+
+  /// Échange Distribution : journée « E » (8h) chez le groupe d'origine, sans présence physique.
+  final bool distSwapArrangement;
+  final bool distSwapArrangementPending;
+  final String? distSwapId;
+
+  /// حالة الشاف للساعات الإضافية (نظام Renfort القديم — محتفظ به للتوافق)
+  final ChefPointageStatus overtimeChefStatus;
+  final String? overtimeMarkedByChefId;
+  final DateTime? overtimeArrivalMarkedAt;
+
+  /// وقت بداية/نهاية التكوين
+  final DateTime? trainingStartAt;
+  final DateTime? trainingEndAt;
+
+  /// سبب الشيفت الناقص ودقائق العمل الفعلية
+  final String? incompleteShiftReason;
+  final int? workedMinutesBeforeStop;
+
+  /// تجاوز الشيفت للسجل الفردي (مثلاً عند Renfort)
+  final String? shiftOverride;
+
+  /// Remarque optionnelle du chef d'équipe (shift22h→6h) : départ anticipé, incident, etc.
+  final String? nightShiftSupervisorNote;
+  final DateTime? nightShiftSupervisorNoteAt;
+
   PointageRecord({
     required this.id,
     required this.employeId,
@@ -165,9 +218,19 @@ class PointageRecord {
     this.absenceReason,
     this.tempAssigned = false,
     this.originalEquipeId,
-    this.shiftOverride,
+    this.distSwapArrangement = false,
+    this.distSwapArrangementPending = false,
+    this.distSwapId,
+    this.overtimeChefStatus = ChefPointageStatus.unset,
+    this.overtimeMarkedByChefId,
+    this.overtimeArrivalMarkedAt,
     this.trainingStartAt,
     this.trainingEndAt,
+    this.incompleteShiftReason,
+    this.workedMinutesBeforeStop,
+    this.shiftOverride,
+    this.nightShiftSupervisorNote,
+    this.nightShiftSupervisorNoteAt,
   });
 
   /// السائق لا يستطيع التعديل بعد الإرسال
@@ -178,41 +241,47 @@ class PointageRecord {
   /// نتيجة المندقية حسب القواعد. training = في تكويني يُعتبر حاضر.
   ReconciledStatus get reconciledStatus {
     if (adminFinalStatus != null) {
-      return (adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training)
+      return (adminFinalStatus == AttendanceStatus.present ||
+          adminFinalStatus == AttendanceStatus.training ||
+          adminFinalStatus == AttendanceStatus.leave)
           ? ReconciledStatus.confirmedPresent
           : ReconciledStatus.confirmedAbsent;
     }
-    // Groupes: validation is done by responsable/admin only (no driver reconciliation).
-    final isGroupe = equipeId.startsWith('groupe:');
-    final d = driverStatus;
     final c = chefStatus;
-    if (isGroupe) {
-      if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
-      if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
-      return ReconciledStatus.pending;
-    }
-    // Chef decision overrides driver decision (no discrepancy state for chef-vs-driver).
-    if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
-    if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
-    if (d == DriverPointageStatus.unset && c == ChefPointageStatus.unset) {
-      return ReconciledStatus.pending;
-    }
-    if (d == DriverPointageStatus.present && c == ChefPointageStatus.present) {
+    // Chef d'equipe decision is the source of truth whenever provided.
+    // Driver input is helper/fallback only when chef didn't mark.
+    if (distSwapArrangement && !distSwapArrangementPending) {
       return ReconciledStatus.confirmedPresent;
     }
-    if (d == DriverPointageStatus.absent && c == ChefPointageStatus.absent) {
+    if (c == ChefPointageStatus.present) return ReconciledStatus.confirmedPresent;
+    if (c == ChefPointageStatus.absent) return ReconciledStatus.confirmedAbsent;
+    // Distribution : pas de chauffeur — la présence suit uniquement le responsable (chef).
+    if (equipeId.startsWith('distribution:')) {
+      return ReconciledStatus.pending;
+    }
+    final d = driverStatus;
+    if (d == DriverPointageStatus.unset) {
       return ReconciledStatus.confirmedAbsent;
     }
-    if ((d == DriverPointageStatus.present && c == ChefPointageStatus.absent) ||
-        (d == DriverPointageStatus.absent && c == ChefPointageStatus.present)) {
-      return ReconciledStatus.discrepancy;
+    if (d == DriverPointageStatus.enVehicule) {
+      return ReconciledStatus.pending;
+    }
+    if (d == DriverPointageStatus.present) {
+      return ReconciledStatus.confirmedPresent;
+    }
+    if (d == DriverPointageStatus.absent) {
+      return ReconciledStatus.confirmedAbsent;
     }
     return ReconciledStatus.pending;
   }
 
   /// الحضور النهائي المعروض (أدمن > منديقية). training يُعتبر حاضر.
   bool get isFinalPresent {
-    if (adminFinalStatus != null) return adminFinalStatus == AttendanceStatus.present || adminFinalStatus == AttendanceStatus.training;
+    if (adminFinalStatus != null) {
+      return adminFinalStatus == AttendanceStatus.present ||
+          adminFinalStatus == AttendanceStatus.training ||
+          adminFinalStatus == AttendanceStatus.leave;
+    }
     switch (reconciledStatus) {
       case ReconciledStatus.confirmedPresent:
         return true;
@@ -256,9 +325,19 @@ class PointageRecord {
     'absenceReason': absenceReason,
     'tempAssigned': tempAssigned,
     'originalEquipeId': originalEquipeId,
-    'shiftOverride': shiftOverride,
+    'distSwapArrangement': distSwapArrangement,
+    'distSwapArrangementPending': distSwapArrangementPending,
+    'distSwapId': distSwapId,
+    'overtimeChefStatus': overtimeChefStatus.name,
+    'overtimeMarkedByChefId': overtimeMarkedByChefId,
+    'overtimeArrivalMarkedAt': overtimeArrivalMarkedAt?.toIso8601String(),
     'trainingStartAt': trainingStartAt?.toIso8601String(),
     'trainingEndAt': trainingEndAt?.toIso8601String(),
+    'incompleteShiftReason': incompleteShiftReason,
+    'workedMinutesBeforeStop': workedMinutesBeforeStop,
+    'shiftOverride': shiftOverride,
+    'nightShiftSupervisorNote': nightShiftSupervisorNote,
+    'nightShiftSupervisorNoteAt': nightShiftSupervisorNoteAt?.toIso8601String(),
   };
 
   static DriverPointageStatus _driverFromMap(dynamic v) {
@@ -297,14 +376,14 @@ class PointageRecord {
       (e) => e.name == map['status'],
       orElse: () => AttendanceStatus.unmarked,
     ),
-    date: DateTime.tryParse(map['date'] ?? '') ?? DateTime.now(),
-    createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+    date: _parseDate(map['date'], DateTime.now()),
+    createdAt: _parseDate(map['createdAt'], DateTime.now()),
     markedById: map['markedById'],
     markedByName: map['markedByName'],
     driverStatus: _driverFromMap(map['driverStatus']),
     chefStatus: _chefFromMap(map['chefStatus']),
-    submittedByDriverAt: map['submittedByDriverAt'] != null ? DateTime.tryParse(map['submittedByDriverAt']) : null,
-    submittedByChefAt: map['submittedByChefAt'] != null ? DateTime.tryParse(map['submittedByChefAt']) : null,
+    submittedByDriverAt: _parseDateNullable(map['submittedByDriverAt']),
+    submittedByChefAt: _parseDateNullable(map['submittedByChefAt']),
     adminFinalStatus: map['adminFinalStatus'] != null
         ? AttendanceStatus.values.firstWhere(
             (e) => e.name == map['adminFinalStatus'],
@@ -313,12 +392,9 @@ class PointageRecord {
         : null,
     markedByDriverId: map['markedByDriverId'],
     markedByChefId: map['markedByChefId'],
-    overtimeChefStatus: _chefFromMap(map['overtimeChefStatus']),
-    overtimeMarkedByChefId: map['overtimeMarkedByChefId'],
-    overtimeArrivalMarkedAt: map['overtimeArrivalMarkedAt'] != null ? DateTime.tryParse(map['overtimeArrivalMarkedAt']) : null,
-    arrivalMarkedAt: map['arrivalMarkedAt'] != null ? DateTime.tryParse(map['arrivalMarkedAt']) : null,
+    arrivalMarkedAt: _parseDateNullable(map['arrivalMarkedAt']),
     departureStatus: _departureFromMap(map['departureStatus']),
-    departureMarkedAt: map['departureMarkedAt'] != null ? DateTime.tryParse(map['departureMarkedAt']) : null,
+    departureMarkedAt: _parseDateNullable(map['departureMarkedAt']),
     overtimeMinutes: map['overtimeMinutes'] is int ? map['overtimeMinutes'] as int : null,
     overtimeTargetEquipeId: map['overtimeTargetEquipeId'] as String?,
     overtimeTargetEquipeName: map['overtimeTargetEquipeName'] as String?,
@@ -327,9 +403,22 @@ class PointageRecord {
     absenceReason: map['absenceReason'] as String?,
     tempAssigned: map['tempAssigned'] as bool? ?? false,
     originalEquipeId: map['originalEquipeId'] as String?,
+    distSwapArrangement: map['distSwapArrangement'] as bool? ?? false,
+    distSwapArrangementPending: map['distSwapArrangementPending'] as bool? ?? false,
+    distSwapId: map['distSwapId'] as String?,
+    overtimeChefStatus: ChefPointageStatus.values.firstWhere(
+      (e) => e.name == (map['overtimeChefStatus'] as String?),
+      orElse: () => ChefPointageStatus.unset,
+    ),
+    overtimeMarkedByChefId: map['overtimeMarkedByChefId'] as String?,
+    overtimeArrivalMarkedAt: _parseDateNullable(map['overtimeArrivalMarkedAt']),
+    trainingStartAt: _parseDateNullable(map['trainingStartAt']),
+    trainingEndAt: _parseDateNullable(map['trainingEndAt']),
+    incompleteShiftReason: map['incompleteShiftReason'] as String?,
+    workedMinutesBeforeStop: map['workedMinutesBeforeStop'] is int ? map['workedMinutesBeforeStop'] as int : null,
     shiftOverride: map['shiftOverride'] as String?,
-    trainingStartAt: map['trainingStartAt'] != null ? DateTime.tryParse(map['trainingStartAt']) : null,
-    trainingEndAt: map['trainingEndAt'] != null ? DateTime.tryParse(map['trainingEndAt']) : null,
+    nightShiftSupervisorNote: map['nightShiftSupervisorNote'] as String?,
+    nightShiftSupervisorNoteAt: _parseDateNullable(map['nightShiftSupervisorNoteAt']),
   );
 
   PointageRecord copyWith({
@@ -366,9 +455,19 @@ class PointageRecord {
     String? absenceReason,
     bool? tempAssigned,
     String? originalEquipeId,
-    String? shiftOverride,
+    bool? distSwapArrangement,
+    bool? distSwapArrangementPending,
+    String? distSwapId,
+    ChefPointageStatus? overtimeChefStatus,
+    String? overtimeMarkedByChefId,
+    DateTime? overtimeArrivalMarkedAt,
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
+    String? incompleteShiftReason,
+    int? workedMinutesBeforeStop,
+    String? shiftOverride,
+    String? nightShiftSupervisorNote,
+    DateTime? nightShiftSupervisorNoteAt,
   }) => PointageRecord(
     id: id ?? this.id,
     employeId: employeId ?? this.employeId,
@@ -403,9 +502,19 @@ class PointageRecord {
     absenceReason: absenceReason ?? this.absenceReason,
     tempAssigned: tempAssigned ?? this.tempAssigned,
     originalEquipeId: originalEquipeId ?? this.originalEquipeId,
-    shiftOverride: shiftOverride ?? this.shiftOverride,
+    distSwapArrangement: distSwapArrangement ?? this.distSwapArrangement,
+    distSwapArrangementPending: distSwapArrangementPending ?? this.distSwapArrangementPending,
+    distSwapId: distSwapId ?? this.distSwapId,
+    overtimeChefStatus: overtimeChefStatus ?? this.overtimeChefStatus,
+    overtimeMarkedByChefId: overtimeMarkedByChefId ?? this.overtimeMarkedByChefId,
+    overtimeArrivalMarkedAt: overtimeArrivalMarkedAt ?? this.overtimeArrivalMarkedAt,
     trainingStartAt: trainingStartAt ?? this.trainingStartAt,
     trainingEndAt: trainingEndAt ?? this.trainingEndAt,
+    incompleteShiftReason: incompleteShiftReason ?? this.incompleteShiftReason,
+    workedMinutesBeforeStop: workedMinutesBeforeStop ?? this.workedMinutesBeforeStop,
+    shiftOverride: shiftOverride ?? this.shiftOverride,
+    nightShiftSupervisorNote: nightShiftSupervisorNote ?? this.nightShiftSupervisorNote,
+    nightShiftSupervisorNoteAt: nightShiftSupervisorNoteAt ?? this.nightShiftSupervisorNoteAt,
   );
 }
 

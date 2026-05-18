@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
@@ -13,6 +14,9 @@ class EquipesTab extends StatefulWidget {
   final List<Equipe> equipes;
   final List<Employe> employes;
   final bool isDirecteur;
+  final bool canManageTeams;
+  final bool canManageMembers;
+  final bool internalScroll;
   final Function(Equipe) onAddEquipe;
   final Function(Equipe) onDeleteEquipe;
 
@@ -21,6 +25,9 @@ class EquipesTab extends StatefulWidget {
     required this.equipes,
     required this.employes,
     required this.isDirecteur,
+    required this.canManageTeams,
+    required this.canManageMembers,
+    this.internalScroll = true,
     required this.onAddEquipe,
     required this.onDeleteEquipe,
   });
@@ -69,9 +76,9 @@ class _EquipesTabState extends State<EquipesTab> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.group_add, color: Color(0xFF1565C0)),
+              Icon(Icons.group_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
-              Text('Affecter employés sans équipe'),
+              Text('Affecter des collaborateurs sans équipe'),
             ],
           ),
           content: SizedBox(
@@ -150,7 +157,7 @@ class _EquipesTabState extends State<EquipesTab> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1565C0), foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white),
               onPressed: () {
                 if (selectedIds.isEmpty) return;
                 final target = widget.equipes.where((e) => e.id == selectedEquipeId).toList();
@@ -204,43 +211,68 @@ class _EquipesTabState extends State<EquipesTab> {
       children: [
         // HEADER
 // ===== HEADER - بدل هاد الجزء =====
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text('${widget.equipes.length} équipe(s)',
                 style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             // ✅ زر Nouvelle Équipe فقط للـ Directeur
-            if (widget.isDirecteur)
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _showAssignUnassignedDialog(context),
-                    icon: const Icon(Icons.group_work_outlined, size: 18),
-                    label: const Text('Affecter sans équipe'),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton.icon(
-                    onPressed: () => _showAddEquipeDialog(context),
-                    icon: const Icon(Icons.group_add, size: 18),
-                    label: const Text('Nouvelle Équipe'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1565C0),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    ),
-                  ),
-                ],
+            if (widget.canManageTeams)
+              OutlinedButton.icon(
+                onPressed: () => _showAssignUnassignedDialog(context),
+                icon: const Icon(Icons.group_work_outlined, size: 18),
+                label: const Text('Affecter sans équipe'),
+              ),
+            if (widget.canManageTeams)
+              ElevatedButton.icon(
+                onPressed: () => _showAddEquipeDialog(context),
+                icon: const Icon(Icons.group_add, size: 18),
+                label: const Text('Nouvelle Équipe'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF000966),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
               ),
           ],
         ),
         const SizedBox(height: 16),
 
         // LISTE ÉQUIPES
-        Expanded(
-          child: widget.equipes.isEmpty
-              ? Center(
+        if (widget.internalScroll)
+          Expanded(
+            child: widget.equipes.isEmpty
+                ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.groups, size: 52, color: Colors.grey[300]),
+                  const SizedBox(height: 8),
+                  Text('Aucune équipe',
+                      style: TextStyle(color: Colors.grey[400], fontSize: 15)),
+                ],
+              ),
+            )
+                : ListView.separated(
+              itemCount: widget.equipes.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, i) {
+                final eq = widget.equipes[i];
+                final isExpanded = _expandedId == eq.id;
+                final membres = widget.employes
+                    .where((e) => eq.membreIds.contains(e.id))
+                    .toList();
+
+                return _buildEquipeCard(context, eq, isExpanded, membres);
+              },
+            ),
+          )
+        else if (widget.equipes.isEmpty)
+          Center(
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.groups, size: 52, color: Colors.grey[300]),
                 const SizedBox(height: 8),
@@ -249,8 +281,11 @@ class _EquipesTabState extends State<EquipesTab> {
               ],
             ),
           )
-              : ListView.separated(
+        else
+          ListView.separated(
             itemCount: widget.equipes.length,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (context, i) {
               final eq = widget.equipes[i];
@@ -259,199 +294,206 @@ class _EquipesTabState extends State<EquipesTab> {
                   .where((e) => eq.membreIds.contains(e.id))
                   .toList();
 
-              return Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isExpanded
-                        ? const Color(0xFF1565C0).withOpacity(0.4)
-                        : Colors.grey.shade200,
-                    width: isExpanded ? 1.5 : 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    // HEADER DE L'ÉQUIPE
-                    InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => setState(() =>
-                      _expandedId = isExpanded ? null : eq.id),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          children: [
-                            // Icon équipe
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1565C0).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(Icons.groups,
-                                  color: Color(0xFF1565C0), size: 24),
-                            ),
-                            const SizedBox(width: 14),
-                            // Info équipe
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(eq.nom,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15)),
-                                  const SizedBox(height: 4),
-                                  Wrap(
-                                    spacing: 12,
-                                    runSpacing: 4,
-                                    children: [
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.store, size: 13, color: Colors.grey),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            eq.magasin,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                                          ),
-                                        ],
-                                      ),
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.person, size: 13, color: Colors.grey),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Chef: ${_getNom(eq.chefId)}',
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Badge membres
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.shade50,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '${membres.length} membre(s)',
-                                style: TextStyle(
-                                    color: Colors.blue.shade700,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            // Actions — Supprimer uniquement pour le Directeur, pas pour le Chef d'équipe
-                            if (widget.isDirecteur)
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    size: 18),
-                                color: Colors.red,
-                                tooltip: 'Supprimer',
-                                onPressed: () =>
-                                    widget.onDeleteEquipe(eq),
-                              ),
-                            Icon(
-                              isExpanded
-                                  ? Icons.keyboard_arrow_up
-                                  : Icons.keyboard_arrow_down,
-                              color: Colors.grey,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // MEMBRES (expandable)
-                    if (isExpanded) ...[
-                      const Divider(height: 1),
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Chef
-                            const Text('Chef d\'équipe',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: Color(0xFF1565C0))),
-                            const SizedBox(height: 8),
-                            _membreCard(
-                              equipe: eq,
-                              employeId: eq.chefId,
-                              nom: _getNom(eq.chefId),
-                              poste: _getPoste(eq.chefId),
-                              isChef: true,
-                            ),
-                            const SizedBox(height: 12),
-                            // Membres
-// بدل Row ديال "Membres"
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Membres',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                        color: Color(0xFF1565C0))),
-                                // ✅ Directeur أو Chef ديال هاد الفريق
-                                if (widget.isDirecteur || eq.chefId == _getCurrentUserId())
-                                  TextButton.icon(
-                                    onPressed: () => _showAddMembreDialog(context, eq),
-                                    icon: const Icon(Icons.person_add, size: 16),
-                                    label: const Text('Ajouter membre'),
-                                    style: TextButton.styleFrom(
-                                        foregroundColor: const Color(0xFF1565C0)),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            membres.isEmpty
-                                ? Text('Aucun membre',
-                                style: TextStyle(
-                                    color: Colors.grey[400],
-                                    fontSize: 13))
-                                : Column(
-                            children: membres
-                                .map((m) => _membreCard(
-                                      equipe: eq,
-                                      employeId: m.id,
-                                      nom: m.nom,
-                                      poste: m.poste,
-                                      isChef: false,
-                                    ))
-                                .toList(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              );
+              return _buildEquipeCard(context, eq, isExpanded, membres);
             },
           ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildEquipeCard(
+    BuildContext context,
+    Equipe eq,
+    bool isExpanded,
+    List<Employe> membres,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isExpanded
+              ? const Color(0xFF000966).withOpacity(0.4)
+              : Colors.grey.shade200,
+          width: isExpanded ? 1.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // HEADER DE L'ÉQUIPE
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _expandedId = isExpanded ? null : eq.id),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Icon équipe
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF000966).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.groups,
+                        color: Color(0xFF000966), size: 24),
+                  ),
+                  const SizedBox(width: 14),
+                  // Info équipe
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(eq.nom,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 4,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.store,
+                                    size: 13, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(
+                                  eq.magasin,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.person,
+                                    size: 13, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Chef: ${_getNom(eq.chefId)}',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Badge membres
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.brandLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${membres.length} membre(s)',
+                      style: TextStyle(
+                          color: AppColors.brand,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Actions — Supprimer uniquement pour le Directeur, pas pour le Chef d'équipe
+                  if (widget.canManageTeams)
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      color: Colors.red,
+                      tooltip: 'Supprimer',
+                      onPressed: () => widget.onDeleteEquipe(eq),
+                    ),
+                  Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: Colors.grey,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // MEMBRES (expandable)
+          if (isExpanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Chef
+                  const Text('Chef d\'équipe',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: Color(0xFF000966))),
+                  const SizedBox(height: 8),
+                  _membreCard(
+                    equipe: eq,
+                    employeId: eq.chefId,
+                    nom: _getNom(eq.chefId),
+                    poste: _getPoste(eq.chefId),
+                    isChef: true,
+                  ),
+                  const SizedBox(height: 12),
+                  // Membres
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Membres',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: Color(0xFF000966))),
+                      // ✅ Directeur أو Chef ديال هاد الفريق
+                      if (widget.canManageMembers || eq.chefId == _getCurrentUserId())
+                        TextButton.icon(
+                          onPressed: () => _showAddMembreDialog(context, eq),
+                          icon: const Icon(Icons.person_add, size: 16),
+                          label: const Text('Ajouter membre'),
+                          style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF000966)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  membres.isEmpty
+                      ? Text('Aucun membre',
+                          style: TextStyle(
+                              color: Colors.grey[400], fontSize: 13))
+                      : Column(
+                          children: membres
+                              .map((m) => _membreCard(
+                                    equipe: eq,
+                                    employeId: m.id,
+                                    nom: m.nom,
+                                    poste: m.poste,
+                                    isChef: false,
+                                  ))
+                              .toList(),
+                        ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -474,12 +516,12 @@ class _EquipesTabState extends State<EquipesTab> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: isChef
-            ? const Color(0xFF1565C0).withOpacity(0.06)
+            ? const Color(0xFF000966).withOpacity(0.06)
             : Colors.grey.shade50,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isChef
-              ? const Color(0xFF1565C0).withOpacity(0.2)
+              ? const Color(0xFF000966).withOpacity(0.2)
               : Colors.grey.shade200,
         ),
       ),
@@ -488,12 +530,12 @@ class _EquipesTabState extends State<EquipesTab> {
           CircleAvatar(
             radius: 16,
             backgroundColor: isChef
-                ? const Color(0xFF1565C0).withOpacity(0.15)
+                ? const Color(0xFF000966).withOpacity(0.15)
                 : Colors.grey.shade200,
             child: Text(
               nom.isNotEmpty ? nom[0] : '?',
               style: TextStyle(
-                color: isChef ? const Color(0xFF1565C0) : Colors.grey[600],
+                color: isChef ? const Color(0xFF000966) : Colors.grey[600],
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
               ),
@@ -512,7 +554,7 @@ class _EquipesTabState extends State<EquipesTab> {
               ],
             ),
           ),
-          if (!isChef && widget.isDirecteur)
+          if (!isChef && widget.canManageMembers)
             IconButton(
               tooltip: 'Retirer',
               icon: Icon(Icons.remove_circle_outline, color: Colors.red[400], size: 20),
@@ -523,12 +565,12 @@ class _EquipesTabState extends State<EquipesTab> {
               padding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFF1565C0).withOpacity(0.1),
+                color: const Color(0xFF000966).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Text('Chef',
                   style: TextStyle(
-                      color: Color(0xFF1565C0),
+                      color: Color(0xFF000966),
                       fontSize: 11,
                       fontWeight: FontWeight.bold)),
             ),
@@ -586,7 +628,7 @@ class _EquipesTabState extends State<EquipesTab> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.group_add, color: Color(0xFF1565C0)),
+              Icon(Icons.group_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
               Text('Nouvelle Équipe'),
             ],
@@ -676,7 +718,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 }
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
+                backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Créer'),
@@ -724,7 +766,7 @@ class _EquipesTabState extends State<EquipesTab> {
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
-              Icon(Icons.person_add, color: Color(0xFF1565C0)),
+              Icon(Icons.person_add, color: Color(0xFF000966)),
               SizedBox(width: 10),
               Text('Ajouter un membre'),
             ],
@@ -757,7 +799,7 @@ class _EquipesTabState extends State<EquipesTab> {
                   value: selectedId,
                   isExpanded: true,
                   decoration: InputDecoration(
-                    labelText: 'Choisir un employé',
+                    labelText: 'Choisir un collaborateur',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                   items: disponibles
@@ -771,7 +813,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 if (disponibles.isEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),
-                    child: Text('Aucun employé disponible pour ce poste.', style: TextStyle(color: Colors.grey[700])),
+                    child: Text('Aucun collaborateur disponible pour ce poste.', style: TextStyle(color: Colors.grey[700])),
                   ),
               ],
             ),
@@ -792,7 +834,7 @@ class _EquipesTabState extends State<EquipesTab> {
                 Navigator.pop(ctx);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
+                backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
               child: const Text('Ajouter'),

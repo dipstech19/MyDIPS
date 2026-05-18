@@ -11,7 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    final messengerKey = GlobalKey<ScaffoldMessengerState>();
+    await tester.pumpWidget(MyApp(scaffoldMessengerKey: messengerKey));
     await tester.pumpAndSettle();
     expect(find.byType(MaterialApp), findsOneWidget);
   });

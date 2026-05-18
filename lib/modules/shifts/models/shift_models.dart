@@ -2,6 +2,56 @@ import 'package:flutter/material.dart';
 
 enum ShiftType { morning, evening, night, rest }
 
+/// Représente un jour de travail doublé (×2) — jour férié travaillé ou jour exceptionnel.
+class DoubleDay {
+  final DateTime date;
+  final String? label; // e.g. "Fête du travail", "Aïd", etc.
+
+  DoubleDay({required this.date, this.label});
+
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toMap() => {
+        'date': dateKey,
+        'label': label ?? '',
+      };
+
+  static DoubleDay fromMap(Map<String, dynamic> map) {
+    final raw = map['date'] as String? ?? '';
+    final parts = raw.split('-');
+    final dt = parts.length == 3
+        ? DateTime(int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 1, int.tryParse(parts[2]) ?? 1)
+        : DateTime.now();
+    return DoubleDay(date: DateTime(dt.year, dt.month, dt.day), label: map['label'] as String?);
+  }
+}
+
+/// Jour férié (sans travail) — export Excel OCP « Hors équipe » : marqueur **JF**.
+class PublicHoliday {
+  final DateTime date;
+  final String? label;
+
+  PublicHoliday({required this.date, this.label});
+
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toMap() => {
+        'date': dateKey,
+        'label': label ?? '',
+      };
+
+  static PublicHoliday fromMap(Map<String, dynamic> map) {
+    final raw = map['date'] as String? ?? '';
+    final parts = raw.split('-');
+    final dt = parts.length == 3
+        ? DateTime(int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 1, int.tryParse(parts[2]) ?? 1)
+        : DateTime.now();
+    return PublicHoliday(date: DateTime(dt.year, dt.month, dt.day), label: map['label'] as String?);
+  }
+}
+
 extension ShiftTypeExt on ShiftType {
   String get shortLabel {
     switch (this) {
@@ -29,17 +79,16 @@ extension ShiftTypeExt on ShiftType {
     }
   }
 
-  DateTime getShiftEnd(DateTime day) {
-    final d = DateTime(day.year, day.month, day.day);
+  String get shortLabel {
     switch (this) {
       case ShiftType.morning:
-        return DateTime(d.year, d.month, d.day, 14, 0);
+        return 'P1';
       case ShiftType.evening:
-        return DateTime(d.year, d.month, d.day, 22, 0);
+        return 'P2';
       case ShiftType.night:
-        return DateTime(d.year, d.month, d.day + 1, 6, 0);
+        return 'P3';
       case ShiftType.rest:
-        return DateTime(d.year, d.month, d.day, 23, 59, 59);
+        return 'RH';
     }
   }
 }

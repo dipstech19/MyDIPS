@@ -28,6 +28,13 @@ bool isDesktopOrTablet(BuildContext context) =>
 double pagePadding(BuildContext context) =>
     isMobile(context) ? 12 : (isTablet(context) ? 20 : 24);
 
+/// مسافة سفلية مريحة للتمرير على الهاتف.
+double mobileBottomContentInset(BuildContext context) {
+  if (!isMobile(context)) return 0;
+  final bottom = MediaQuery.paddingOf(context).bottom;
+  return math.max(24, bottom + 8);
+}
+
 /// أقصى عرض للمحتوى على الشاشات الكبيرة (لتوسيط وقراءة أفضل)
 double maxContentWidth(BuildContext context) =>
     isMobile(context) ? double.infinity : 1200;

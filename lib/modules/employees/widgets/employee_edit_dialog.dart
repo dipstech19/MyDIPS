@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,7 +8,7 @@ import '../../../core/site/site_model.dart';
 import '../../../core/utils/responsive.dart';
 import '../models/employe_model.dart';
 import '../models/document_model.dart';
-import '../employees_provider.dart';
+import '../departements_provider.dart';
 import '../postes_provider.dart';
 import '../services/storage_service.dart';
 
@@ -40,6 +40,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   late TextEditingController _emailCtrl;
   late TextEditingController _salaireCtrl;
   late TextEditingController _dateDebutCtrl;
+  late TextEditingController _leaveExtraCtrl;
   late TextEditingController _finContratCtrl;
   late TextEditingController _cnssCtrl;
   late TextEditingController _dateCnssCtrl;
@@ -58,6 +59,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   final List<_TempDocument> _newDocuments = [];
   bool _badgeActif = false;
   late TextEditingController _badgeExpiryCtrl;
+  late String _ocpExcelSegment;
+  late bool _ocpForceSalleControle;
 
   static const _contrats = ['CDI', 'CDD', 'Anapec'];
 
@@ -74,6 +77,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _emailCtrl = TextEditingController(text: e.email);
     _salaireCtrl = TextEditingController(text: e.salaireBase.toStringAsFixed(0));
     _dateDebutCtrl = TextEditingController(text: e.dateDebut);
+    _leaveExtraCtrl = TextEditingController(text: e.leaveDaysExtra.toStringAsFixed(1));
     _finContratCtrl = TextEditingController(text: e.finContrat);
     _cnssCtrl = TextEditingController(text: e.cnss);
     _dateCnssCtrl = TextEditingController(text: e.dateCnss);
@@ -87,6 +91,9 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _documents = List.from(e.documents);
     _badgeActif = e.badgeActif;
     _badgeExpiryCtrl = TextEditingController(text: e.badgeExpiration);
+    final seg = e.ocpExcelSegment.trim();
+    _ocpExcelSegment = OcpExcelSegmentCode.allCodes.contains(seg) ? seg : OcpExcelSegmentCode.auto;
+    _ocpForceSalleControle = e.ocpForceSalleControle;
   }
 
   @override
@@ -100,6 +107,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     _emailCtrl.dispose();
     _salaireCtrl.dispose();
     _dateDebutCtrl.dispose();
+    _leaveExtraCtrl.dispose();
     _finContratCtrl.dispose();
     _cnssCtrl.dispose();
     _dateCnssCtrl.dispose();
@@ -110,13 +118,13 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   @override
   Widget build(BuildContext context) {
     final postesProv = context.watch<PostesProvider>();
-    final empProv = context.watch<EmployeesProvider>();
+    final deptProv = context.watch<DepartementsProvider>();
     final siteId = widget.employe.siteId;
     final posteNames = postesProv.postes
         .where((p) => p.siteId == siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    final depts = _uniqueDepartements(empProv);
+    final depts = _departementOptions(deptProv, current: _dept);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -142,10 +150,10 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
               children: [
                 // HEADER
                 Row(children: [
-                  Icon(Icons.edit, color: const Color(0xFF1565C0), size: mobile ? 22 : 26),
+                  Icon(Icons.edit, color: const Color(0xFF000966), size: mobile ? 22 : 26),
                   SizedBox(width: mobile ? 8 : 12),
                   Expanded(
-                    child: Text('Modifier Employé',
+                    child: Text('Modifier le collaborateur',
                         style: TextStyle(fontSize: mobile ? 18 : 22, fontWeight: FontWeight.bold),
                         overflow: TextOverflow.ellipsis),
                   ),
@@ -202,11 +210,34 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                           _dateField(_dateDebutCtrl, 'Date début *', required: true),
                         ),
                         const SizedBox(height: 12),
+                        _field(
+                          _leaveExtraCtrl,
+                          'Solde congé additionnel / reporté (jours)',
+                          isNumber: true,
+                        ),
+                        const SizedBox(height: 12),
                         _row2(
                           _contrat != 'CDI'
                               ? _dateField(_finContratCtrl, 'Fin contrat')
                               : const SizedBox(),
                           _dropdownEmploye(),
+                        ),
+                        const SizedBox(height: 12),
+                        _sectionTitle('Export pointage OCP'),
+                        const SizedBox(height: 8),
+                        _dropdownOcpSegment(),
+                        const SizedBox(height: 4),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: _ocpForceSalleControle,
+                          onChanged: (v) => setState(() => _ocpForceSalleControle = v ?? false),
+                          title: const Text('Salle de contrôle (P1)'),
+                          subtitle: Text(
+                            'Cocher si le libellé du poste ne contient pas « salle de contrôle » mais l’export Excel doit classer en P1.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                          ),
+                          controlAffinity: ListTileControlAffinity.leading,
                         ),
                         const SizedBox(height: 12),
                         // STATUT
@@ -304,7 +335,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                             : Icon(Icons.save, size: mobile ? 18 : 24),
                         label: Text(_saving ? 'Enregistrement...' : 'Enregistrer'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1565C0),
+                          backgroundColor: const Color(0xFF000966),
                           foregroundColor: Colors.white,
                           padding: EdgeInsets.symmetric(
                             horizontal: mobile ? 16 : 24,
@@ -330,8 +361,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
       setState(() => _saving = true);
       
       final posteNames = context.read<PostesProvider>().postes.map((p) => p.nom).toList();
-      final empProv = context.read<EmployeesProvider>();
-      final depts = _uniqueDepartements(empProv);
+      final depts = _departementOptions(context.read<DepartementsProvider>(), current: _dept);
       final poste = _poste.isEmpty && posteNames.isNotEmpty ? posteNames.first : _poste;
       final dept = _dept.isEmpty && depts.isNotEmpty && depts.first != '—' ? depts.first : _dept;
       
@@ -400,6 +430,12 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         documents: allDocs,
         photoUrl: photoUrl,
         siteId: widget.employe.siteId,
+        leaveDaysTaken: widget.employe.leaveDaysTaken,
+        leaveDaysExtra: double.tryParse(_leaveExtraCtrl.text.replaceFirst(',', '.')) ?? widget.employe.leaveDaysExtra,
+        ocpExcelSegment: OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment.trim())
+            ? _ocpExcelSegment.trim()
+            : OcpExcelSegmentCode.auto,
+        ocpForceSalleControle: _ocpForceSalleControle,
       ));
       
       if (mounted) {
@@ -412,10 +448,10 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   Widget _sectionTitle(String t) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
     decoration: BoxDecoration(
-      color: const Color(0xFF1565C0).withOpacity(0.08),
+      color: const Color(0xFF000966).withOpacity(0.08),
       borderRadius: BorderRadius.circular(8),
     ),
-    child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1565C0))),
+    child: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF000966))),
   );
 
   Widget _row2(Widget a, Widget b) {
@@ -500,9 +536,9 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
     );
   }
 
-  List<String> _uniqueDepartements(EmployeesProvider prov) {
-    final set = prov.employes.map((e) => e.departement).where((d) => d.isNotEmpty).toSet();
-    if (_dept.isNotEmpty) set.add(_dept);
+  List<String> _departementOptions(DepartementsProvider prov, {String? current}) {
+    final set = prov.departements.map((d) => d.nom).where((n) => n.isNotEmpty).toSet();
+    if (current != null && current.isNotEmpty) set.add(current);
     final list = set.toList()..sort();
     return list.isEmpty ? ['—'] : list;
   }
@@ -553,6 +589,34 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   static bool _isChefPoste(String poste) {
     final p = poste.trim().toLowerCase();
     return p.contains('chef') || p == 'shef';
+  }
+
+  Widget _dropdownOcpSegment() {
+    final effective = OcpExcelSegmentCode.allCodes.contains(_ocpExcelSegment)
+        ? _ocpExcelSegment
+        : OcpExcelSegmentCode.auto;
+    return DropdownButtonFormField<String>(
+      value: effective,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Bloc OCP (tri Excel)',
+        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        isDense: true,
+      ),
+      items: [
+        for (final code in OcpExcelSegmentCode.allCodes)
+          DropdownMenuItem<String>(
+            value: code,
+            child: Text(
+              OcpExcelSegmentCode.labelFr(code),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (v) => setState(() => _ocpExcelSegment = v ?? OcpExcelSegmentCode.auto),
+    );
   }
 
   Widget _dropdownEmploye() {
@@ -677,8 +741,8 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
           icon: const Icon(Icons.upload_file, size: 18),
           label: const Text('Ajouter un document'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF1565C0),
-            side: const BorderSide(color: Color(0xFF1565C0)),
+            foregroundColor: const Color(0xFF000966),
+            side: const BorderSide(color: Color(0xFF000966)),
           ),
         ),
         const SizedBox(height: 12),

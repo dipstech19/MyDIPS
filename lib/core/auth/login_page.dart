@@ -1,6 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
+import '../firebase_bootstrap.dart';
 import '../utils/responsive.dart';
+import '../locale/app_locale.dart';
+import '../widgets/dips_brand_logo.dart';
 import 'auth_provider.dart';
 
 class LoginPage extends StatefulWidget {
@@ -29,9 +34,13 @@ class _LoginPageState extends State<LoginPage> {
     final ok = await auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
     
     if (!ok && mounted) {
+      final firebaseUnavailable = Firebase.apps.isEmpty;
       setState(() {
         _loading = false;
-        _error = 'Nom d\'utilisateur ou mot de passe incorrect';
+        _error = firebaseUnavailable
+            ? 'Connexion Firebase indisponible. Vérifiez Internet puis réessayez.'
+                '${firebaseBootstrapLastError != null ? '\nDétail: $firebaseBootstrapLastError' : ''}'
+            : 'Nom d\'utilisateur ou mot de passe incorrect';
       });
     } else if (mounted) {
       setState(() => _loading = false);
@@ -61,10 +70,9 @@ class _LoginPageState extends State<LoginPage> {
               padding: const EdgeInsets.only(top: 24, bottom: 20),
               child: Column(
                 children: [
-                  Icon(Icons.business, color: const Color(0xFF1565C0), size: 52),
-                  const SizedBox(height: 10),
-                  const Text('DIPS', style: TextStyle(color: Color(0xFF1565C0), fontSize: 28, fontWeight: FontWeight.bold)),
-                  Text('Système de Gestion', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  const DipsBrandLogo(height: 72),
+                  const SizedBox(height: 12),
+                  Text(tr(context, 'app_title'), style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                 ],
               ),
             ),
@@ -81,20 +89,18 @@ class _LoginPageState extends State<LoginPage> {
       children: [
         Expanded(
           child: Container(
-            color: const Color(0xFF1565C0),
-            child: const Column(
+            color: const Color(0xFF000966),
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.business, color: Colors.white, size: 80),
-                SizedBox(height: 20),
-                Text('DIPS', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
-                Text('Système de Gestion', style: TextStyle(color: Colors.white70, fontSize: 18)),
-                SizedBox(height: 40),
-                _FeatureItem(icon: Icons.people, text: 'Gestion des Employés'),
-                _FeatureItem(icon: Icons.access_time, text: 'Pointage'),
-                _FeatureItem(icon: Icons.inventory_2, text: 'Stock'),
-                _FeatureItem(icon: Icons.bar_chart, text: 'Rapports'),
+                const DipsBrandLogo(height: 100),
+                const SizedBox(height: 16),
+                Text(tr(context, 'app_title'), style: const TextStyle(color: Colors.white70, fontSize: 18)),
+                const SizedBox(height: 40),
+                const _FeatureItem(icon: Icons.people, text: 'Gestion des Collaborateurs'),
+                const _FeatureItem(icon: Icons.access_time, text: 'Pointage'),
+                const _FeatureItem(icon: Icons.inventory_2, text: 'Stock'),
+                const _FeatureItem(icon: Icons.bar_chart, text: 'Rapports'),
               ],
             ),
           ),
@@ -142,7 +148,7 @@ class _LoginPageState extends State<LoginPage> {
           controller: _usernameCtrl,
           keyboardType: TextInputType.emailAddress,
           decoration: InputDecoration(
-            hintText: 'admin / email (chef)',
+            hintText: 'Email ou identifiant',
             prefixIcon: const Icon(Icons.person_outline),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
             filled: true,
@@ -199,7 +205,7 @@ class _LoginPageState extends State<LoginPage> {
           child: ElevatedButton(
             onPressed: _loading ? null : _login,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1565C0),
+              backgroundColor: const Color(0xFF000966),
               foregroundColor: Colors.white,
               padding: EdgeInsets.symmetric(vertical: isMobile ? 14 : 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -223,17 +229,16 @@ class _LoginPageState extends State<LoginPage> {
         Container(
           padding: EdgeInsets.all(isMobile ? 10 : 12),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppColors.brandLight,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Comptes:', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
+              Text('Comptes:', style: TextStyle(color: AppColors.brand, fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 4),
-              Text('admin / 1234  →  Directeur', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
-              Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
-              Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: Colors.blue.shade600, fontSize: 12)),
+              Text('Chefs → email + mot de passe (Paramètres)', style: TextStyle(color: AppColors.brand, fontSize: 12)),
+              Text('Chauffeurs → identifiant (Paramètres)', style: TextStyle(color: AppColors.brand, fontSize: 12)),
             ],
           ),
         ),

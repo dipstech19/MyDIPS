@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/document_model.dart';
 import '../models/employe_model.dart';
@@ -103,7 +104,7 @@ class _DocumentsTabState extends State<DocumentsTab> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1565C0),
+                  color: const Color(0xFF000966),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Row(
@@ -239,7 +240,7 @@ class _DocumentsTabState extends State<DocumentsTab> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.download, size: 18),
-                      color: Colors.blue,
+                      color: AppColors.brand,
                       tooltip: 'Télécharger',
                       onPressed: () => _downloadDocument(doc),
                     ),

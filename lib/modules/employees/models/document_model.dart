@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 
 enum DocCategorie { contrat, identite, medical, conge, autre }
 
@@ -15,7 +16,7 @@ extension DocCategorieExt on DocCategorie {
 
   Color get color {
     switch (this) {
-      case DocCategorie.contrat:  return Colors.blue;
+      case DocCategorie.contrat:  return AppColors.brand;
       case DocCategorie.identite: return Colors.green;
       case DocCategorie.medical:  return Colors.red;
       case DocCategorie.conge:    return Colors.orange;

@@ -249,7 +249,7 @@ class _DemandesPageState extends State<DemandesPage> {
                           Text(
                             widget.role == UserRole.administrateur
                                 ? 'Administration — traitement des demandes'
-                                : 'Portail employé — suivi de vos demandes',
+                                : 'Portail collaborateur — suivi de vos demandes',
                             style: TextStyle(
                                 fontSize: mobile ? 11 : 12, color: kSubtext),
                           ),
@@ -381,7 +381,7 @@ class _RoleBadge extends StatelessWidget {
         ),
         const SizedBox(width: 5),
         Text(
-          isAdmin ? 'Administrateur' : 'Employé',
+          isAdmin ? 'Administrateur' : 'Collaborateur',
           style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w600, color: color),
         ),
@@ -1394,7 +1394,7 @@ class _DemandeFormState extends State<_DemandeForm>
   Future<void> _submit() async {
     if (!_fk.currentState!.validate()) return;
     if (_equipe == null || _employe == null) {
-      _showToast(context, '⚠  Veuillez sélectionner une équipe et un employé');
+      _showToast(context, '⚠  Veuillez sélectionner une équipe et un collaborateur');
       return;
     }
     setState(() => _submitting = true);
@@ -1490,7 +1490,7 @@ class _DemandeFormState extends State<_DemandeForm>
                       ),
                       const SizedBox(height: 10),
                       _DropField<_Employe>(
-                        label: 'Employé', icon: Icons.person_outline,
+                        label: 'Collaborateur', icon: Icons.person_outline,
                         value: _employe, items: _equipe?.employes ?? [],
                         display: (e) => e.nom, subtitle: (e) => e.poste,
                         onChanged: (e) => setState(() => _employe = e),
@@ -1506,7 +1506,7 @@ class _DemandeFormState extends State<_DemandeForm>
                         )),
                         const SizedBox(width: 14),
                         Expanded(child: _DropField<_Employe>(
-                          label: 'Employé', icon: Icons.person_outline,
+                          label: 'Collaborateur', icon: Icons.person_outline,
                           value: _employe, items: _equipe?.employes ?? [],
                           display: (e) => e.nom, subtitle: (e) => e.poste,
                           onChanged: (e) => setState(() => _employe = e),
@@ -1772,7 +1772,7 @@ class PdfGenerator {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-          pw.Text("L'employé(e)",
+          pw.Text('Le collaborateur ou la collaboratrice',
               style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
           pw.SizedBox(height: 40),
           pw.Container(width: 120, height: 1, color: PdfColors.grey400),
@@ -1833,7 +1833,7 @@ class PdfGenerator {
 
           // Corps
           pw.Text(
-            'La Direction certifie avoir accordé à l\'employé(e) susmentionné(e) '
+            'La Direction certifie avoir accordé au collaborateur / à la collaboratrice susmentionné(e) '
                 'une autorisation de congé annuel dans les conditions suivantes :',
             style: const pw.TextStyle(fontSize: 11, lineSpacing: 4),
           ),
@@ -1919,7 +1919,7 @@ class PdfGenerator {
             text: pw.TextSpan(
               style: const pw.TextStyle(fontSize: 12, lineSpacing: 5),
               children: [
-                const pw.TextSpan(text: 'est bien employé(e) au sein de notre société en tant que '),
+                const pw.TextSpan(text: 'exerce bien la fonction de collaborateur / collaboratrice au sein de notre société en tant que '),
                 pw.TextSpan(
                     text: poste,
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
@@ -2860,7 +2860,7 @@ class _DemandesPageDemoState extends State<DemandesPageDemo> {
               label: Text(
                 _role == UserRole.demandeur
                     ? 'Vue Admin'
-                    : 'Vue Employé',
+                    : 'Vue Collaborateur',
                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ),

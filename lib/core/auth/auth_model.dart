@@ -1,4 +1,4 @@
-enum UserRole { directeur, chefEquipe, chauffeur, groupeResponsable }
+enum UserRole { directeur, chefEquipe, chauffeur, groupeResponsable, distributionResponsable }
 
 class AppUser {
   final String id;
@@ -8,9 +8,15 @@ class AppUser {
   final UserRole role;
   final String? equipeId;
   final String? groupeId;
+  final String? distributionGroupId;
+  final List<String> distributionGroupIds;
   final String? photoUrl;
   /// للمشرفين: null أو ["all"] = أدمن عام (كل المواقع)، ["jadida"] أو ["safi"] = مشرف موقع واحد
   final List<String>? siteIds;
+  final List<String> permissions;
+  final String? adminRole;
+  /// Lien optionnel employé pour comptes `chef_comptes` (poste ex. chef d’atelier).
+  final String? chefEmployeId;
 
   AppUser({
     required this.id,
@@ -20,8 +26,13 @@ class AppUser {
     required this.role,
     this.equipeId,
     this.groupeId,
+    this.distributionGroupId,
+    this.distributionGroupIds = const [],
     this.photoUrl,
     this.siteIds,
+    this.permissions = const [],
+    this.adminRole,
+    this.chefEmployeId,
   });
 
   /// أدمن عام يرى كل المواقع ويمكنه الفلترة
@@ -38,17 +49,10 @@ final List<AppUser> appUsers = [
   AppUser(
     id: 'u1',
     nom: 'Directeur DIPS',
-    username: 'admin',
+    username: 'dips@dips.ma',
     password: '1234',
     role: UserRole.directeur,
     siteIds: ['all'],
   ),
-  AppUser(
-    id: 'u2',
-    nom: 'Fatima Zahra',
-    username: 'fatima',
-    password: '1234',
-    role: UserRole.chefEquipe,
-    equipeId: 'eq1',
-  ),
+
 ];

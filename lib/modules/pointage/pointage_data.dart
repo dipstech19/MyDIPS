@@ -2,6 +2,24 @@ import '../employees/models/employe_model.dart';
 import '../employees/models/equipe_model.dart';
 import 'models/pointage_model.dart';
 
+/// Identifiant virtuel pour les travailleurs hors équipe (pointage Chef de zone / RH).
+const String horsEquipeVirtualId = 'hors_equipe';
+
+/// Hors équipe : repos hebdomadaire le dimanche.
+bool isHorsEquipeWeeklyRestDay(DateTime date) => date.weekday == DateTime.sunday;
+
+bool isHorsEquipeScope(String? equipeId) =>
+    equipeId == null || equipeId == horsEquipeVirtualId;
+
+bool isGroupeScope(String? equipeId) =>
+    equipeId != null && equipeId.startsWith('groupe:');
+
+/// Jour férié (JF) dans Excel OCP : Hors équipe (Chef zone) et Groupes (Chef d'atelier).
+bool exportUsesPublicHolidayJf(String? equipeId) {
+  if (equipeId == null) return false;
+  return equipeId == horsEquipeVirtualId || isGroupeScope(equipeId);
+}
+
 List<Employe> getWorkersForEquipe(
   List<Equipe> equipes,
   List<Employe> employes,

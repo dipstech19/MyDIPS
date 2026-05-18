@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/locale/app_locale.dart';
 import '../../../core/theme/app_theme.dart';
@@ -7,7 +7,7 @@ import '../../../shared/widgets/shared_widgets.dart';
 import '../../../modules/employees/employees_provider.dart';
 import '../../../modules/pointage/pointage_data.dart';
 
-/// قائمة اليوم: كل الفرق والعمال (نفس البيانات كـ Employés)
+/// قائمة اليوم: كل الفرق والعمال (نفس البيانات كـ Collaborateurs)
 class DriverHomeScreen extends StatefulWidget {
   const DriverHomeScreen({super.key});
 
@@ -22,16 +22,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
 
   AttendanceState _getState(String equipeId, String employeId) =>
       _attendance[_key(equipeId, employeId)] ?? AttendanceState.unmarked;
-
-  void _sendReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(tr(context, 'report_sent')),
-        backgroundColor: AppColors.green,
-        behavior: SnackBarBehavior.fixed,
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -148,10 +138,25 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            height: 52,
-            width: double.infinity,
-            child: PrimaryButton(label: tr(context, 'send_report_btn'), onTap: _sendReport),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.brandLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.brandBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: AppColors.brand),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    tr(context, 'use_pointage_tab'),
+                    style: TextStyle(fontSize: 12, color: AppColors.brand),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
