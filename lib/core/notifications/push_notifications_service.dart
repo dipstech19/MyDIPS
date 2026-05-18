@@ -202,6 +202,7 @@ class PushNotificationsService {
       'groupeId': u.groupeId,
       'distributionGroupIds': u.distributionGroupIds,
       'adminRole': u.adminRole,
+      'permissions': u.permissions,
       'active': true,
       'platform': defaultTargetPlatform.name,
       'updatedAt': now,

@@ -13,6 +13,7 @@ import 'core/site/site_provider.dart';
 import 'core/theme/app_theme.dart' as theme;
 import 'core/utils/responsive.dart';
 import 'core/notifications/local_notifications_service.dart';
+import 'core/notifications/ops_notifications_service.dart';
 import 'core/notifications/push_notifications_service.dart';
 import 'layout/main_layout.dart';
 import 'modules/employees/employees_provider.dart';
@@ -167,6 +168,7 @@ class _AppRootState extends State<_AppRoot> {
     if (_lastBoundUserId != currentId) {
       _lastBoundUserId = currentId;
       unawaited(PushNotificationsService.instance.bindUser(auth.currentUser));
+      unawaited(OpsNotificationsService.instance.bindUser(auth.currentUser));
     }
     // إذا مدخلش → Login, إذا دخل → التطبيق
     return auth.isLoggedIn ? const MainLayout() : const LoginPage();

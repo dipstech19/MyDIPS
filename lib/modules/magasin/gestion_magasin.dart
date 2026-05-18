@@ -7,11 +7,13 @@
 //  + Filtre par fournisseur dans l'historique
 // =============================================================================
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import '../../core/notifications/ops_notifications_service.dart';
 import 'package:excel/excel.dart' hide Border;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -579,10 +581,38 @@ class MagasinProvider extends ChangeNotifier {
   Future<void> updateEntree(String id, Mouvement mouvement) async =>
       _updateMouvement(id, mouvement);
 
-  Future<void> addSortie(Mouvement mouvement) async {
+  Future<Produit?> _produitById(String produitId) async {
+    if (produitId.isEmpty) return null;
+    final snap = await _produitsRef.doc(produitId).get();
+    if (!snap.exists) return null;
+    return Produit.fromFirestore(snap);
+  }
+
+  Future<void> addSortie(
+    Mouvement mouvement, {
+    String? actorUserId,
+    String? actorUserName,
+  }) async {
+    final before = await _produitById(mouvement.produitId);
     final ref = _mouvementsRef.doc();
     await ref.set(mouvement.toFirestore());
     await _appliquerMouvement(mouvement.copyWithId(ref.id), annuler: false);
+    final after = await _produitById(mouvement.produitId);
+    if (after != null) {
+      unawaited(
+        OpsNotificationsService.instance.emitStockSortie(
+          mouvement: mouvement.copyWithId(ref.id),
+          stockRestant: after.total,
+          actorUserId: actorUserId,
+          actorUserName: actorUserName,
+        ),
+      );
+      if (before != null) {
+        unawaited(
+          OpsNotificationsService.instance.emitStockLevelIfNeeded(before: before, after: after),
+        );
+      }
+    }
   }
 
   Future<void> deleteSortie(String id) async {
@@ -3594,8 +3624,15 @@ class _MouvFormState extends State<_MouvForm> {
 
       if (_isEditing) {
         _isSortie ? await widget.magasin.updateSortie(widget.mouvement!.id, mouvement) : await widget.magasin.updateEntree(widget.mouvement!.id, mouvement);
+      } else if (_isSortie) {
+        final auth = scaffoldCtx != null ? Provider.of<AuthProvider>(scaffoldCtx, listen: false) : null;
+        await widget.magasin.addSortie(
+          mouvement,
+          actorUserId: auth?.currentUser?.id,
+          actorUserName: auth?.currentUser?.nom,
+        );
       } else {
-        _isSortie ? await widget.magasin.addSortie(mouvement) : await widget.magasin.addEntree(mouvement);
+        await widget.magasin.addEntree(mouvement);
       }
 
       if (Navigator.of(dialogCtx, rootNavigator: true).canPop()) Navigator.of(dialogCtx, rootNavigator: true).pop();

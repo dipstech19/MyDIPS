@@ -3445,9 +3445,17 @@ class PointageExportService {
           continue;
         }
 
+        // Pas de snapshot = équipe/jour non confirmé par chef d'atelier ou chef de zone :
+        // ne pas reporter le pointage saisi par le chef d'équipe dans Excel / OCP.
+        if (snap == null) {
+          hoursByDay[dayKey] = '-';
+          dayStatusByDay[dayKey] = '';
+          continue;
+        }
+
         final dayOt = empOtByDay[dayKey] ?? empOtByDay[d] ?? 0;
 
-        String effectiveStatus = snap?.status ?? '';
+        String effectiveStatus = snap.status;
         if (effectiveStatus != 'arrangement' &&
             effectiveStatus != 'arrangement_pending' &&
             emp.equipeId != null) {
@@ -3483,38 +3491,12 @@ class PointageExportService {
             isDistributionScope: isDistributionScope,
             reasonConfigs: reasonConfigs,
           );
-        } else if (dayRecords.isNotEmpty &&
-            (snap == null || effectiveStatus.isEmpty)) {
-          final inferred = _inferDayStatusFromPointageRecords(
-            dayRecords,
-            isGroupScope: isGroupScope,
-            isDistributionScope: isDistributionScope,
-            reasonConfigs: reasonConfigs,
-            preferredEquipeId: empEquipeId,
-          );
-          if (inferred != null) {
-            effectiveStatus = inferred;
-          }
         } else if (recForDay != null &&
             effectiveStatus != 'rest' &&
             effectiveStatus != 'arrangement_pending' &&
             recForDay.chefStatus == ChefPointageStatus.absent) {
           effectiveStatus =
               _exportStatusWhenMarkedAbsent(recForDay, reasonConfigs);
-        } else if (dayRecords.isNotEmpty &&
-            (effectiveStatus == 'absent' || effectiveStatus == 'paid_absence')) {
-          final inferredLive = _inferDayStatusFromPointageRecords(
-            dayRecords,
-            isGroupScope: isGroupScope,
-            isDistributionScope: isDistributionScope,
-            reasonConfigs: reasonConfigs,
-            preferredEquipeId: empEquipeId,
-          );
-          if (inferredLive == 'present' ||
-              inferredLive == 'formation' ||
-              inferredLive == 'leave') {
-            effectiveStatus = inferredLive!;
-          }
         }
 
         if (effectiveStatus.isEmpty) {
