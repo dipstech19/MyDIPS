@@ -225,7 +225,7 @@ class PointageProvider extends ChangeNotifier {
 
     final repo = _repo!;
 
-    final logicalToday = getPointageDateForConfig(PointageHoursConfig.instance, DateTime.now());
+    final logicalToday = getPointageDateForConfig(const PointageHoursConfig(), DateTime.now());
     _subPointage = repo.watchTodayPointage(logicalDate: logicalToday).listen(
       (list) {
         _todayPointage = list;
@@ -682,7 +682,7 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable || _repo == null) return false;
     if (equipeId.isEmpty) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_submitReportWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
@@ -884,7 +884,7 @@ class PointageProvider extends ChangeNotifier {
   }) async {
     if (!_firebaseAvailable) return;
     final now = DateTime.now();
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final pointageDate = getPointageDateForConfig(config, now);
     final record = PointageRecord(
       id: '',
@@ -919,7 +919,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_arrivalWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
@@ -962,7 +962,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
@@ -1046,7 +1046,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     await _repo!.setChefStatus(
@@ -1069,7 +1069,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_overtimeRelatedWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     await _repo!.setOvertimeChefStatus(
@@ -1103,7 +1103,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     final pointageDate = getPointageDateForConfig(config, now);
@@ -1140,7 +1140,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable || _repo == null) return;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_chefMarkingWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return;
     final pointageDate = getPointageDateForConfig(config, now);
@@ -1202,7 +1202,7 @@ class PointageProvider extends ChangeNotifier {
     bool bypassTimeWindows = false,
   }) async {
     if (!_firebaseAvailable) return false;
-    final config = configOverride ?? PointageHoursConfig.instance;
+    final config = configOverride ?? const PointageHoursConfig();
     final now = DateTime.now();
     if (!_departureWindowOk(config, now, bypassTimeWindows: bypassTimeWindows)) return false;
     int? resolvedOvertime = overtimeMinutes;
@@ -1405,40 +1405,6 @@ class PointageProvider extends ChangeNotifier {
     await _invalidateDailyConfirmationAfterMutation(targetEquipeId, d);
   }
 
-  /// Affectation temporaire d'un employé vers une autre équipe pour une journée (renfort).
-  /// Crée un sجل SÉPARÉ (docId différent) pour le fريق cible afin que les pointages
-  /// des deux équipes soient totalement indépendants.
-  Future<void> assignEmployeeTemp({
-    required String employeId,
-    required String employeNom,
-    required String employeCin,
-    required String targetEquipeId,
-    required String targetEquipeName,
-    required String targetChefName,
-    required String originalEquipeId,
-    required DateTime day,
-    String? shiftOverride,
-    int defaultOvertimeMinutes = 480,
-  }) async {
-    if (!_firebaseAvailable || _repo == null) return;
-    final d = DateTime(day.year, day.month, day.day);
-    // Clean the original record if it was wrongly marked as tempAssigned by the old system.
-    await _repo!.cleanOriginalRecordFromRenfort(employeId, d);
-    // Create an INDEPENDENT record for the target team.
-    // The original team's record is untouched so its chef/driver statuses remain separate.
-    await _repo!.createOrUpdateRenfortRecord(
-      employeId: employeId,
-      employeNom: employeNom,
-      employeCin: employeCin,
-      targetEquipeId: targetEquipeId,
-      targetEquipeName: targetEquipeName,
-      targetChefName: targetChefName,
-      originalEquipeId: originalEquipeId,
-      day: d,
-      shiftOverride: shiftOverride,
-      defaultOvertimeMinutes: defaultOvertimeMinutes,
-    );
-  }
 
   Future<void> submitDailyReport({
     required String equipeId,

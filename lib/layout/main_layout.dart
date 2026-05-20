@@ -53,6 +53,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
   String? _listeningOvertimeEquipeId;
   String? _lastUserId;
   TabController? _mobileTabController;
+  bool _personnelExpanded = true;
 
   // Pages pré-construites et mises en cache par pageKey+userId.
   // On les recrée uniquement quand l'utilisateur change de compte.
@@ -149,7 +150,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
               key: 'shifts', icon: Icons.rotate_right, label: tr(context, 'nav_shifts')),
         if (auth.hasPermission(AppPermissions.stockView))
           _NavItem(
-              key: 'stock', icon: Icons.inventory_2, label: tr(context, 'nav_stock')),
+              key: 'stock', icon: Icons.inventory_2, label: 'Gestion Magasin'),
         if (auth.hasPermission(AppPermissions.reportsView))
           _NavItem(
               key: 'reports', icon: Icons.bar_chart, label: tr(context, 'nav_rapports')),
@@ -159,7 +160,7 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
         if (auth.hasPermission(AppPermissions.demandesView))
           _NavItem(key: 'demandes', icon: Icons.inbox, label: 'Demandes', badgeCount: demandesBadgeCount),
         if (auth.hasPermission(AppPermissions.logistiqueView))
-          _NavItem(key: 'logistique', icon: Icons.local_shipping, label: 'Logistique'),
+          _NavItem(key: 'logistique', icon: Icons.local_shipping, label: 'Gestion Logistique'),
       ];
     }
     return [
@@ -373,6 +374,200 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildNavSectionHeader({
+    required String title,
+    required IconData icon,
+    required bool isExpanded,
+    required VoidCallback onToggle,
+  }) {
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(8, 10, 8, 2),
+        padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: Colors.white60),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.9,
+                ),
+              ),
+            ),
+            AnimatedRotation(
+              turns: isExpanded ? 0.0 : -0.25,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              child: const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Colors.white60),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionNavTile(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required int index,
+    required bool isSelected,
+    required Future<void> Function(int) onNavTap,
+    VoidCallback? onItemTap,
+  }) {
+    Future<void> handleTap() async {
+      await onNavTap(index);
+      onItemTap?.call();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 10, 8, 0),
+      child: InkWell(
+        onTap: handleTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? Colors.white.withValues(alpha: 0.2)
+                : Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected
+                  ? Colors.white.withValues(alpha: 0.3)
+                  : Colors.white.withValues(alpha: 0.1),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.white70),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.white70,
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupedNavSidebar(
+    BuildContext context,
+    List<_NavItem> items, {
+    required Future<void> Function(int) onNavTap,
+    VoidCallback? onItemTap,
+  }) {
+    final personnelEntries = <MapEntry<int, _NavItem>>[];
+    int? magasinIndex;
+    int? logistiqueIndex;
+
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      if (item.key == 'stock') {
+        magasinIndex = i;
+      } else if (item.key == 'logistique') {
+        logistiqueIndex = i;
+      } else {
+        personnelEntries.add(MapEntry(i, item));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Gestion Personnel ────────────────────────────────────────────────
+        if (personnelEntries.isNotEmpty) ...[
+          _buildNavSectionHeader(
+            title: 'Gestion Personnel',
+            icon: Icons.people_outline,
+            isExpanded: _personnelExpanded,
+            onToggle: () => setState(() => _personnelExpanded = !_personnelExpanded),
+          ),
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeInOutCubic,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                transitionBuilder: (child, animation) =>
+                    FadeTransition(opacity: animation, child: child),
+                child: _personnelExpanded
+                    ? Column(
+                        key: const ValueKey('personnel_open'),
+                        children: personnelEntries
+                            .map((e) => _buildNavEntry(
+                                  context,
+                                  item: e.value,
+                                  index: e.key,
+                                  isSelected: _selectedIndex == e.key,
+                                  expanded: true,
+                                  onNavTap: onNavTap,
+                                  onItemTap: onItemTap,
+                                ))
+                            .toList(),
+                      )
+                    : const SizedBox.shrink(key: ValueKey('personnel_closed')),
+              ),
+            ),
+          ),
+        ],
+
+        // ── Gestion Magasin ──────────────────────────────────────────────────
+        if (magasinIndex != null)
+          _buildSectionNavTile(
+            context,
+            title: 'Gestion Magasin',
+            icon: Icons.inventory_2_outlined,
+            index: magasinIndex,
+            isSelected: _selectedIndex == magasinIndex,
+            onNavTap: onNavTap,
+            onItemTap: onItemTap,
+          ),
+
+        // ── Gestion Logistique ───────────────────────────────────────────────
+        if (logistiqueIndex != null)
+          _buildSectionNavTile(
+            context,
+            title: 'Gestion Logistique',
+            icon: Icons.local_shipping_outlined,
+            index: logistiqueIndex,
+            isSelected: _selectedIndex == logistiqueIndex,
+            onNavTap: onNavTap,
+            onItemTap: onItemTap,
+          ),
+
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
   Widget _buildSidebarContent(
       BuildContext context,
       AuthProvider auth,
@@ -491,23 +686,35 @@ class _MainLayoutState extends State<MainLayout> with TickerProviderStateMixin {
           const Divider(color: Colors.white24),
 
           // ── Nav items ──────────────────────────────────────────────────────
-          Expanded(
-            child: ListView.builder(
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                return _buildNavEntry(
+          if (expanded)
+            Expanded(
+              child: SingleChildScrollView(
+                child: _buildGroupedNavSidebar(
                   context,
-                  item: item,
-                  index: index,
-                  isSelected: _selectedIndex == index,
-                  expanded: expanded,
+                  items,
                   onNavTap: onNavTap,
                   onItemTap: onItemTap,
-                );
-              },
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return _buildNavEntry(
+                    context,
+                    item: item,
+                    index: index,
+                    isSelected: _selectedIndex == index,
+                    expanded: false,
+                    onNavTap: onNavTap,
+                    onItemTap: onItemTap,
+                  );
+                },
+              ),
             ),
-          ),
 
           // ── Footer ─────────────────────────────────────────────────────────
           if (!compactHeight) ...[

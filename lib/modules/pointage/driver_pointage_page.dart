@@ -252,7 +252,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
             chefName: t.chefName,
             driverStatus: s,
             driverId: auth.currentUser?.id,
-            configOverride: pointageConfig ?? PointageHoursConfig.instance,
+            configOverride: pointageConfig ?? const PointageHoursConfig(),
             bypassTimeWindows: true,
           );
         }
@@ -266,7 +266,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
               overtimeMinutes: _driverDraftOvertimeMinutes[w.id],
               workedMinutesBeforeStop: _driverDraftWorkedMinutes[w.id],
               incompleteShiftReason: _driverDraftIncompleteReason[w.id],
-              configOverride: pointageConfig ?? PointageHoursConfig.instance,
+              configOverride: pointageConfig ?? const PointageHoursConfig(),
               bypassTimeWindows: true,
             );
           }
@@ -282,7 +282,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     unawaited(() async {
       final accepted = await pointageProvider.submitDriverReportWithRetry(
         equipeId: equipeId,
-        configOverride: pointageConfig ?? PointageHoursConfig.instance,
+        configOverride: pointageConfig ?? const PointageHoursConfig(),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -423,15 +423,6 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       });
     }
     _wasDriverSyncPending = pointageProvider.driverReportSyncPending;
-
-    final canSendReport = workersDisplay.isNotEmpty && workersDisplay.every((e) {
-      final r = pointageProvider.getRecordForEmployee(e.id);
-      if (r == null) return false;
-      if (r.driverStatus == DriverPointageStatus.unset) return false;
-      final isPresent = r.driverStatus == DriverPointageStatus.present || r.driverStatus == DriverPointageStatus.enVehicule;
-      if (!isPresent) return true; // absent doesn't require departure
-      return r.arrivalMarkedAt != null && r.departureStatus == DepartureStatus.finished;
-    });
 
     Widget buildBody(PointageRecord? Function(String)? getRecordOverride) {
       return Directionality(

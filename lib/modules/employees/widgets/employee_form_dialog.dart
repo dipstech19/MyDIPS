@@ -79,6 +79,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         _siteId = site.selectedSiteId ?? SiteId.jadida;
         if (_siteId == SiteId.all) _siteId = SiteId.jadida;
       }
+      if (_siteId == SiteId.safi && _dept.isEmpty) {
+        _dept = 'Phosphorique';
+      }
     }
     final postesProv = context.watch<PostesProvider>();
     final deptProv = context.watch<DepartementsProvider>();
@@ -86,7 +89,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    final depts = _departementOptions(deptProv, current: _dept);
+    final depts = _departementOptions(deptProv, current: _dept, siteId: _siteId);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
     final maxH = dialogMaxHeight(context);
@@ -173,7 +176,12 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                           DropdownMenuItem(value: SiteId.jadida, child: Text(SiteId.labelFr(SiteId.jadida))),
                           DropdownMenuItem(value: SiteId.safi, child: Text(SiteId.labelFr(SiteId.safi))),
                         ],
-                        onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
+                        onChanged: (v) => setState(() {
+                          _siteId = v ?? SiteId.jadida;
+                          if (_siteId == SiteId.safi) {
+                            _dept = 'Phosphorique';
+                          }
+                        }),
                       ),
                       const SizedBox(height: 12),
                       _row2(
@@ -520,7 +528,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     );
   }
 
-  List<String> _departementOptions(DepartementsProvider prov, {String? current}) {
+  List<String> _departementOptions(DepartementsProvider prov, {String? current, String? siteId}) {
+    if (siteId == SiteId.safi) return ['Phosphorique'];
     final set = prov.departements.map((d) => d.nom).where((n) => n.isNotEmpty).toSet();
     if (current != null && current.isNotEmpty) set.add(current);
     final list = set.toList()..sort();

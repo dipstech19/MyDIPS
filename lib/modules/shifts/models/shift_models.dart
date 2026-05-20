@@ -79,18 +79,6 @@ extension ShiftTypeExt on ShiftType {
     }
   }
 
-  String get shortLabel {
-    switch (this) {
-      case ShiftType.morning:
-        return 'P1';
-      case ShiftType.evening:
-        return 'P2';
-      case ShiftType.night:
-        return 'P3';
-      case ShiftType.rest:
-        return 'RH';
-    }
-  }
 }
 
 class RotationConfig {

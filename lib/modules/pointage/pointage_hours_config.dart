@@ -9,13 +9,6 @@ const Duration kPointageDepartureWindow = Duration(hours: 2);
 
 /// إعداد ساعات البوانتاج (دخول/خروج) — من الشيفت أو مخصص للفريق
 class PointageHoursConfig {
-  PointageHoursConfig({
-    this.startHour = 6,
-    this.startMinute = 0,
-    this.endHour = 17,
-    this.endMinute = 0,
-  });
-
   final int startHour;
   final int startMinute;
   final int endHour;
@@ -201,7 +194,7 @@ DateTime getPointageDateForConfig(PointageHoursConfig config, DateTime now) {
   if (t < 12 * 60) {
     return DateTime(now.year, now.month, now.day - 1);
   }
-  return today;
+  return DateTime(now.year, now.month, now.day);
 }
 
 PointageHoursStatus getPointageHoursStatus(DateTime now, PointageHoursConfig config) {
@@ -278,21 +271,7 @@ PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, dyn
         );
     }
   }
-  return PointageHoursConfig.instance;
-}
-
-/// إرجاع إعداد الساعات لفريق في تاريخ معيّن: إن وُجدت وردية (صباحية/مسائية/ليلية) تُستخدم أوقاتها الفعلية، وإلا إعداد الفريق أو العام.
-PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, ShiftType? shift) {
-  if (shift == ShiftType.morning) {
-    return PointageHoursConfig(startHour: 6, startMinute: 0, endHour: 14, endMinute: 0);
-  }
-  if (shift == ShiftType.evening) {
-    return PointageHoursConfig(startHour: 14, startMinute: 0, endHour: 22, endMinute: 0);
-  }
-  if (shift == ShiftType.night) {
-    return PointageHoursConfig(startHour: 22, startMinute: 0, endHour: 6, endMinute: 0);
-  }
-  return getConfigForEquipe(equipe);
+  return const PointageHoursConfig();
 }
 
 enum PointageHoursStatus {
@@ -301,9 +280,3 @@ enum PointageHoursStatus {
   closed,
 }
 
-PointageHoursStatus getPointageHoursStatus(DateTime now, [PointageHoursConfig? config]) {
-  final c = config ?? PointageHoursConfig.instance;
-  if (c.isWithinArrivalWindow(now) || c.isWithinDepartureWindow(now)) return PointageHoursStatus.open;
-  if (c.isAfterCutoff(now)) return PointageHoursStatus.closed;
-  return PointageHoursStatus.notYetOpen;
-}

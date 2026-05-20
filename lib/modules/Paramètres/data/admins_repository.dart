@@ -72,8 +72,8 @@ class AdminUser {
           ? perms.map((e) => e.toString()).toList()
           : [],
       dateCreation: dateCreation,
-      siteIds: sites is List<dynamic>
-          ? sites.map((e) => e.toString()).toList()
+      siteIds: sIds is List<dynamic>
+          ? sIds.map((e) => e.toString()).toList()
           : ['all'],
       password: map['password'] as String? ?? '',
       distributionGroupIds: distIds,

@@ -154,31 +154,10 @@ class PointageRecord {
   /// Optional training window end datetime (when admin marks formation).
   final DateTime? trainingEndAt;
 
-  /// هل هذا سجل Renfort (موظف محوَّل مؤقتاً لفريق آخر)؟
-  final bool tempAssigned;
-  /// معرّف الفريق الأصلي عند التحويل المؤقت
-  final String? originalEquipeId;
-
   /// Échange Distribution : journée « E » (8h) chez le groupe d'origine, sans présence physique.
   final bool distSwapArrangement;
   final bool distSwapArrangementPending;
   final String? distSwapId;
-
-  /// حالة الشاف للساعات الإضافية (نظام Renfort القديم — محتفظ به للتوافق)
-  final ChefPointageStatus overtimeChefStatus;
-  final String? overtimeMarkedByChefId;
-  final DateTime? overtimeArrivalMarkedAt;
-
-  /// وقت بداية/نهاية التكوين
-  final DateTime? trainingStartAt;
-  final DateTime? trainingEndAt;
-
-  /// سبب الشيفت الناقص ودقائق العمل الفعلية
-  final String? incompleteShiftReason;
-  final int? workedMinutesBeforeStop;
-
-  /// تجاوز الشيفت للسجل الفردي (مثلاً عند Renfort)
-  final String? shiftOverride;
 
   /// Remarque optionnelle du chef d'équipe (shift22h→6h) : départ anticipé, incident, etc.
   final String? nightShiftSupervisorNote;
@@ -221,13 +200,8 @@ class PointageRecord {
     this.distSwapArrangement = false,
     this.distSwapArrangementPending = false,
     this.distSwapId,
-    this.overtimeChefStatus = ChefPointageStatus.unset,
-    this.overtimeMarkedByChefId,
-    this.overtimeArrivalMarkedAt,
     this.trainingStartAt,
     this.trainingEndAt,
-    this.incompleteShiftReason,
-    this.workedMinutesBeforeStop,
     this.shiftOverride,
     this.nightShiftSupervisorNote,
     this.nightShiftSupervisorNoteAt,
@@ -333,8 +307,6 @@ class PointageRecord {
     'overtimeArrivalMarkedAt': overtimeArrivalMarkedAt?.toIso8601String(),
     'trainingStartAt': trainingStartAt?.toIso8601String(),
     'trainingEndAt': trainingEndAt?.toIso8601String(),
-    'incompleteShiftReason': incompleteShiftReason,
-    'workedMinutesBeforeStop': workedMinutesBeforeStop,
     'shiftOverride': shiftOverride,
     'nightShiftSupervisorNote': nightShiftSupervisorNote,
     'nightShiftSupervisorNoteAt': nightShiftSupervisorNoteAt?.toIso8601String(),
@@ -414,8 +386,6 @@ class PointageRecord {
     overtimeArrivalMarkedAt: _parseDateNullable(map['overtimeArrivalMarkedAt']),
     trainingStartAt: _parseDateNullable(map['trainingStartAt']),
     trainingEndAt: _parseDateNullable(map['trainingEndAt']),
-    incompleteShiftReason: map['incompleteShiftReason'] as String?,
-    workedMinutesBeforeStop: map['workedMinutesBeforeStop'] is int ? map['workedMinutesBeforeStop'] as int : null,
     shiftOverride: map['shiftOverride'] as String?,
     nightShiftSupervisorNote: map['nightShiftSupervisorNote'] as String?,
     nightShiftSupervisorNoteAt: _parseDateNullable(map['nightShiftSupervisorNoteAt']),
@@ -458,13 +428,8 @@ class PointageRecord {
     bool? distSwapArrangement,
     bool? distSwapArrangementPending,
     String? distSwapId,
-    ChefPointageStatus? overtimeChefStatus,
-    String? overtimeMarkedByChefId,
-    DateTime? overtimeArrivalMarkedAt,
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
-    String? incompleteShiftReason,
-    int? workedMinutesBeforeStop,
     String? shiftOverride,
     String? nightShiftSupervisorNote,
     DateTime? nightShiftSupervisorNoteAt,
@@ -505,13 +470,8 @@ class PointageRecord {
     distSwapArrangement: distSwapArrangement ?? this.distSwapArrangement,
     distSwapArrangementPending: distSwapArrangementPending ?? this.distSwapArrangementPending,
     distSwapId: distSwapId ?? this.distSwapId,
-    overtimeChefStatus: overtimeChefStatus ?? this.overtimeChefStatus,
-    overtimeMarkedByChefId: overtimeMarkedByChefId ?? this.overtimeMarkedByChefId,
-    overtimeArrivalMarkedAt: overtimeArrivalMarkedAt ?? this.overtimeArrivalMarkedAt,
     trainingStartAt: trainingStartAt ?? this.trainingStartAt,
     trainingEndAt: trainingEndAt ?? this.trainingEndAt,
-    incompleteShiftReason: incompleteShiftReason ?? this.incompleteShiftReason,
-    workedMinutesBeforeStop: workedMinutesBeforeStop ?? this.workedMinutesBeforeStop,
     shiftOverride: shiftOverride ?? this.shiftOverride,
     nightShiftSupervisorNote: nightShiftSupervisorNote ?? this.nightShiftSupervisorNote,
     nightShiftSupervisorNoteAt: nightShiftSupervisorNoteAt ?? this.nightShiftSupervisorNoteAt,

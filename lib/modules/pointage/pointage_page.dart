@@ -1047,7 +1047,7 @@ class _PointagePageState extends State<PointagePage> {
     // le « jour pointage » peut être le jour civil précédent — sinon la fin de shift et le repos sont calculés sur le mauvais jour.
     final DateTime logicalDay;
     if (isViewingToday) {
-      logicalDay = getPointageDateForConfig(PointageHoursConfig.instance, now);
+      logicalDay = getPointageDateForConfig(const PointageHoursConfig(), now);
     } else {
       // isViewingToday == false ⇒ selectedReport != null
       logicalDay = DateTime(selectedReport.year, selectedReport.month, selectedReport.day);
@@ -7729,7 +7729,6 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
       ],
     );
   }
-}
 
   static Widget _cell(String text, {bool bold = false, Color? color}) {
     return Padding(

@@ -3297,53 +3297,6 @@ class PointageExportService {
               if (isPaidAbsence) totalHours += hoursPerDay;
             }
           }
-          hoursByDay[d] = 'F';
-          dayStatusByDay[d] = 'formation';
-
-        } else {
-          bool hasAnyFinalPresent = false;
-          bool hasNaturalHours = false; // natural 8h
-          double otForDay = 0;
-
-          for (final r in dayRecords) {
-            if (r.isFinalPresent) {
-              hasAnyFinalPresent = true;
-              // Renfort (tempAssigned + finished): natural 8h belong to the ORIGINAL team.
-              // So we DON'T add natural hours here for Renfort records.
-              // For ALL other records (normal workers), 8h always count.
-              if (!r.tempAssigned) {
-                hasNaturalHours = true;
-              }
-            }
-            // Overtime: only count if departure is confirmed finished AND overtime > 0.
-            if (r.departureStatus == DepartureStatus.finished &&
-                (r.overtimeMinutes ?? 0) > 0) {
-              otForDay += r.overtimeMinutes! / 60.0;
-            }
-          }
-
-          if (hasAnyFinalPresent) {
-            daysWorked++;
-            if (hasNaturalHours) totalHours += hoursPerDay;
-            overtimeHours += otForDay;
-            hoursByDay[d] = '✓';
-            dayStatusByDay[d] = 'present';
-          } else {
-            final r = dayRecords.isNotEmpty ? dayRecords.first : null;
-            final reasonLabel = r != null ? getAbsenceReasonLabel(r.absenceReason, reasonConfigs) : '';
-            final isPaidAbsence = r != null &&
-                r.absenceReason != null &&
-                !isAbsenceReasonDeductFromSalary(r.absenceReason, reasonConfigs);
-            // Not present, but still counted as paid day.
-            hoursByDay[d] = isPaidAbsence ? 'x*' : (reasonLabel.isEmpty ? 'x' : 'x $reasonLabel');
-            dayStatusByDay[d] = isPaidAbsence ? 'paid_absence' : 'absent';
-            if (r != null && r.absenceReason != null) {
-              absenceReasonIdByDay[d] = r.absenceReason;
-              if (isPaidAbsence) {
-                totalHours += hoursPerDay;
-              }
-            }
-          }
         }
 
         // إضافة ساعات overtime_assignments لهذا اليوم
@@ -3357,11 +3310,6 @@ class PointageExportService {
           }
         }
 
-        // Overtime assignments: colonne dédiée uniquement (pas d'affichage dans la cellule du jour)
-        final dayOtHours = overtimeByDay[d] ?? 0;
-        if (dayOtHours > 0) {
-          overtimeHours += dayOtHours;
-        }
       }
 
       final daysAbsent = daysAbsentCount.clamp(0, days.length);
