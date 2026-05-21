@@ -206,7 +206,7 @@ class AppTranslations {
     'shifts_table_p1': 'P1 (Matin)',
     'shifts_table_p2': 'P2 (Soir)',
     'shifts_table_p3': 'P3 (Nuit)',
-    'shifts_table_rh': 'RH (Repos)',
+    'shifts_table_rh': 'P4 (Repos)',
     'shifts_equipe_column': 'Équipe',
     'shifts_today': 'Aujourd\'hui',
     'shifts_no_config': 'Aucune rotation configurée. L\'admin doit définir la date de début et les 4 équipes.',

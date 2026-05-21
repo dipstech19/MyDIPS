@@ -53,24 +53,18 @@ class DistributionSwapDialogs {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) {
-          final groupsOnDate = DistributionSwapService.groupsOnDutyOnDate(
-            groups: allGroups,
-            date: dateA,
-            shiftsProv: shiftsProv,
-          );
-
           void resetGroupsIfNeeded() {
-            if (groupA != null && !groupsOnDate.any((g) => g.id == groupA!.id)) {
+            if (groupA != null && !allGroups.any((g) => g.id == groupA!.id)) {
               groupA = null;
               empA = null;
             }
-            if (groupB != null && !groupsOnDate.any((g) => g.id == groupB!.id)) {
+            if (groupB != null && !allGroups.any((g) => g.id == groupB!.id)) {
               groupB = null;
               empB = null;
             }
-            groupA ??= groupsOnDate.isNotEmpty ? groupsOnDate.first : null;
+            groupA ??= allGroups.isNotEmpty ? allGroups.first : null;
             if (groupB == null || groupB!.id == groupA?.id) {
-              final othersB = groupsOnDate.where((g) => g.id != groupA?.id).toList();
+              final othersB = allGroups.where((g) => g.id != groupA?.id).toList();
               groupB = othersB.isNotEmpty ? othersB.first : null;
             }
           }
@@ -122,7 +116,7 @@ class DistributionSwapDialogs {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Text(
-                      'Choisissez d\'abord la date, puis les groupes en service ce jour-là uniquement.',
+                      'Choisissez la date et les groupes (tous les groupes sont disponibles, y compris ceux en repos).',
                       style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                     const SizedBox(height: 12),
@@ -132,31 +126,31 @@ class DistributionSwapDialogs {
                       label: Text('Date de manœuvre : ${dateA.day}/${dateA.month}/${dateA.year}'),
                     ),
                     const SizedBox(height: 10),
-                    if (groupsOnDate.length < 2)
+                    if (allGroups.length < 2)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
-                          groupsOnDate.isEmpty
-                              ? 'Aucun groupe Distribution en service à cette date.'
-                              : 'Un seul groupe en service : impossible de créer un échange.',
+                          allGroups.isEmpty
+                              ? 'Aucun groupe Distribution disponible.'
+                              : 'Un seul groupe disponible : impossible de créer un échange.',
                           style: TextStyle(color: Theme.of(ctx).colorScheme.error, fontSize: 12),
                         ),
                       )
                     else ...[
                       DropdownButtonFormField<DistributionGroup>(
-                        value: groupA != null && groupsOnDate.any((g) => g.id == groupA!.id) ? groupA : null,
+                        value: groupA != null && allGroups.any((g) => g.id == groupA!.id) ? groupA : null,
                         decoration: const InputDecoration(
-                          labelText: 'Groupe d\'origine (A) — en service',
+                          labelText: 'Groupe d\'origine (A)',
                           border: OutlineInputBorder(),
                         ),
-                        items: groupsOnDate
+                        items: allGroups
                             .map((g) => DropdownMenuItem(value: g, child: Text(groupLabel(g))))
                             .toList(),
                         onChanged: (v) => setD(() {
                           groupA = v;
                           empA = null;
                           if (groupB?.id == v?.id) {
-                            final ob = groupsOnDate.where((g) => g.id != v?.id).toList();
+                            final ob = allGroups.where((g) => g.id != v?.id).toList();
                             groupB = ob.isNotEmpty ? ob.first : null;
                             empB = null;
                           }
@@ -171,12 +165,12 @@ class DistributionSwapDialogs {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<DistributionGroup>(
-                        value: groupB != null && groupsOnDate.any((g) => g.id == groupB!.id) ? groupB : null,
+                        value: groupB != null && allGroups.any((g) => g.id == groupB!.id) ? groupB : null,
                         decoration: const InputDecoration(
-                          labelText: 'Groupe cible (B) — en service',
+                          labelText: 'Groupe cible (B)',
                           border: OutlineInputBorder(),
                         ),
-                        items: groupsOnDate
+                        items: allGroups
                             .where((g) => g.id != groupA?.id)
                             .map((g) => DropdownMenuItem(value: g, child: Text(groupLabel(g))))
                             .toList(),
@@ -203,7 +197,7 @@ class DistributionSwapDialogs {
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
               ElevatedButton(
-                onPressed: groupsOnDate.length < 2
+                onPressed: allGroups.length < 2
                     ? null
                     : () async {
                   if (empA == null || empB == null || groupA == null || groupB == null) return;
@@ -379,8 +373,13 @@ class _SwapListSheet extends StatelessWidget {
     }
 
     final allowed = auth.distributionGroupIds;
+    final today = DateTime.now();
+    final todayDay = DateTime(today.year, today.month, today.day);
     var list = swapsProv.swaps
-        .where((s) => s.status != DistributionSwapStatus.cancelled)
+        .where((s) =>
+            s.status != DistributionSwapStatus.cancelled &&
+            s.status != DistributionSwapStatus.completed &&
+            !s.dateAInGroupB.isAfter(todayDay))
         .toList();
     if (allowed.isNotEmpty) {
       list = list
@@ -437,15 +436,46 @@ class _SwapListSheet extends StatelessWidget {
                               '$statusLabel',
                             ),
                             isThreeLine: true,
-                            trailing: s.status == DistributionSwapStatus.awaitingReturnDate
-                                ? TextButton(
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (s.status == DistributionSwapStatus.awaitingReturnDate)
+                                  TextButton(
                                     onPressed: () {
                                       Navigator.pop(ctx);
                                       DistributionSwapDialogs.showSetReturnDateDialog(context, s);
                                     },
                                     child: const Text('Retour'),
-                                  )
-                                : null,
+                                  ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                  tooltip: 'Supprimer',
+                                  onPressed: () async {
+                                    final swapsProv = context.read<DistributionSwapsProvider>();
+                                    final confirm = await showDialog<bool>(
+                                      context: ctx,
+                                      builder: (d) => AlertDialog(
+                                        title: const Text('Supprimer l\'échange ?'),
+                                        content: Text(
+                                          'Supprimer l\'échange entre ${name(s.employeAId)} et ${name(s.employeBId)} ?',
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Annuler')),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                            onPressed: () => Navigator.pop(d, true),
+                                            child: const Text('Supprimer'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true) {
+                                      await swapsProv.deleteSwap(s.id);
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },

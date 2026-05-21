@@ -1399,7 +1399,7 @@ class _DistributionDashboardPage extends StatelessWidget {
       case ShiftType.night:
         return 'P3 (${shift.timeRange.replaceAll('–', '-')})';
       case ShiftType.rest:
-        return 'RH';
+        return 'P4';
     }
   }
 

@@ -50,6 +50,7 @@ dependencies:
   share_plus:
   url_launcher: ^6.3.2
   fl_chart: ^1.2.0
+  msix: ^3.16.13
 
 dev_dependencies:
   flutter_test:

@@ -124,6 +124,10 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
         .where((p) => p.siteId == siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
+    const distributionPostes = ['operateur Phase 1', 'operateur Radeej', 'operateur RMC', 'operateur Digue', "Chef d'equipe"];
+    final effectivePosteNames = _dept.toLowerCase().contains('distribution')
+        ? distributionPostes
+        : posteNames;
     final depts = _departementOptions(deptProv, current: _dept);
     final mobile = isMobile(context);
     final maxW = dialogMaxWidth(context);
@@ -198,17 +202,30 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                         const SizedBox(height: 20),
                         _sectionTitle('💼 Travail'),
                         const SizedBox(height: 12),
-                        _dropdownPoste(posteNames),
+                        // 1. Département
+                        _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) {
+                          setState(() {
+                            _dept = v ?? '';
+                            final newPostes = _dept.toLowerCase().contains('distribution')
+                                ? distributionPostes
+                                : posteNames;
+                            if (!newPostes.contains(_poste)) {
+                              _poste = newPostes.isNotEmpty ? newPostes.first : '';
+                            }
+                          });
+                        }),
                         const SizedBox(height: 12),
+                        // 2. Poste (filtré selon le département)
+                        _dropdownPoste(effectivePosteNames),
+                        const SizedBox(height: 12),
+                        // 3. Salaire + Type contrat
                         _row2(
-                          _dropdown('Département *', _dept, depts.isEmpty ? ['—'] : depts, (v) => setState(() => _dept = v ?? '')),
                           _field(_salaireCtrl, 'Salaire base (DH) *', required: true, isNumber: true),
+                          _dropdown('Type contrat *', _contrat, _contrats, (v) => setState(() => _contrat = v!)),
                         ),
                         const SizedBox(height: 12),
-                        _row2(
-                          _dropdown('Type contrat *', _contrat, _contrats, (v) => setState(() => _contrat = v!)),
-                          _dateField(_dateDebutCtrl, 'Date début *', required: true),
-                        ),
+                        // 4. Date début
+                        _dateField(_dateDebutCtrl, 'Date début *', required: true),
                         const SizedBox(height: 12),
                         _field(
                           _leaveExtraCtrl,
@@ -546,7 +563,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
   Widget _dropdownPoste(List<String> posteNames) {
     final items = posteNames.isEmpty
         ? <String>['(Ajoutez des postes dans Paramètres > Postes)']
-        : posteNames;
+        : List<String>.from(posteNames);
     
     // Add current poste if not in list
     if (_poste.isNotEmpty && !items.contains(_poste)) {

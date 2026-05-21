@@ -62,7 +62,7 @@ extension ShiftTypeExt on ShiftType {
       case ShiftType.night:
         return 'P3';
       case ShiftType.rest:
-        return 'RH';
+        return 'P4';
     }
   }
 

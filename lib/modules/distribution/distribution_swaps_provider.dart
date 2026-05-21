@@ -30,6 +30,11 @@ class DistributionSwapsProvider extends ChangeNotifier {
 
   DistributionSwapsRepository? get repo => _repo;
 
+  Future<void> deleteSwap(String id) async {
+    if (_repo == null) return;
+    await _repo!.deleteSwap(id);
+  }
+
   List<DistributionSwap> swapsForGroup(String groupId) => _list
       .where((s) =>
           s.status != DistributionSwapStatus.cancelled &&

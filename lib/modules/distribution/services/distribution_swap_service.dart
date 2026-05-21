@@ -60,12 +60,12 @@ class DistributionSwapService {
   }) {
     if (!shiftsProv.hasRotationSlotForGroup(groupId)) return '';
     final s = shiftsProv.getShiftForGroup(groupId, date);
-    if (s == ShiftType.rest) return ' (RH)';
+    if (s == ShiftType.rest) return ' (Repos)';
     return switch (s) {
       ShiftType.morning => ' (P1)',
       ShiftType.evening => ' (P2)',
       ShiftType.night => ' (P3)',
-      ShiftType.rest => ' (RH)',
+      ShiftType.rest => ' (Repos)',
     };
   }
 

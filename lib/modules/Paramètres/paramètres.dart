@@ -4212,7 +4212,6 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
 
 class _DistributionGroupsSection extends StatefulWidget {
   const _DistributionGroupsSection();
-
   @override
   State<_DistributionGroupsSection> createState() => _DistributionGroupsSectionState();
 }
@@ -4220,137 +4219,261 @@ class _DistributionGroupsSection extends StatefulWidget {
 class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> {
   String _q = '';
 
-  bool _isProtectedForDistribution(String poste) {
-    final p = poste.trim().toLowerCase();
-    return p.contains('chef') ||
-        p.contains('rh') ||
-        p.contains('dev') ||
-        p.contains('it') ||
-        p.contains('admin') ||
-        p.contains('directeur') ||
-        p.contains('responsable');
+  // ── Créer un nouveau groupe (nom seulement) ─────────────────────────────
+  Future<void> _addGroup(BuildContext context, DistributionGroupsProvider prov) async {
+    final ctrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nouveau groupe'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Nom du groupe', border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          ElevatedButton(
+            onPressed: () async {
+              final nom = ctrl.text.trim();
+              if (nom.isEmpty) return;
+              await prov.addGroup(DistributionGroup(id: '', nom: nom, membreIds: const []));
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Créer'),
+          ),
+        ],
+      ),
+    );
   }
 
-  void _showDialogGroup(
-      BuildContext context, DistributionGroupsProvider prov, EmployeesProvider emps, DistributionGroup? existing) {
-    final nameCtrl = TextEditingController(text: existing?.nom ?? '');
-    final selectedIds = <String>{...(existing?.membreIds ?? const [])};
-    final employees = emps.employes.toList()..sort((a, b) => a.nom.compareTo(b.nom));
+  // ── Renommer un groupe ──────────────────────────────────────────────────
+  Future<void> _renameGroup(BuildContext context, DistributionGroup g, DistributionGroupsProvider prov) async {
+    final ctrl = TextEditingController(text: g.nom);
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Renommer le groupe'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Nom', border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          ElevatedButton(
+            onPressed: () async {
+              final nom = ctrl.text.trim();
+              if (nom.isEmpty) return;
+              await prov.updateGroup(DistributionGroup(id: g.id, nom: nom, membreIds: g.membreIds));
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Enregistrer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Retirer un membre ───────────────────────────────────────────────────
+  Future<void> _removeMember(DistributionGroup g, String memberId, DistributionGroupsProvider prov) async {
+    await prov.updateGroup(DistributionGroup(
+      id: g.id,
+      nom: g.nom,
+      membreIds: g.membreIds.where((id) => id != memberId).toList(),
+    ));
+  }
+
+  // ── Ajouter des membres ─────────────────────────────────────────────────
+  Future<void> _showAddMemberDialog(
+    BuildContext context,
+    DistributionGroup g,
+    DistributionGroupsProvider prov,
+    EmployeesProvider emps,
+    List<DistributionGroup> allGroups,
+  ) async {
+    final usedIds = <String>{for (final grp in allGroups) ...grp.membreIds};
+    final available = emps.employes
+        .where((e) =>
+            e.departement.toLowerCase().contains('distribution') &&
+            !usedIds.contains(e.id))
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+
     String search = '';
-    String? selectedPoste;
-    final groupesProv = context.read<GroupesProvider>();
+    final selectedIds = <String>{};
 
-    final usedInEquipes = <String>{
-      for (final eq in emps.equipes) ...[
-        if (eq.chefId.isNotEmpty) eq.chefId,
-        ...eq.membreIds,
-      ]
-    };
-    final usedInGroupes = <String>{
-      for (final g in groupesProv.groupes) ...g.membreIds,
-    };
-    final usedInOtherDistribution = <String>{
-      for (final g in prov.groups)
-        if (existing == null || g.id != existing.id) ...g.membreIds,
-    };
-
-    showDialog(
+    await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setStateD) {
-          final eligible = employees.where((e) {
-            if (selectedIds.contains(e.id)) return true; // Keep current selected visible in edit mode.
-            if (_isProtectedForDistribution(e.poste)) return false;
-            if (usedInEquipes.contains(e.id)) return false;
-            if (usedInGroupes.contains(e.id)) return false;
-            if (usedInOtherDistribution.contains(e.id)) return false;
-            return true;
-          }).toList();
-          final postes = eligible.map((e) => e.poste.trim()).where((p) => p.isNotEmpty).toSet().toList()..sort();
-          selectedPoste ??= postes.isNotEmpty ? postes.first : null;
-          final filtered = eligible.where((e) {
-            final okSearch = search.trim().isEmpty ||
-                e.nom.toLowerCase().contains(search.trim().toLowerCase()) ||
-                e.poste.toLowerCase().contains(search.trim().toLowerCase());
-            final okPoste = selectedPoste == null || selectedPoste!.isEmpty || e.poste.trim() == selectedPoste!.trim();
-            return okSearch && okPoste;
-          }).toList();
+        builder: (ctx, setD) {
+          final filtered = available
+              .where((e) => search.isEmpty || e.nom.toLowerCase().contains(search.toLowerCase()) || e.poste.toLowerCase().contains(search.toLowerCase()))
+              .toList();
           return AlertDialog(
-            title: Text(existing == null ? 'Nouveau groupe Distribution' : 'Modifier groupe Distribution'),
+            title: Text('Ajouter membre — ${g.nom}'),
             content: SizedBox(
-              width: 560,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(labelText: 'Nom', border: OutlineInputBorder()),
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Rechercher...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      isDense: true,
                     ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'Filtrer par nom/poste',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: (v) => setStateD(() => search = v),
-                    ),
-                    const SizedBox(height: 10),
-                    if (postes.isNotEmpty)
-                      DropdownButtonFormField<String>(
-                        value: selectedPoste,
-                        decoration: const InputDecoration(labelText: 'Poste', border: OutlineInputBorder()),
-                        items: postes.map((p) => DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
-                        onChanged: (v) => setStateD(() => selectedPoste = v),
-                      ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Affichage: collaborateurs non affectés (hors équipes/groupes) et hors postes protégés (Chef/RH/DEV/IT...).',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      height: 280,
-                      decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+                    onChanged: (v) => setD(() => search = v),
+                  ),
+                  const SizedBox(height: 8),
+                  if (available.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text('Aucun collaborateur Distribution disponible.',
+                          style: TextStyle(color: Colors.grey[600])),
+                    )
+                  else
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 300),
                       child: ListView(
-                        children: filtered.map((e) {
-                          final checked = selectedIds.contains(e.id);
-                          return CheckboxListTile(
-                            value: checked,
-                            dense: true,
-                            title: Text(e.nom),
-                            subtitle: Text(e.poste),
-                            onChanged: (v) => setStateD(() {
-                              if (v == true) {
-                                selectedIds.add(e.id);
-                              } else {
-                                selectedIds.remove(e.id);
-                              }
-                            }),
-                          );
-                        }).toList(),
+                        shrinkWrap: true,
+                        children: filtered.map((e) => CheckboxListTile(
+                          dense: true,
+                          value: selectedIds.contains(e.id),
+                          title: Text(e.nom),
+                          subtitle: Text(e.poste),
+                          onChanged: (v) => setD(() {
+                            if (v == true) selectedIds.add(e.id);
+                            else selectedIds.remove(e.id);
+                          }),
+                        )).toList(),
                       ),
                     ),
-                  ],
-                ),
+                ],
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr(context, 'cancel'))),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
               ElevatedButton(
-                onPressed: () async {
-                  final nom = nameCtrl.text.trim();
-                  if (nom.isEmpty) return;
-                  final g = DistributionGroup(id: existing?.id ?? '', nom: nom, membreIds: selectedIds.toList());
-                  if (existing == null) {
-                    await prov.addGroup(g);
-                  } else {
-                    await prov.updateGroup(g);
-                  }
-                  if (ctx.mounted) Navigator.pop(ctx);
-                },
-                child: Text(existing == null ? 'Créer' : 'Enregistrer'),
+                onPressed: selectedIds.isEmpty
+                    ? null
+                    : () async {
+                        await prov.updateGroup(DistributionGroup(
+                          id: g.id,
+                          nom: g.nom,
+                          membreIds: [...g.membreIds, ...selectedIds],
+                        ));
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                child: const Text('Ajouter'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Échanger un membre avec un autre groupe ─────────────────────────────
+  Future<void> _showSwapDialog(
+    BuildContext context,
+    emp.Employe member,
+    DistributionGroup currentGroup,
+    DistributionGroupsProvider prov,
+    EmployeesProvider emps,
+    List<DistributionGroup> allGroups,
+  ) async {
+    final otherGroups = allGroups.where((g) => g.id != currentGroup.id).toList();
+    DistributionGroup? targetGroup;
+    String? targetMemberId;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final targetMembers = targetGroup == null
+              ? <emp.Employe>[]
+              : emps.employes.where((e) => targetGroup!.membreIds.contains(e.id)).toList()
+                ..sort((a, b) => a.nom.compareTo(b.nom));
+          return AlertDialog(
+            title: Text('Échanger ${member.nom}'),
+            content: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.brand.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.person_outline, color: AppColors.brand, size: 16),
+                      const SizedBox(width: 8),
+                      Text('${member.nom}  ·  ${currentGroup.nom}',
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    ]),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<DistributionGroup>(
+                    decoration: const InputDecoration(
+                        labelText: 'Groupe cible', border: OutlineInputBorder(), isDense: true),
+                    value: targetGroup,
+                    items: otherGroups.map((g) =>
+                        DropdownMenuItem(value: g, child: Text(g.nom))).toList(),
+                    onChanged: (g) => setD(() { targetGroup = g; targetMemberId = null; }),
+                  ),
+                  if (targetGroup != null) ...[
+                    const SizedBox(height: 12),
+                    Text('Membre à échanger depuis « ${targetGroup!.nom} »',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                    const SizedBox(height: 6),
+                    if (targetMembers.isEmpty)
+                      Text('Ce groupe n\'a aucun membre.',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 12))
+                    else
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: targetMembers.map((m) => RadioListTile<String>(
+                            dense: true,
+                            value: m.id,
+                            groupValue: targetMemberId,
+                            title: Text(m.nom, style: const TextStyle(fontSize: 13)),
+                            subtitle: Text(m.poste, style: const TextStyle(fontSize: 11)),
+                            onChanged: (v) => setD(() => targetMemberId = v),
+                          )).toList(),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              ElevatedButton(
+                onPressed: (targetGroup == null || targetMemberId == null)
+                    ? null
+                    : () async {
+                        final newCurrentIds = currentGroup.membreIds
+                            .where((id) => id != member.id)
+                            .toList()
+                          ..add(targetMemberId!);
+                        final newTargetIds = targetGroup!.membreIds
+                            .where((id) => id != targetMemberId)
+                            .toList()
+                          ..add(member.id);
+                        await prov.updateGroup(DistributionGroup(
+                            id: currentGroup.id, nom: currentGroup.nom, membreIds: newCurrentIds));
+                        await prov.updateGroup(DistributionGroup(
+                            id: targetGroup!.id, nom: targetGroup!.nom, membreIds: newTargetIds));
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                child: const Text('Échanger'),
               ),
             ],
           );
@@ -4364,56 +4487,173 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
     final prov = context.watch<DistributionGroupsProvider>();
     final emps = context.watch<EmployeesProvider>();
     final padding = pagePadding(context);
-    final list = prov.groups.where((g) => g.nom.toLowerCase().contains(_q.toLowerCase())).toList();
+    final groups = prov.groups
+        .where((g) => g.nom.toLowerCase().contains(_q.toLowerCase()))
+        .toList();
+
     return Column(
       children: [
+        // ── Barre de recherche + bouton nouveau groupe ──────────────────
         Container(
           color: Colors.white,
           padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 36,
-                  child: TextField(
-                    decoration: InputDecoration(
-                      hintText: 'Rechercher...',
-                      prefixIcon: const Icon(Icons.search, size: 18),
-                      filled: true,
-                      fillColor: const Color(0xFFF7F9FC),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                    ),
-                    onChanged: (v) => setState(() => _q = v),
+          child: Row(children: [
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Rechercher un groupe...',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    filled: true,
+                    fillColor: const Color(0xFFF7F9FC),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
                   ),
+                  onChanged: (v) => setState(() => _q = v),
                 ),
               ),
-              const SizedBox(width: 10),
-              ElevatedButton.icon(
-                onPressed: () => _showDialogGroup(context, prov, emps, null),
-                icon: const Icon(Icons.add),
-                label: const Text('Nouveau groupe'),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            ElevatedButton.icon(
+              onPressed: () => _addGroup(context, prov),
+              icon: const Icon(Icons.add),
+              label: const Text('Nouveau groupe'),
+            ),
+          ]),
         ),
+        // ── Liste des groupes ───────────────────────────────────────────
         Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.all(padding),
-            itemCount: list.length,
-            itemBuilder: (_, i) {
-              final g = list[i];
-              return Card(
-                child: ListTile(
-                  title: Text(g.nom, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text('Membres: ${g.membreIds.length}'),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogGroup(context, prov, emps, g)),
-                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteGroup(g.id)),
-                  ]),
+          child: groups.isEmpty
+              ? const Center(child: Text('Aucun groupe', style: TextStyle(color: Colors.grey)))
+              : ListView.builder(
+                  padding: EdgeInsets.all(padding),
+                  itemCount: groups.length,
+                  itemBuilder: (_, i) {
+                    final g = groups[i];
+                    final members = emps.employes
+                        .where((e) => g.membreIds.contains(e.id))
+                        .toList()
+                      ..sort((a, b) => a.nom.compareTo(b.nom));
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 1,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // En-tête du groupe
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                            decoration: BoxDecoration(
+                              color: AppColors.brand.withValues(alpha: 0.06),
+                              borderRadius:
+                                  const BorderRadius.vertical(top: Radius.circular(10)),
+                            ),
+                            child: Row(children: [
+                              Icon(Icons.groups_outlined, color: AppColors.brand, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(g.nom,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold, fontSize: 15)),
+                              ),
+                              Text('${members.length} membre(s)',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                icon: Icon(Icons.person_add_outlined,
+                                    color: AppColors.brand, size: 19),
+                                tooltip: 'Ajouter un membre',
+                                onPressed: () =>
+                                    _showAddMemberDialog(context, g, prov, emps, prov.groups.toList()),
+                                padding: EdgeInsets.zero,
+                                constraints:
+                                    const BoxConstraints(minWidth: 32, minHeight: 32),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.drive_file_rename_outline, size: 19),
+                                tooltip: 'Renommer',
+                                onPressed: () => _renameGroup(context, g, prov),
+                                padding: EdgeInsets.zero,
+                                constraints:
+                                    const BoxConstraints(minWidth: 32, minHeight: 32),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    color: Colors.red, size: 19),
+                                tooltip: 'Supprimer le groupe',
+                                onPressed: () => prov.deleteGroup(g.id),
+                                padding: EdgeInsets.zero,
+                                constraints:
+                                    const BoxConstraints(minWidth: 32, minHeight: 32),
+                              ),
+                            ]),
+                          ),
+                          const Divider(height: 1),
+                          // Membres
+                          if (members.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 14, horizontal: 16),
+                              child: Text('Aucun membre dans ce groupe.',
+                                  style: TextStyle(
+                                      color: Colors.grey[500], fontSize: 13)),
+                            )
+                          else
+                            Column(
+                              children: members.map((m) => ListTile(
+                                dense: true,
+                                leading: CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor:
+                                      AppColors.brand.withValues(alpha: 0.1),
+                                  child: Text(
+                                    m.nom.isNotEmpty ? m.nom[0] : '?',
+                                    style: TextStyle(
+                                        fontSize: 13, color: AppColors.brand,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                title: Text(m.nom,
+                                    style: const TextStyle(
+                                        fontSize: 13, fontWeight: FontWeight.w500)),
+                                subtitle: Text(m.poste,
+                                    style: const TextStyle(fontSize: 11)),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.swap_horiz,
+                                          color: AppColors.brand, size: 18),
+                                      tooltip: 'Échanger avec un autre groupe',
+                                      onPressed: () => _showSwapDialog(
+                                          context, m, g, prov, emps,
+                                          prov.groups.toList()),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                          minWidth: 32, minHeight: 32),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                          Icons.remove_circle_outline,
+                                          color: Colors.red, size: 18),
+                                      tooltip: 'Retirer du groupe',
+                                      onPressed: () =>
+                                          _removeMember(g, m.id, prov),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                          minWidth: 32, minHeight: 32),
+                                    ),
+                                  ],
+                                ),
+                              )).toList(),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );

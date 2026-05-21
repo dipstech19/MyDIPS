@@ -11,7 +11,6 @@ import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
-import '../../core/widgets/async_busy.dart';
 import '../../shared/widgets/shared_widgets.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import '../../features/chef/screens/chef_home_screen.dart';
@@ -501,14 +500,6 @@ class _PointagePageState extends State<PointagePage> {
     provider.listenForDate(_hsFilterDate);
   }
 
-  bool _canViewValidatedExcel(AuthProvider auth) {
-    if (!auth.isDirecteur) return false;
-    final perms = auth.permissions;
-    if (perms.contains(AppPermissions.all)) return true;
-    return auth.hasPermission(AppPermissions.reportsView) &&
-        (auth.hasPermission(AppPermissions.adminsManage) ||
-            auth.hasPermission(AppPermissions.groupsManage));
-  }
 
   void _onPointageProviderExportHint() {
     if (!mounted) return;
@@ -692,51 +683,7 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
-  Future<void> _showValidatedExcelDialog(BuildContext context) async {
-    final records = await _excelValidationRepo.getRecentValidated(limit: 60);
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Fichiers Excel validés'),
-        content: SizedBox(
-          width: 620,
-          child: records.isEmpty
-              ? const Text('Aucun fichier validé pour le moment.')
-              : ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: records.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final r = records[i];
-                    String fmt(DateTime d) =>
-                        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-                    final range = '${fmt(r.startDate)} → ${fmt(r.endDate)}';
-                    return ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.verified, color: Colors.green),
-                      title: Text(range),
-                      subtitle: Text(
-                        'Par ${r.createdByName.isEmpty ? r.createdById : r.createdByName} • Scope: ${r.scope}${(r.equipeId ?? '').isNotEmpty ? ' • Équipe: ${r.equipeId}' : ''}',
-                      ),
-                      trailing: const Text(
-                        'Validé',
-                        style: TextStyle(
-                            color: Colors.green, fontWeight: FontWeight.w700),
-                      ),
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fermer'),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Future<void> _loadAdminMonthRecords(PointageProvider prov) async {
     if (_adminMonthLoading) return;
@@ -1458,89 +1405,29 @@ class _PointagePageState extends State<PointagePage> {
       }
     }
 
-    Future<void> exportSelectedTeamPdf() async {
-      if (team == null) return;
-      final reasonsProv = context.read<AbsenceReasonsProvider>();
-      // If reasons stream hasn't arrived yet, wait briefly so PDF shows labels (not IDs).
-      if (reasonsProv.loading) {
-        for (int i = 0; i < 10 && reasonsProv.loading; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 150));
-        }
-      }
-      final reasonConfigs = reasonsProv.reasons;
-      final presentNames = <String>[];
-      final presentNoDepartureNames = <String>[];
-      final absentNames = <String>[];
-      final absentReasons = <String?>[];
 
-      for (final e in workers) {
-        if (nonWorkingIdsEffective.contains(team.equipeId)) continue;
-        final r = getRecord(e.id);
-        final isPresent = r?.isFinalPresent ?? false;
-        if (isPresent) {
-          if (r?.departureStatus == DepartureStatus.finished) {
-            presentNames.add(e.nom);
-          } else {
-            presentNoDepartureNames.add(e.nom);
-          }
-        } else {
-          absentNames.add(e.nom);
-          absentReasons.add(r?.absenceReason);
-        }
-      }
-
-      final filePath = await PointageExportService.shareDailyReportPdf(
-        date: logicalDay,
-        title: trOf(context, 'report_presence_title'),
-        presentNames: presentNames,
-        presentNoDepartureNames: presentNoDepartureNames,
-        absentNames: absentNames,
-        absentReasons: absentReasons,
-        reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
-        signatureLabel: 'Admin',
-        personName: auth.currentUser?.nom ?? 'Admin',
-        equipeName: team.equipeName,
-        chefName: team.chefName.isNotEmpty ? team.chefName : null,
-      );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.fixed,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-        await _offerMobileShare(context, filePath, text: 'Rapport pointage');
-      }
-    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadAdminMonthRecords(pointageProvider);
     });
 
     Widget adminPointageToolbar(BuildContext context, BoxConstraints constraints) {
-              final compactHeader = constraints.maxWidth < 1050;
               final densePhone = constraints.maxWidth < 420;
-              final headerSpacing = densePhone ? 6.0 : 8.0;
-              final chipH = densePhone ? 8.0 : 10.0;
-              final chipV = densePhone ? 4.0 : 6.0;
-              final actionH = densePhone ? 8.0 : 12.0;
-              final actionV = densePhone ? 6.0 : 10.0;
-              final iconSize = densePhone ? 16.0 : 18.0;
-              final labelSize = densePhone ? 12.0 : 14.0;
-              final compactDateInline = constraints.maxWidth < 700;
-              final dateControls = Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: densePhone ? 2 : 4,
-                runSpacing: densePhone ? 4 : 6,
+              final actionH = densePhone ? 10.0 : 14.0;
+              final actionV = densePhone ? 7.0 : 9.0;
+              final iconSize = densePhone ? 15.0 : 17.0;
+              final labelSize = densePhone ? 12.0 : 13.0;
+
+              // ── Sélection de date ──────────────────────────────────────
+              final dateRow = Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
                     tooltip: 'Jour précédent',
                     padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(minWidth: densePhone ? 30 : 34, minHeight: densePhone ? 30 : 34),
+                    constraints: BoxConstraints(minWidth: densePhone ? 28 : 32, minHeight: densePhone ? 28 : 32),
                     onPressed: () => _shiftAdminViewDay(pointageProvider, -1),
-                    icon: Icon(Icons.chevron_left, size: densePhone ? 20 : 22, color: Colors.blueGrey.shade800),
+                    icon: Icon(Icons.chevron_left, size: densePhone ? 20 : 22, color: Colors.blueGrey.shade700),
                   ),
                   InkWell(
                     onTap: () async {
@@ -1555,373 +1442,121 @@ class _PointagePageState extends State<PointagePage> {
                       }
                     },
                     borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      child: Text(
-                        '${logicalDay.day.toString().padLeft(2, '0')}/${logicalDay.month.toString().padLeft(2, '0')}/${logicalDay.year}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: densePhone ? 13 : 14,
-                          color: Theme.of(context).primaryColor,
-                          decoration: TextDecoration.underline,
-                          decorationColor: Theme.of(context).primaryColor.withValues(alpha: 0.4),
-                        ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.brand.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.calendar_today, size: densePhone ? 13 : 14, color: AppColors.brand),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${logicalDay.day.toString().padLeft(2, '0')}/${logicalDay.month.toString().padLeft(2, '0')}/${logicalDay.year}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: densePhone ? 13 : 14,
+                              color: AppColors.brand,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                   IconButton(
                     tooltip: 'Jour suivant',
                     padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(minWidth: densePhone ? 30 : 34, minHeight: densePhone ? 30 : 34),
-                    onPressed: isViewingToday
-                        ? null
-                        : () => _shiftAdminViewDay(pointageProvider, 1),
-                    icon: Icon(Icons.chevron_right, size: densePhone ? 20 : 22, color: Colors.blueGrey.shade800),
+                    constraints: BoxConstraints(minWidth: densePhone ? 28 : 32, minHeight: densePhone ? 28 : 32),
+                    onPressed: isViewingToday ? null : () => _shiftAdminViewDay(pointageProvider, 1),
+                    icon: Icon(Icons.chevron_right, size: densePhone ? 20 : 22, color: Colors.blueGrey.shade700),
                   ),
-                  if (!isViewingToday)
+                  if (!isViewingToday) ...[
+                    const SizedBox(width: 2),
                     TextButton(
                       onPressed: () => _applyAdminViewDay(pointageProvider, todayOnly),
                       style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
                       ),
                       child: const Text('Aujourd\'hui'),
                     ),
-                  OutlinedButton(
-                    onPressed: () {
-                      final y = todayOnly.subtract(const Duration(days: 1));
-                      _applyAdminViewDay(pointageProvider, y);
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    child: const Text('Hier'),
-                  ),
+                  ],
                 ],
               );
-              final title = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text('Pointage', style: TextStyle(fontSize: densePhone ? 18 : 22, fontWeight: FontWeight.w800)),
-                      const Spacer(),
-                      Flexible(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: compactDateInline
-                              ? SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: dateControls,
-                                )
-                              : dateControls,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${recordsForDate.length} enregistrement(s)${isViewingToday ? '' : ' (jour sélectionné)'}',
-                    style: TextStyle(fontSize: densePhone ? 11 : 12, color: Colors.grey[600]),
-                  ),
-                  if (mobile && isViewingToday)
-                    StreamBuilder<List<DailyEquipeConfirmation>>(
-                      stream: _yesterdayConfirmationsStream,
-                      builder: (context, snapY) {
-                        final yesterdayConf = snapY.data ?? _yesterdayConfirmations;
-                        if (snapY.hasData) _yesterdayConfirmations = snapY.data!;
-                        final yesterday = DateTime(logicalDay.year, logicalDay.month, logicalDay.day - 1);
-                        final workTeams = filteredTeams.where((t) => !nonWorkingIdsEffective.contains(t.equipeId)).toList();
-                        final yesterdayConfirmedIds = yesterdayConf.map((c) => c.equipeId).toSet();
-                        final notConfirmedYesterday = workTeams.where((t) => !yesterdayConfirmedIds.contains(t.equipeId)).toList();
-                        if (notConfirmedYesterday.isEmpty) return const SizedBox.shrink();
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.red.shade200),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 14),
-                                const SizedBox(width: 5),
-                                Expanded(
-                                  child: Text(
-                                    'Non confirmé (${notConfirmedYesterday.length})',
-                                    style: TextStyle(fontSize: 10.5, color: Colors.red.shade800, fontWeight: FontWeight.w700),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                InkWell(
-                                  onTap: () => _applyAdminViewDay(pointageProvider, yesterday),
-                                  child: Text(
-                                    'Voir',
-                                    style: TextStyle(fontSize: 10.5, color: Colors.red.shade700, fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                ],
+
+              // ── 3 boutons Excel ────────────────────────────────────────
+              final btnStyle = OutlinedButton.styleFrom(
+                padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                side: BorderSide(color: AppColors.brand.withValues(alpha: 0.5)),
+                foregroundColor: AppColors.brand,
               );
-              final actions = Wrap(
-                spacing: headerSpacing,
-                runSpacing: headerSpacing,
+
+              final excelButtons = Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: chipH, vertical: chipV),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(999),
-                      color: Colors.white,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.science_outlined, size: iconSize, color: Colors.blueGrey[700]),
-                        SizedBox(width: densePhone ? 6 : 8),
-                        Text('Test (±8h)', style: TextStyle(fontSize: densePhone ? 11 : 12, fontWeight: FontWeight.w600)),
-                        SizedBox(width: densePhone ? 6 : 8),
-                        Switch(
-                          value: pointageProvider.ignoreTimeWindowsForTest,
-                          onChanged: (v) => pointageProvider.setIgnoreTimeWindowsForTest(v),
-                          activeColor: Colors.blueGrey,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ],
-                    ),
-                  ),
                   OutlinedButton.icon(
-                    onPressed: pointageProvider.ignoreTimeWindowsForTest
-                        ? () {
-                            pointageProvider.startTestCycle(arrivalMinutes: 5);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Test démarré: Entrée pendant 5 min puis sortie.'),
-                                  behavior: SnackBarBehavior.fixed,
-                                ),
-                              );
-                            }
-                          }
-                        : null,
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
-                    icon: Icon(Icons.play_circle_outline, size: iconSize),
-                    label: Text('Démarrer test 5 min', style: TextStyle(fontSize: labelSize)),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _showExcelExportDialog(context, allTeams, equipes, employes, pointageProvider),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
-                    icon: Icon(Icons.table_chart_outlined, size: iconSize),
-                    label: Text('Exporter Excel', style: TextStyle(fontSize: labelSize)),
-                  ),
-                  // Raccourcis (sans supprimer le bouton existant)
-                  OutlinedButton.icon(
-                    onPressed: () => _showExcelExportDialog(
-                      context,
-                      allTeams,
-                      equipes,
-                      employes,
-                      pointageProvider,
-                      initialScope: 'groupes',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
+                    onPressed: () => _showExcelExportDialog(context, allTeams, equipes, employes, pointageProvider, initialScope: 'groupes'),
+                    style: btnStyle,
                     icon: Icon(Icons.groups_outlined, size: iconSize),
                     label: Text('Excel Groupes', style: TextStyle(fontSize: labelSize)),
                   ),
+                  const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: () => _showExcelExportDialog(
-                      context,
-                      allTeams,
-                      equipes,
-                      employes,
-                      pointageProvider,
-                      initialScope: 'all',
-                      forceSingleSheet: true,
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
+                    onPressed: () => _showExcelExportDialog(context, allTeams, equipes, employes, pointageProvider, initialScope: 'all', forceSingleSheet: true),
+                    style: btnStyle,
                     icon: Icon(Icons.business_outlined, size: iconSize),
                     label: Text('Excel Société', style: TextStyle(fontSize: labelSize)),
                   ),
+                  const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: () => _showExcelExportDialog(
-                      context,
-                      allTeams,
-                      equipes,
-                      employes,
-                      pointageProvider,
-                      initialScope: 'all',
-                      useOcpGrid: true,
-                      excludeDistribution: true,
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
+                    onPressed: () => _showExcelExportDialog(context, allTeams, equipes, employes, pointageProvider, initialScope: 'all', useOcpGrid: true, excludeDistribution: true),
+                    style: btnStyle,
                     icon: Icon(Icons.grid_view_outlined, size: iconSize),
                     label: Text('Excel OCP', style: TextStyle(fontSize: labelSize)),
-                  ),
-                  if (_canViewValidatedExcel(auth))
-                    OutlinedButton.icon(
-                      onPressed: () => _showValidatedExcelDialog(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                      ),
-                      icon: Icon(Icons.verified_outlined, size: iconSize),
-                      label: Text('Excel validés', style: TextStyle(fontSize: labelSize)),
-                    ),
-                  OutlinedButton.icon(
-                    onPressed: team == null ? null : () => exportSelectedTeamPdf(),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
-                    icon: Icon(Icons.picture_as_pdf_outlined, size: iconSize),
-                    label: Text('Exporter PDF', style: TextStyle(fontSize: labelSize)),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => setState(() => _adminTab = _AdminDesignTab.hs),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
-                    icon: Icon(Icons.verified_outlined, size: iconSize),
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('Autorisation H.Sup', style: TextStyle(fontSize: labelSize)),
-                        SizedBox(width: densePhone ? 6 : 8),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: densePhone ? 6 : 8, vertical: 2),
-                          decoration: BoxDecoration(color: const Color(0xFF7C3AED), borderRadius: BorderRadius.circular(999)),
-                          child: Text(
-                            '${_adminMonthRecords.where((r) => (r.overtimeMinutes ?? 0) > 0).length}',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: densePhone ? 10 : 11),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final reset = await _showResetPointageDayDialog(
-                        context,
-                        filteredTeams.map((t) => (id: t.equipeId, label: '${t.equipeName} — ${t.chefName}')).toList(),
-                        logicalDay,
-                      );
-                      if (reset == null || !mounted) return;
-                      final ok = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Réinitialiser pointage'),
-                          content: Text(
-                            reset.equipeId == null
-                                ? 'Supprimer toutes les données pointage et rapports du '
-                                    '${logicalDay.day}/${logicalDay.month}/${logicalDay.year} ?'
-                                : 'Supprimer le pointage du '
-                                    '${logicalDay.day}/${logicalDay.month}/${logicalDay.year} '
-                                    'pour ${reset.equipeLabel} uniquement ?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(ctx).pop(false),
-                              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                            ),
-                            FilledButton(
-                              onPressed: () => Navigator.of(ctx).pop(true),
-                              child: const Text('Confirmer'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (ok != true || !mounted) return;
-                      await pointageProvider.clearPointageAndReportsForDay(
-                        logicalDay,
-                        equipeId: reset.equipeId,
-                      );
-                      if (reset.equipeId == null) {
-                        for (final t in allTeams) {
-                          await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
-                          await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
-                        }
-                      } else {
-                        await _confirmationRepo.unconfirmEquipe(reset.equipeId!, logicalDay);
-                        await _snapshotRepo.deleteEquipeSnapshot(reset.equipeId!, logicalDay);
-                      }
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              reset.equipeId == null
-                                  ? 'Pointage réinitialisé pour ce jour.'
-                                  : 'Pointage réinitialisé pour l\'équipe sélectionnée.',
-                            ),
-                            backgroundColor: Colors.green,
-                            behavior: SnackBarBehavior.fixed,
-                          ),
-                        );
-                      }
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: actionH, vertical: actionV),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: densePhone ? VisualDensity.compact : VisualDensity.standard,
-                    ),
-                    icon: Icon(Icons.delete_sweep_outlined, size: iconSize),
-                    label: Text('Reset test', style: TextStyle(fontSize: labelSize)),
                   ),
                 ],
               );
 
-              if (compactHeader) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    title,
-                    SizedBox(height: densePhone ? 4 : 8),
-                    _buildHorizontalMouseNavigator(
-                      controller: _adminActionsScrollController,
-                      child: actions,
-                    ),
-                  ],
-                );
-              }
-
-              return Row(
-                children: [
-                  Expanded(child: title),
-                  Flexible(child: Align(alignment: Alignment.centerRight, child: actions)),
-                ],
+              // ── Layout final ───────────────────────────────────────────
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
+                child: densePhone
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Text('Pointage', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                            const SizedBox(width: 8),
+                            Expanded(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: dateRow)),
+                          ]),
+                          const SizedBox(height: 6),
+                          SingleChildScrollView(scrollDirection: Axis.horizontal, child: excelButtons),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text('Pointage', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                          const SizedBox(width: 14),
+                          dateRow,
+                          const SizedBox(width: 8),
+                          Text(
+                            '— ${recordsForDate.length} enreg.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: excelButtons,
+                            ),
+                          ),
+                        ],
+                      ),
               );
     }
 
@@ -3999,86 +3634,6 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
-  Future<({String? equipeId, String equipeLabel})?> _showResetPointageDayDialog(
-    BuildContext context,
-    List<({String id, String label})> teamOptions,
-    DateTime day,
-  ) async {
-    if (!context.mounted) return null;
-    return showDialog<({String? equipeId, String equipeLabel})>(
-      context: context,
-      builder: (ctx) {
-        bool resetAll = true;
-        String? selectedId = teamOptions.isNotEmpty ? teamOptions.first.id : null;
-        return StatefulBuilder(
-          builder: (ctx, setD) => AlertDialog(
-            title: const Text('Réinitialiser pointage (jour)'),
-            content: SizedBox(
-              width: 500,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Date: ${day.day}/${day.month}/${day.year}'),
-                  const SizedBox(height: 10),
-                  RadioListTile<bool>(
-                    value: true,
-                    groupValue: resetAll,
-                    onChanged: (v) => setD(() => resetAll = v ?? true),
-                    title: const Text('Tous les équipes'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                  RadioListTile<bool>(
-                    value: false,
-                    groupValue: resetAll,
-                    onChanged: (v) => setD(() => resetAll = v ?? true),
-                    title: const Text('Équipe spécifique'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                  if (!resetAll) ...[
-                    const SizedBox(height: 6),
-                    DropdownButtonFormField<String>(
-                      value: selectedId,
-                      decoration: const InputDecoration(
-                        labelText: 'Choisir l\'équipe',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: teamOptions
-                          .map((t) => DropdownMenuItem<String>(
-                                value: t.id,
-                                child: Text(t.label, overflow: TextOverflow.ellipsis),
-                              ))
-                          .toList(),
-                      onChanged: (v) => setD(() => selectedId = v),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, null),
-                child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-              ),
-              FilledButton(
-                onPressed: () {
-                  if (!resetAll && (selectedId == null || selectedId!.isEmpty)) return;
-                  if (resetAll) {
-                    Navigator.pop(ctx, (equipeId: null, equipeLabel: 'Tous'));
-                    return;
-                  }
-                  final selected = teamOptions.where((t) => t.id == selectedId).toList();
-                  final label = selected.isNotEmpty ? selected.first.label : 'Équipe';
-                  Navigator.pop(ctx, (equipeId: selectedId, equipeLabel: label));
-                },
-                child: const Text('Continuer'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   Future<void> _showAssignHsDialog(
     BuildContext context,
