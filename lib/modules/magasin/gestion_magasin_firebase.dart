@@ -417,6 +417,7 @@ class MagasinProvider extends ChangeNotifier {
   Future<void> deleteProduit(String id) async => _produitsRef.doc(id).delete();
 
   Future<void> _appliquerMouvement(Mouvement m, {required bool annuler}) async {
+    if (m.produitId.isEmpty) return;
     final prodDoc = _produitsRef.doc(m.produitId);
     final snap = await prodDoc.get();
     if (!snap.exists) return;
@@ -432,7 +433,7 @@ class MagasinProvider extends ChangeNotifier {
     } else {
       final newVariantes = produit.variantes.map((v) {
         final ligne = m.lignes.firstWhere(
-              (l) => l.unite == v.unite,
+          (l) => l.unite == v.unite,
           orElse: () => LigneMouvement(unite: v.unite, quantite: 0),
         );
         return VarianteProduit(
@@ -472,10 +473,14 @@ class MagasinProvider extends ChangeNotifier {
   }
 
   Future<void> deleteEntree(String id) async {
-    final snap = await _mouvementsRef.doc(id).get();
-    if (!snap.exists) return;
-    await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
-    await _mouvementsRef.doc(id).delete();
+    try {
+      final snap = await _mouvementsRef.doc(id).get();
+      if (!snap.exists) return;
+      await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
+      await _mouvementsRef.doc(id).delete();
+    } catch (e) {
+      debugPrint('deleteEntree error: $e');
+    }
   }
 
   Future<void> updateEntree(String id, Mouvement mouvement) async =>
@@ -488,10 +493,15 @@ class MagasinProvider extends ChangeNotifier {
   }
 
   Future<void> deleteSortie(String id) async {
-    final snap = await _mouvementsRef.doc(id).get();
-    if (!snap.exists) return;
-    await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
-    await _mouvementsRef.doc(id).delete();
+    try {
+      final snap = await _mouvementsRef.doc(id).get();
+      if (!snap.exists) return;
+      final mouvement = Mouvement.fromFirestore(snap);
+      await _appliquerMouvement(mouvement, annuler: true);
+      await _mouvementsRef.doc(id).delete();
+    } catch (e) {
+      debugPrint('deleteSortie error: $e');
+    }
   }
 
   Future<void> updateSortie(String id, Mouvement mouvement) async =>
@@ -1161,8 +1171,6 @@ class _EntreesPageState extends State<_EntreesPage> {
               )).toList(),
             ),
           ),
-          borderRadius: BorderRadius.circular(kR2),
-          boxShadow: [BoxShadow(color: kGreen.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
         ),
       ],
     );
@@ -1184,6 +1192,14 @@ class _SortiesPage extends StatefulWidget {
 class _SortiesPageState extends State<_SortiesPage> {
   String _cat = 'Toutes';
   List<Mouvement> get _list => widget.sorties.where((m) => _cat == 'Toutes' || m.categorie == _cat).toList();
+
+  String _msgRestitution(Mouvement m) {
+    if (!m.aVariantes || m.lignes.isEmpty) {
+      return 'La suppression restituera ${m.quantite} unité(s) au stock de ce produit.';
+    }
+    final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
+    return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
+  }
 
   int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte.toInt());
 
@@ -1219,7 +1235,7 @@ class _SortiesPageState extends State<_SortiesPage> {
             separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (ctx, i) => _MouvCard(
               m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
-              onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+              onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
             ),
           )
@@ -1229,7 +1245,7 @@ class _SortiesPageState extends State<_SortiesPage> {
               empty: false, accentColor: kOrange,
               columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
               rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false,
-                onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
+                onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
@@ -1379,6 +1395,15 @@ class _HistoriquePageState extends State<_HistoriquePage> {
   String _magasinFiltre = 'Tous';
   String _fournisseurFiltre = 'Tous';
   DateTime? _dateDebut, _dateFin;
+
+  String _msgSuppression(Mouvement m) {
+    if (m.type == 'entree') return 'Supprimer cette entrée du journal ?';
+    if (!m.aVariantes || m.lignes.isEmpty) {
+      return 'La suppression restituera ${m.quantite} unité(s) au stock de ce produit.';
+    }
+    final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
+    return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
+  }
 
   List<Mouvement> get _list {
     final all = [...widget.magasin.entrees, ...widget.magasin.sorties];
@@ -1547,7 +1572,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                 m: m, color: isE ? kGreen : kOrange, bgColor: isE ? kGreenLt : kOrangeLt,
                 showPreneur: false,
                 fournisseurNom: isE ? m.fournisseurNom : null,
-                onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: isE ? 'Supprimer cette entrée ?' : 'Supprimer cette sortie ?', onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               );
             },
@@ -1601,8 +1626,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
               }).toList(),
             ),
           ),
-          borderRadius: BorderRadius.circular(kR2),
-          boxShadow: [BoxShadow(color: kOrange.withOpacity(0.3), blurRadius: 18, offset: const Offset(0, 6))],
         ),
       ],
     );
@@ -2203,34 +2226,6 @@ class _MouvFormState extends State<_MouvForm> {
         ScaffoldMessenger.of(scaffoldCtx).showSnackBar(SnackBar(content: Text('Erreur : $e'), backgroundColor: kRed, behavior: SnackBarBehavior.floating));
       }
     }
-
-    final lignes = _hasVar
-        ? _selVar.map((u) => LigneMouvement(unite: u, quantite: int.tryParse(_varCtrl[u]?.text ?? '0') ?? 0)).toList()
-        : <LigneMouvement>[];
-
-    final m = Mouvement(
-      id: '',
-      type: widget.type,
-      produitId: prod.id,
-      nomProduit: prod.nom,
-      reference: prod.reference,
-      categorie: catFinal,
-      magasin: _selMag!,
-      aVariantes: _hasVar,
-      groupeUniteLabel: _hasVar ? (prod.groupeUniteLabel ?? _newGroupeLabel) : null,
-      quantite: _hasVar ? 0 : (int.tryParse(_qteC.text) ?? 0),
-      lignes: lignes,
-      date: DateTime.now(),
-      preneurNom: _isSortie ? _preneurC.text.trim() : null,
-      siteId: prod.siteId,
-    );
-
-    if (_isSortie) {
-      await widget.magasin.addSortie(m);
-    } else {
-      await widget.magasin.addEntree(m);
-    }
-    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _showPreneurDialog(BuildContext context) async {
@@ -2820,7 +2815,7 @@ class _DetailsOperationDialog extends StatelessWidget {
             Flexible(child: Text(isE ? 'Entrée de stock — ${m.totalQte} unité${m.totalQte != 1 ? "s" : ""}' : 'Sortie de stock — ${m.totalQte} unité${m.totalQte != 1 ? "s" : ""}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color), overflow: TextOverflow.ellipsis)),
           ]),
         ),
-        if (p.aVariantes && p.variantes.isNotEmpty) ...[
+        if (m.aVariantes && m.lignes.isNotEmpty) ...[
           const SizedBox(height: 20),
           Text('Détail par ${g?.label.toLowerCase() ?? "variante"}', style: _h2),
           const SizedBox(height: 10),
@@ -2968,7 +2963,8 @@ class _FullDialog extends StatelessWidget {
                     child: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 6), Flexible(child: Text(saveLabel, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis))]),
                   ),
-                ]),
+                ),
+              ]),
               ),
             ]),
           )),
@@ -3025,10 +3021,13 @@ class _RowWidget extends StatefulWidget {
 
 class _RowWidgetState extends State<_RowWidget> {
   bool _hov = false;
+  void _setHov(bool v) {
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) setState(() => _hov = v); });
+  }
   @override
   Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) => setState(() => _hov = true),
-    onExit: (_) => setState(() => _hov = false),
+    onEnter: (_) => _setHov(true),
+    onExit: (_) => _setHov(false),
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 120),
       color: _hov ? widget.accentColor.withOpacity(0.04) : kSurface,

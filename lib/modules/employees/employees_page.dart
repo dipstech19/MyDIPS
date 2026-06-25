@@ -381,6 +381,8 @@ class _EmployeesPageState extends State<EmployeesPage>
     final employes = _employes(prov, auth, site);
     final equipes = _equipes(prov, auth, site);
     final filtered = _filtered(employes, equipes);
+    final quittesFiltered = employes.where((e) => e.statut == EmployeStatut.quitte).toList()..sort((a, b) => a.nom.compareTo(b.nom));
+    final quittesCount = quittesFiltered.length;
 
     final padding = pagePadding(context);
     final mobile = isMobile(context);
@@ -439,11 +441,16 @@ class _EmployeesPageState extends State<EmployeesPage>
                   ],
                 ),
                 if (canManageEmployees)
-                  ElevatedButton.icon(
-                    onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
-                    icon: const Icon(Icons.person_add),
-                    label: const Text('Nouveau Collaborateur'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () => showDialog(context: context, builder: (_) => EmployeeFormDialog(employes: employes, onSave: (e) async { await prov.addEmploye(e); })),
+                        icon: const Icon(Icons.person_add),
+                        label: const Text('Nouveau Collaborateur'),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -487,6 +494,25 @@ class _EmployeesPageState extends State<EmployeesPage>
                       _filterDistributionDropdown(employes, small: true),
                       const SizedBox(width: 6),
                       _filterCatChip('Nettoyage', 'nettoyage', small: true),
+                      if (quittesCount > 0) ...[
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => _showQuittesDialog(context, quittesFiltered, employes, auth.isDirecteur, canManageEmployees, canDeleteEmployees, prov),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.exit_to_app, size: 11, color: Colors.grey.shade600),
+                              const SizedBox(width: 3),
+                              Text('Quitté ($quittesCount)', style: TextStyle(fontSize: 10, color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                      ],
                       if (_filterCategorie != null) ...[
                         const SizedBox(width: 8),
                         GestureDetector(
@@ -547,6 +573,25 @@ class _EmployeesPageState extends State<EmployeesPage>
                       _filterDistributionDropdown(employes),
                       const SizedBox(width: 8),
                       _filterCatChip('Nettoyage', 'nettoyage'),
+                      if (quittesCount > 0) ...[
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => _showQuittesDialog(context, quittesFiltered, employes, auth.isDirecteur, canManageEmployees, canDeleteEmployees, prov),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.exit_to_app, size: 13, color: Colors.grey.shade600),
+                              const SizedBox(width: 4),
+                              Text('Quitté ($quittesCount)', style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                      ],
                       if (_filterCategorie != null) ...[
                         const SizedBox(width: 10),
                         GestureDetector(
@@ -613,6 +658,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     internalScroll: false,
                     filterCategorie: _filterCategorie,
                     filterEquipeId: _filterEquipeId,
+                    showQuittes: false,
                   )
                 : EquipesTab(
                     equipes: equipes,
@@ -644,6 +690,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                     prov,
                     filterCategorie: _filterCategorie,
                     filterEquipeId: _filterEquipeId,
+                    showQuittes: false,
                   ),
                   EquipesTab(
                     equipes: equipes,
@@ -688,82 +735,38 @@ class _EmployeesPageState extends State<EmployeesPage>
     EmployeesProvider prov,
     {bool internalScroll = true,
      String? filterCategorie,
-     String? filterEquipeId}
+     String? filterEquipeId,
+     bool showQuittes = false}
   ) {
-    final mobile = isMobile(context);
-
     final tableSection = internalScroll
         ? Expanded(
-            child: mobile
-                ? LayoutBuilder(
-                    builder: (context, constraints) {
-                      return SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: 700,
-                          height: constraints.maxHeight,
-                          child: _employesTable(
-                            context,
-                            employes,
-                            equipes,
-                            filtered,
-                            isDirecteur,
-                            canManageEmployees,
-                            canDeleteEmployees,
-                            prov,
-                            filterCategorie: filterCategorie,
-                            filterEquipeId: filterEquipeId,
-                          ),
-                        ),
-                      );
-                    },
-                  )
-                : _employesTable(
-                    context,
-                    employes,
-                    equipes,
-                    filtered,
-                    isDirecteur,
-                    canManageEmployees,
-                    canDeleteEmployees,
-                    prov,
-                    filterCategorie: filterCategorie,
-                    filterEquipeId: filterEquipeId,
-                  ),
+            child: _employesTable(
+              context,
+              employes,
+              equipes,
+              filtered,
+              isDirecteur,
+              canManageEmployees,
+              canDeleteEmployees,
+              prov,
+              filterCategorie: filterCategorie,
+              filterEquipeId: filterEquipeId,
+              showQuittes: showQuittes,
+            ),
           )
-        : (mobile
-            ? SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: 700,
-                  child: _employesTable(
-                    context,
-                    employes,
-                    equipes,
-                    filtered,
-                    isDirecteur,
-                    canManageEmployees,
-                    canDeleteEmployees,
-                    prov,
-                    internalScroll: false,
-                    filterCategorie: filterCategorie,
-                    filterEquipeId: filterEquipeId,
-                  ),
-                ),
-              )
-            : _employesTable(
-                context,
-                employes,
-                equipes,
-                filtered,
-                isDirecteur,
-                canManageEmployees,
-                canDeleteEmployees,
-                prov,
-                internalScroll: false,
-                filterCategorie: filterCategorie,
-                filterEquipeId: filterEquipeId,
-              ));
+        : _employesTable(
+            context,
+            employes,
+            equipes,
+            filtered,
+            isDirecteur,
+            canManageEmployees,
+            canDeleteEmployees,
+            prov,
+            internalScroll: false,
+            filterCategorie: filterCategorie,
+            filterEquipeId: filterEquipeId,
+          );
 
     return Column(
       children: [
@@ -847,24 +850,26 @@ class _EmployeesPageState extends State<EmployeesPage>
               style: TextStyle(fontSize: mobile ? 12 : 13),
               overflow: TextOverflow.ellipsis)),
           ],
-          Expanded(flex: 2, child: Container(
-            padding: EdgeInsets.symmetric(horizontal: mobile ? 7 : 9, vertical: mobile ? 4 : 5),
-            decoration: BoxDecoration(
-              color: e.statut.color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: e.statut.color.withValues(alpha: 0.25)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: mobile ? 5 : 6,
-                height: mobile ? 5 : 6,
-                decoration: BoxDecoration(color: e.statut.color, shape: BoxShape.circle),
+          Expanded(flex: 2, child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: mobile ? 7 : 9, vertical: mobile ? 3 : 4),
+              decoration: BoxDecoration(
+                color: e.statut.color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: e.statut.color.withValues(alpha: 0.25)),
               ),
-              SizedBox(width: mobile ? 5 : 6),
-              Flexible(child: Text(e.statut.label,
-                style: TextStyle(fontSize: mobile ? 10 : 11, color: e.statut.color, fontWeight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis)),
-            ]),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                  width: mobile ? 5 : 6,
+                  height: mobile ? 5 : 6,
+                  decoration: BoxDecoration(color: e.statut.color, shape: BoxShape.circle),
+                ),
+                SizedBox(width: mobile ? 4 : 5),
+                Text(e.statut.label,
+                  style: TextStyle(fontSize: mobile ? 10 : 11, color: e.statut.color, fontWeight: FontWeight.w600)),
+              ]),
+            ),
           )),
           if (isChefOnly) const SizedBox(width: 60),
           if (!isChefOnly)
@@ -935,6 +940,170 @@ class _EmployeesPageState extends State<EmployeesPage>
     ]),
   );
 
+  // ── helper: build a single employee mobile card ──────────────────────────
+  Widget _buildEmployeeMobileCard(
+    BuildContext context,
+    Employe e,
+    String? chefEquipeNom,
+    List<Employe> employes,
+    bool isDirecteur,
+    bool canManageEmployees,
+    bool canDeleteEmployees,
+    EmployeesProvider prov, {
+    bool isQuitte = false,
+  }) {
+    return Opacity(
+      opacity: isQuitte ? 0.55 : 1.0,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.shade200),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => showDialog(
+            context: context,
+            builder: (_) => EmployeeDetailDialog(
+              employe: e,
+              allEmployes: employes,
+              isDirecteur: isDirecteur,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top row: avatar + name/cin + status badge
+                Row(
+                  children: [
+                    SmartAvatar(imageUrl: e.photoUrl, fallbackText: e.nom, radius: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.nom,
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text('CIN: ${e.cin}',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    // Status badge right-aligned
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: e.statut.color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: e.statut.color.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                          width: 5,
+                          height: 5,
+                          decoration: BoxDecoration(color: e.statut.color, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(e.statut.label,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: e.statut.color,
+                                fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  ],
+                ),
+                // Poste row
+                if (e.poste.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.work_outline, size: 13, color: Colors.grey[500]),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(e.poste,
+                          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ]),
+                ],
+                // Chef d'équipe tag
+                if (chefEquipeNom != null) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.brandLight,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: AppColors.brandBorder),
+                    ),
+                    child: Text(
+                      "Chef d'équipe · $chefEquipeNom",
+                      style: const TextStyle(
+                          fontSize: 10, color: AppColors.brand, fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                // Action buttons
+                if (canManageEmployees) ...[
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    OutlinedButton(
+                      onPressed: () => showDialog(
+                        context: context,
+                        builder: (_) => EmployeeEditDialog(
+                          employe: e,
+                          allEmployes: employes,
+                          onSave: (updated) async => await prov.updateEmploye(updated),
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.green[700],
+                        side: BorderSide(color: Colors.green.shade400),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: const Text('Modifier'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => _showChangeStatutDialog(context, e, prov),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.brand,
+                        side: const BorderSide(color: AppColors.brand),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: const Text('Statut'),
+                    ),
+                    if (canDeleteEmployees) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[700]),
+                        tooltip: 'Supprimer le collaborateur',
+                        onPressed: () => _showDeleteEmployeConfirm(context, e, prov),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      ),
+                    ],
+                  ]),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _employesTable(
     BuildContext context,
     List<Employe> employes,
@@ -946,7 +1115,8 @@ class _EmployeesPageState extends State<EmployeesPage>
     EmployeesProvider prov,
     {bool internalScroll = true,
      String? filterCategorie,
-     String? filterEquipeId}
+     String? filterEquipeId,
+     bool showQuittes = false}
   ) {
     final mobile = isMobile(context);
     final isChefOnly = !isDirecteur;
@@ -960,11 +1130,15 @@ class _EmployeesPageState extends State<EmployeesPage>
     ];
     // Séparation actifs / ayant quitté
     final activeFiltered = sortedFiltered.where((e) => e.statut != EmployeStatut.quitte).toList();
-    final quittesFiltered = sortedFiltered.where((e) => e.statut == EmployeStatut.quitte).toList();
+    // Personnes ayant quitté : depuis la liste complète (indépendant du filtre actif)
+    final quittesFiltered = employes
+        .where((e) => e.statut == EmployeStatut.quitte)
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
     final listItems = <dynamic>[
       ...activeFiltered,
-      if (quittesFiltered.isNotEmpty) '_quittes_${quittesFiltered.length}',
-      ...quittesFiltered,
+      if (showQuittes && quittesFiltered.isNotEmpty) '_quittes_${quittesFiltered.length}',
+      if (showQuittes) ...quittesFiltered,
     ];
     // Vue groupée pour Distribution sans équipe spécifique
     final useGrouped = filterCategorie == 'distribution' && filterEquipeId == null;
@@ -979,26 +1153,29 @@ class _EmployeesPageState extends State<EmployeesPage>
         mainAxisSize: MainAxisSize.max,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 16, vertical: mobile ? 10 : 12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
+          // Desktop-only table header
+          if (!mobile) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: const BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
+              ),
+              child: Row(children: [
+                const Expanded(flex: 3, child: Text('Collaborateur', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                if (!isChefOnly) ...[
+                  const Expanded(flex: 2, child: Text('Poste', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                  const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                ],
+                const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                if (isChefOnly)
+                  const SizedBox(width: 60, child: Text('', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                if (!isChefOnly)
+                  SizedBox(width: actionsColumnWidth, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+              ]),
             ),
-            child: Row(children: [
-              const Expanded(flex: 3, child: Text('Collaborateur', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              if (!isChefOnly) ...[
-                const Expanded(flex: 2, child: Text('Poste', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-                const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              ],
-              const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-              if (isChefOnly)
-                const SizedBox(width: 60, child: Text('', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
-              if (!isChefOnly)
-                SizedBox(width: actionsColumnWidth, child: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
-            ]),
-          ),
-          const Divider(height: 1),
+            const Divider(height: 1),
+          ],
           if (filtered.isEmpty)
             Padding(
               padding: const EdgeInsets.all(24),
@@ -1008,6 +1185,7 @@ class _EmployeesPageState extends State<EmployeesPage>
             Expanded(
               child: useGrouped
                 ? ListView.builder(
+                    padding: mobile ? const EdgeInsets.all(10) : EdgeInsets.zero,
                     itemCount: groupedItems.length,
                     itemBuilder: (context, i) {
                       final item = groupedItems[i];
@@ -1019,6 +1197,11 @@ class _EmployeesPageState extends State<EmployeesPage>
                       }
                       final e = item as Employe;
                       final chefEquipeNom = chefEquipeMap[e.id];
+                      if (mobile) {
+                        return _buildEmployeeMobileCard(
+                          context, e, chefEquipeNom, employes, isDirecteur,
+                          canManageEmployees, canDeleteEmployees, prov);
+                      }
                       final nextIsGroup = i + 1 < groupedItems.length && groupedItems[i + 1] is Equipe;
                       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                         _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth),
@@ -1027,29 +1210,35 @@ class _EmployeesPageState extends State<EmployeesPage>
                     },
                   )
                 : ListView.builder(
-                itemCount: listItems.length,
-                itemBuilder: (context, i) {
-                  final item = listItems[i];
-                  if (item is String) return _buildQuittesHeader(quittesFiltered.length, mobile);
-                  final e = item as Employe;
-                  final chefEquipeNom = chefEquipeMap[e.id];
-                  final isQuitte = e.statut == EmployeStatut.quitte;
-                  final nextItem = i + 1 < listItems.length ? listItems[i + 1] : null;
-                  final showDivider = nextItem != null && nextItem is! String;
-                  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth, isQuitte: isQuitte),
-                    if (showDivider) const Divider(height: 1),
-                  ]);
-                },
-                // DEAD BLOCK REMOVED — replaced by _buildEmployeeRowWidget
-                // ignore: dead_code
-              ),
+                    padding: mobile ? const EdgeInsets.all(10) : EdgeInsets.zero,
+                    itemCount: listItems.length,
+                    itemBuilder: (context, i) {
+                      final item = listItems[i];
+                      if (item is String) return _buildQuittesHeader(quittesFiltered.length, mobile);
+                      final e = item as Employe;
+                      final chefEquipeNom = chefEquipeMap[e.id];
+                      final isQuitte = e.statut == EmployeStatut.quitte;
+                      if (mobile) {
+                        return _buildEmployeeMobileCard(
+                          context, e, chefEquipeNom, employes, isDirecteur,
+                          canManageEmployees, canDeleteEmployees, prov,
+                          isQuitte: isQuitte);
+                      }
+                      final nextItem = i + 1 < listItems.length ? listItems[i + 1] : null;
+                      final showDivider = nextItem != null && nextItem is! String;
+                      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth, isQuitte: isQuitte),
+                        if (showDivider) const Divider(height: 1),
+                      ]);
+                    },
+                  ),
             )
           else
             useGrouped
               ? ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
+                  padding: mobile ? const EdgeInsets.all(10) : EdgeInsets.zero,
                   itemCount: groupedItems.length,
                   itemBuilder: (context, i) {
                     final item = groupedItems[i];
@@ -1061,6 +1250,11 @@ class _EmployeesPageState extends State<EmployeesPage>
                     }
                     final e = item as Employe;
                     final chefEquipeNom = chefEquipeMap[e.id];
+                    if (mobile) {
+                      return _buildEmployeeMobileCard(
+                        context, e, chefEquipeNom, employes, isDirecteur,
+                        canManageEmployees, canDeleteEmployees, prov);
+                    }
                     final nextIsGroup = i + 1 < groupedItems.length && groupedItems[i + 1] is Equipe;
                     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth),
@@ -1069,23 +1263,30 @@ class _EmployeesPageState extends State<EmployeesPage>
                   },
                 )
               : ListView.builder(
-              itemCount: listItems.length,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemBuilder: (context, i) {
-                final item = listItems[i];
-                if (item is String) return _buildQuittesHeader(quittesFiltered.length, mobile);
-                final e = item as Employe;
-                final chefEquipeNom = chefEquipeMap[e.id];
-                final isQuitte = e.statut == EmployeStatut.quitte;
-                final nextItem = i + 1 < listItems.length ? listItems[i + 1] : null;
-                final showDivider = nextItem != null && nextItem is! String;
-                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth, isQuitte: isQuitte),
-                  if (showDivider) const Divider(height: 1),
-                ]);
-              },
-            ),
+                  itemCount: listItems.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: mobile ? const EdgeInsets.all(10) : EdgeInsets.zero,
+                  itemBuilder: (context, i) {
+                    final item = listItems[i];
+                    if (item is String) return _buildQuittesHeader(quittesFiltered.length, mobile);
+                    final e = item as Employe;
+                    final chefEquipeNom = chefEquipeMap[e.id];
+                    final isQuitte = e.statut == EmployeStatut.quitte;
+                    if (mobile) {
+                      return _buildEmployeeMobileCard(
+                        context, e, chefEquipeNom, employes, isDirecteur,
+                        canManageEmployees, canDeleteEmployees, prov,
+                        isQuitte: isQuitte);
+                    }
+                    final nextItem = i + 1 < listItems.length ? listItems[i + 1] : null;
+                    final showDivider = nextItem != null && nextItem is! String;
+                    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      _buildEmployeeRowWidget(context, e, chefEquipeNom, employes, isDirecteur, canManageEmployees, canDeleteEmployees, prov, mobile, isChefOnly, actionsColumnWidth, isQuitte: isQuitte),
+                      if (showDivider) const Divider(height: 1),
+                    ]);
+                  },
+                ),
         ],
       ),
     );
@@ -1116,7 +1317,7 @@ class _EmployeesPageState extends State<EmployeesPage>
                         horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? s.color.withOpacity(0.15)
+                          ? s.color.withValues(alpha: 0.15)
                           : Colors.grey.shade50,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
@@ -1164,6 +1365,106 @@ class _EmployeesPageState extends State<EmployeesPage>
           ],
         ),
       ),
+    );
+  }
+
+  void _showQuittesDialog(BuildContext context, List<Employe> quittesFiltered, List<Employe> employes, bool isDirecteur, bool canManageEmployees, bool canDeleteEmployees, EmployeesProvider prov) {
+    final mobile = isMobile(context);
+    final actionsW = mobile ? 140.0 : 160.0;
+    final Map<String, String> chefMap = {
+      for (final eq in prov.equipes) if (eq.chefId.isNotEmpty) eq.chefId: eq.nom,
+    };
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: 700, maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: const BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14)),
+                    border: Border(bottom: BorderSide(color: Colors.red.shade100)),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.exit_to_app, color: Colors.red.shade700, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Collaborateurs ayant quitté (${quittesFiltered.length})',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.red.shade800),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.pop(ctx),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    ),
+                  ]),
+                ),
+                // Table header
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 16, vertical: mobile ? 10 : 12),
+                  decoration: BoxDecoration(color: Colors.grey.shade50),
+                  child: Row(children: [
+                    const Expanded(flex: 3, child: Text('Collaborateur', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                    if (isDirecteur) ...[
+                      const Expanded(flex: 2, child: Text('Poste', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                      const Expanded(flex: 2, child: Text('Chef direct', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                    ],
+                    const Expanded(flex: 2, child: Text('Statut', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                    if (!isDirecteur) const SizedBox(width: 60),
+                    SizedBox(width: actionsW, child: Text(canManageEmployees ? 'Actions' : '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                  ]),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: quittesFiltered.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Center(child: Text('Aucun collaborateur ayant quitté', style: TextStyle(color: Colors.grey))),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: quittesFiltered.length,
+                        itemBuilder: (listCtx, i) {
+                          final e = quittesFiltered[i];
+                          final chefNom = chefMap[e.id];
+                          final dateQuitte = e.dateQuitte.isNotEmpty ? e.dateQuitte : null;
+                          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                            _buildEmployeeRowWidget(
+                              context, e, chefNom, employes,
+                              isDirecteur, canManageEmployees, canDeleteEmployees,
+                              prov, mobile, !isDirecteur, actionsW,
+                              isQuitte: true,
+                            ),
+                            if (dateQuitte != null)
+                              Padding(
+                                padding: EdgeInsets.only(left: mobile ? 44 : 52, bottom: 6),
+                                child: Row(children: [
+                                  Icon(Icons.calendar_today, size: 11, color: Colors.red.shade400),
+                                  const SizedBox(width: 4),
+                                  Text('Départ le $dateQuitte',
+                                      style: TextStyle(fontSize: 11, color: Colors.red.shade500, fontStyle: FontStyle.italic)),
+                                ]),
+                              ),
+                            if (i < quittesFiltered.length - 1) const Divider(height: 1),
+                          ]);
+                        },
+                      ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

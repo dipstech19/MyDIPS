@@ -453,6 +453,7 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
             ? _ocpExcelSegment.trim()
             : OcpExcelSegmentCode.auto,
         ocpForceSalleControle: _ocpForceSalleControle,
+        dateQuitte: widget.employe.dateQuitte,
       ));
       
       if (mounted) {

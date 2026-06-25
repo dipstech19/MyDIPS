@@ -17,7 +17,6 @@ import '../employees/conges_provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
 import '../employees/models/equipe_model.dart';
-import '../employees/utils/leave_days_utils.dart';
 import '../pointage/pointage_provider.dart';
 import '../pointage/models/pointage_model.dart';
 import '../distribution/distribution_groups_provider.dart';
@@ -542,18 +541,6 @@ class _DemandesPageState extends State<DemandesPage>
     final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
     final pointageProvider = context.read<PointageProvider>();
     final requestedDays = _requestedLeaveDays(start, end);
-    final acquired = leaveDaysAcquired(employee.dateDebut);
-    final extra = employee.leaveDaysExtra;
-    final taken = await conges.getDaysTaken(employee.id, refresh: true);
-    final remaining = (acquired + extra - taken).clamp(0.0, double.infinity);
-    if (requestedDays > remaining) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Solde insuffisant: restant ${remaining.toStringAsFixed(1)}j, demandé ${requestedDays.toStringAsFixed(1)}j.')),
-        );
-      }
-      return;
-    }
 
     final startAt = DateTime(start.year, start.month, start.day, 0, 0);
     final endAt = DateTime(end.year, end.month, end.day, 23, 59);
@@ -700,23 +687,6 @@ class _DemandesPageState extends State<DemandesPage>
       }
       return;
     }
-    final requestedDays = _requestedLeaveDays(req.startDate, req.endDate);
-    final acquired = leaveDaysAcquired(employee.first.dateDebut);
-    final extra = employee.first.leaveDaysExtra;
-    final congesProvider = context.read<CongesProvider>();
-    final taken = await congesProvider.getDaysTaken(req.employeeId, refresh: true);
-    final remaining = (acquired + extra - taken).clamp(0.0, double.infinity);
-    if (requestedDays > remaining && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Solde insuffisant pour ${employee.first.nom}: restant ${remaining.toStringAsFixed(1)}j, demandé ${requestedDays.toStringAsFixed(1)}j.',
-          ),
-        ),
-      );
-      return;
-    }
-
     final pdf = await _buildApprovedLeavePdf(
       req,
       auth.currentUser?.nom ?? 'Administrateur',
@@ -1471,7 +1441,7 @@ class _AdminLeaveView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final canCreateAndApprove = auth.isDirecteur;
+    final canCreateAndApprove = true;
     final canCreatePersonalPending = auth.isChefAtelierAdmin;
     final fmt = (DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     final yearRequests = requests.where((r) => r.startDate.year == selectedYear || r.endDate.year == selectedYear).toList();
@@ -1527,7 +1497,7 @@ class _AdminLeaveView extends StatelessWidget {
                 ),
                 if (canCreateAndApprove)
                   IconButton(
-                    tooltip: 'Créer et approuver (Admin)',
+                    tooltip: 'Saisir un congé manuellement',
                     icon: const Icon(Icons.add_task_outlined),
                     onPressed: () => _showAdminCreateApproveDialog(context),
                   ),
@@ -1537,6 +1507,11 @@ class _AdminLeaveView extends StatelessWidget {
                     icon: const Icon(Icons.person_add_alt_1_outlined),
                     onPressed: () => _showCreatePersonalPendingDialog(context),
                   ),
+                IconButton(
+                  tooltip: 'Supprimer toutes les demandes',
+                  icon: const Icon(Icons.delete_sweep_outlined, color: Colors.red),
+                  onPressed: () => _deleteAllLeaveRequests(context),
+                ),
                 IconButton(
                   tooltip: 'Réinitialiser soldes congé (Test)',
                   icon: const Icon(Icons.restart_alt, color: Colors.orange),
@@ -1648,6 +1623,11 @@ class _AdminLeaveView extends StatelessWidget {
                         icon: const Icon(Icons.person_add_alt_1_outlined),
                         onPressed: () => _showCreatePersonalPendingDialog(context),
                       ),
+                    IconButton(
+                      tooltip: 'Supprimer toutes les demandes',
+                      icon: const Icon(Icons.delete_sweep_outlined, color: Colors.red),
+                      onPressed: () => _deleteAllLeaveRequests(context),
+                    ),
                     IconButton(
                       tooltip: 'Réinitialiser soldes congé (Test)',
                       icon: const Icon(Icons.restart_alt, color: Colors.orange),
@@ -1764,6 +1744,62 @@ class _AdminLeaveView extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteAllLeaveRequests(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.delete_sweep_outlined, color: Colors.red.shade700),
+            const SizedBox(width: 8),
+            const Text('Supprimer toutes les demandes'),
+          ],
+        ),
+        content: const Text(
+          'Cette action va supprimer TOUTES les demandes de congé enregistrées.\n\n'
+          'Les soldes et le pointage ne seront pas modifiés.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      final db = FirebaseFirestore.instance;
+      const batchSize = 400;
+      final snap = await db.collection('leave_requests').get();
+      for (int i = 0; i < snap.docs.length; i += batchSize) {
+        final chunk = snap.docs.skip(i).take(batchSize).toList();
+        final wb = db.batch();
+        for (final doc in chunk) {
+          wb.delete(doc.reference);
+        }
+        await wb.commit();
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${snap.docs.length} demande(s) supprimée(s).'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Future<void> _showLeaveTypeManagerDialog(BuildContext context) async {
@@ -2048,8 +2084,6 @@ class _AdminLeaveView extends StatelessWidget {
     List<_LeaveType> leaveTypes = const [];
 
     final auth = context.read<AuthProvider>();
-    final empProv = context.read<EmployeesProvider>();
-    final conges = context.read<CongesProvider>();
     final groupes = context.read<GroupesProvider>().groupes;
     final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
     final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
@@ -2069,50 +2103,13 @@ class _AdminLeaveView extends StatelessWidget {
       return p.contains('distribution') || p.contains('distri') || p.contains('livreur');
     }
 
-    var loadingShown = false;
-    if (context.mounted) {
-      loadingShown = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2.4),
-              ),
-              SizedBox(width: 12),
-              Text('Préparation du formulaire...'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    Map<String, double> takenByEmployee = const {};
     QuerySnapshot<Map<String, dynamic>>? leaveTypesSnap;
     try {
-      final results = await Future.wait<dynamic>([
-        conges.loadDaysTakenForEmployees(
-          employees.map((e) => e.id).toList(),
-          // Avoid forcing a fresh network fetch on every tap.
-          forceRefresh: false,
-        ),
-        FirebaseFirestore.instance
-            .collection('leave_types')
-            .where('actif', isEqualTo: true)
-            .get(),
-      ]);
-      takenByEmployee = Map<String, double>.from(results[0] as Map);
-      leaveTypesSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
-    } finally {
-      if (loadingShown && context.mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-    }
+      leaveTypesSnap = await FirebaseFirestore.instance
+          .collection('leave_types')
+          .where('actif', isEqualTo: true)
+          .get();
+    } catch (_) {}
 
     String? teamIdForEmployee(String employeId) {
       final team = equipes.where((q) => q.chefId == employeId || q.membreIds.contains(employeId)).toList();
@@ -2128,33 +2125,17 @@ class _AdminLeaveView extends StatelessWidget {
       if (gr.isNotEmpty) return gr.first.nom;
       return 'Sans équipe';
     }
-    final extraByEmployee = <String, double>{
-      for (final e in employees) e.id: e.leaveDaysExtra,
-    };
-    double remainingForEmploye(Employe e) {
-      final acquired = leaveDaysAcquired(e.dateDebut);
-      final extra = extraByEmployee[e.id] ?? e.leaveDaysExtra;
-      final taken = takenByEmployee[e.id] ?? e.leaveDaysTaken;
-      return (acquired + extra - taken).clamp(0.0, double.infinity);
-    }
+    // Tous les collaborateurs sont affichés, peu importe leur solde
     final activeEmployees = employees.where((e) {
-      if (auth.isDirecteur && !hasAllSites && !adminSiteIds.contains(e.siteId)) return false;
-      final remaining = remainingForEmploye(e);
-      if (remaining <= 0) return false;
+      if (!hasAllSites && !adminSiteIds.contains(e.siteId)) return false;
       if (auth.isChefAtelierAdmin) {
-        // Chef d'atelier can auto-approve only for chefs d'équipe/workers, not himself/atelier, not zone/rh.
         if (isZoneOrRh(e.poste) || isAtelier(e.poste) || isDistribution(e.poste)) return false;
-        // Also must be attached to a real team (no "Sans équipe" / unrelated people).
-        if (teamIdForEmployee(e.id) == null) return false;
-      }
-      if (auth.isChefZoneAdmin) {
-        return true;
       }
       return true;
     }).toList();
     if (activeEmployees.isNotEmpty) {
       employeeId = activeEmployees.first.id;
-      final tk = teamIdForEmployee(employeeId);
+      final tk = teamIdForEmployee(employeeId!);
       selectedTeamId = auth.isChefAtelierAdmin ? tk : (tk ?? '__no_team__');
     }
 
@@ -2196,142 +2177,56 @@ class _AdminLeaveView extends StatelessWidget {
             final list = filteredEmployees.where((e) => e.id == employeeId).toList();
             if (list.isNotEmpty) selected = list.first;
           }
-          final remaining = selected == null
-              ? 0.0
-              : remainingForEmploye(selected);
-          final selectedExtra = selected == null ? 0.0 : (extraByEmployee[selected.id] ?? selected.leaveDaysExtra);
           final selectedTeamName = selected == null ? '-' : teamNameForEmployee(selected.id);
           final dialogWidth = MediaQuery.of(ctx).size.width * 0.94;
           final compact = MediaQuery.of(ctx).size.width < 520;
+          // date de retour au service = end + 1 jour
+          final returnDate = end.add(const Duration(days: 1));
           return AlertDialog(
-            title: const Text('Créer et approuver un congé'),
+            title: const Text('Saisie manuelle d\'un congé'),
             content: SizedBox(
               width: dialogWidth > 560 ? 560 : dialogWidth,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // ── 1. Choix de l'équipe ──
                     DropdownButtonFormField<String?>(
                       value: selectedTeamId,
-                      decoration: const InputDecoration(labelText: 'Filtre équipe', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Équipe', border: OutlineInputBorder()),
                       items: [
                         const DropdownMenuItem<String?>(value: null, child: Text('Toutes les équipes')),
-                        ...(() {
-                          if (auth.isChefAtelierAdmin) {
-                            final items = <DropdownMenuItem<String?>>[];
-                            for (final q in equipes.where(
-                              (q) => activeEmployees.any((e) => teamIdForEmployee(e.id) == q.id),
-                            )) {
-                              items.add(DropdownMenuItem(value: q.id, child: Text(q.nom)));
-                            }
-                            for (final g in groupes.where(
-                              (g) => activeEmployees.any((e) => teamIdForEmployee(e.id) == 'groupe:${g.id}'),
-                            )) {
-                              items.add(DropdownMenuItem(value: 'groupe:${g.id}', child: Text(g.nom)));
-                            }
-                            return items;
-                          }
-                          return [
-                            ...equipes.map(
-                              (q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom)),
-                            ),
-                            ...groupes.map(
-                              (g) => DropdownMenuItem<String?>(value: 'groupe:${g.id}', child: Text(g.nom)),
-                            ),
-                          ];
-                        })(),
+                        ...equipes.map((q) => DropdownMenuItem<String?>(value: q.id, child: Text(q.nom))),
+                        ...groupes.map((g) => DropdownMenuItem<String?>(value: 'groupe:${g.id}', child: Text(g.nom))),
                         if (!auth.isChefAtelierAdmin)
                           const DropdownMenuItem<String?>(value: '__no_team__', child: Text('Sans équipe')),
                       ],
                       onChanged: (v) => setS(() => selectedTeamId = v),
                     ),
                     const SizedBox(height: 8),
+                    // ── 2. Choix du collaborateur ──
                     DropdownButtonFormField<String?>(
                       value: employeeId,
-                      decoration: const InputDecoration(labelText: 'Collaborateur', border: OutlineInputBorder()),
+                      decoration: InputDecoration(
+                        labelText: 'Collaborateur${selectedTeamName != '-' ? ' — $selectedTeamName' : ''}',
+                        border: const OutlineInputBorder(),
+                      ),
                       items: filteredEmployees
-                          .map((e) {
-                            final rem = remainingForEmploye(e);
-                            return DropdownMenuItem<String?>(value: e.id, child: Text('${e.nom} (${rem.toStringAsFixed(1)}j restant)'));
-                          })
+                          .map((e) => DropdownMenuItem<String?>(value: e.id, child: Text(e.nom)))
                           .toList(),
                       onChanged: (v) => setS(() => employeeId = v),
                     ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Équipe: $selectedTeamName  •  Solde reporté: ${selectedExtra.toStringAsFixed(1)}j  •  Solde restant: ${remaining.toStringAsFixed(1)}j',
-                        style: TextStyle(color: AppColors.brandDark, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    if (selected != null) ...[
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () async {
-                            final addCtrl = TextEditingController();
-                            final added = await showDialog<double>(
-                              context: ctx,
-                              builder: (dCtx) => AlertDialog(
-                                title: Text('Ajouter solde reporté - ${selected!.nom}'),
-                                content: TextField(
-                                  controller: addCtrl,
-                                  autofocus: true,
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Jours à ajouter',
-                                    hintText: 'Ex: 12',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(dCtx),
-                                    child: const Text('Annuler'),
-                                  ),
-                                  FilledButton(
-                                    onPressed: () {
-                                      final parsed = double.tryParse(addCtrl.text.trim().replaceFirst(',', '.'));
-                                      if (parsed == null || parsed <= 0) return;
-                                      Navigator.pop(dCtx, parsed);
-                                    },
-                                    child: const Text('Ajouter'),
-                                  ),
-                                ],
-                              ),
-                            );
-                            addCtrl.dispose();
-                            if (added == null || added <= 0) return;
-
-                            final current = extraByEmployee[selected!.id] ?? selected!.leaveDaysExtra;
-                            final next = (current + added).clamp(0.0, double.infinity).toDouble();
-                            await empProv.updateEmploye(selected!.copyWith(leaveDaysExtra: next));
-                            extraByEmployee[selected!.id] = next;
-                            if (!ctx.mounted) return;
-                            setS(() {});
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              SnackBar(
-                                content: Text('Solde reporté de ${selected!.nom}: ${next.toStringAsFixed(1)}j'),
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.add_circle_outline, size: 18),
-                          label: const Text('Ajouter solde reporté'),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
+                    // ── 3 & 4. Dates ──
                     if (compact) ...[
                       SizedBox(
                         width: double.infinity,
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.calendar_today_outlined, size: 16),
                           onPressed: () async {
                             final d = await showDatePicker(
                               context: ctx,
                               initialDate: start,
-                              // Admin-only creation/approval: allow backfilling historical leave data.
                               firstDate: DateTime(2020, 1, 1),
                               lastDate: DateTime.now().add(const Duration(days: 730)),
                             );
@@ -2340,35 +2235,36 @@ class _AdminLeaveView extends StatelessWidget {
                               if (end.isBefore(start)) end = start;
                             });
                           },
-                          child: Text('Du: ${start.day}/${start.month}/${start.year}'),
+                          label: Text('Début de congé : ${start.day.toString().padLeft(2,'0')}/${start.month.toString().padLeft(2,'0')}/${start.year}'),
                         ),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.event_available_outlined, size: 16),
                           onPressed: () async {
                             final d = await showDatePicker(
                               context: ctx,
-                              initialDate: end.isBefore(start) ? start : end,
-                              firstDate: start,
-                              lastDate: DateTime.now().add(const Duration(days: 730)),
+                              initialDate: returnDate.isBefore(start.add(const Duration(days: 1))) ? start.add(const Duration(days: 1)) : returnDate,
+                              firstDate: start.add(const Duration(days: 1)),
+                              lastDate: DateTime.now().add(const Duration(days: 731)),
                             );
-                            if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                            if (d != null) setS(() => end = d.subtract(const Duration(days: 1)));
                           },
-                          child: Text('Au: ${end.day}/${end.month}/${end.year}'),
+                          label: Text('Date de retour au service : ${returnDate.day.toString().padLeft(2,'0')}/${returnDate.month.toString().padLeft(2,'0')}/${returnDate.year}'),
                         ),
                       ),
                     ] else
                       Row(
                         children: [
                           Expanded(
-                            child: OutlinedButton(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.calendar_today_outlined, size: 16),
                               onPressed: () async {
                                 final d = await showDatePicker(
                                   context: ctx,
                                   initialDate: start,
-                                  // Admin-only creation/approval: allow backfilling historical leave data.
                                   firstDate: DateTime(2020, 1, 1),
                                   lastDate: DateTime.now().add(const Duration(days: 730)),
                                 );
@@ -2377,31 +2273,32 @@ class _AdminLeaveView extends StatelessWidget {
                                   if (end.isBefore(start)) end = start;
                                 });
                               },
-                              child: Text('Du: ${start.day}/${start.month}/${start.year}'),
+                              label: Text('Début : ${start.day.toString().padLeft(2,'0')}/${start.month.toString().padLeft(2,'0')}/${start.year}'),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: OutlinedButton(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.event_available_outlined, size: 16),
                               onPressed: () async {
                                 final d = await showDatePicker(
                                   context: ctx,
-                                  initialDate: end.isBefore(start) ? start : end,
-                                  firstDate: start,
-                                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                                  initialDate: returnDate.isBefore(start.add(const Duration(days: 1))) ? start.add(const Duration(days: 1)) : returnDate,
+                                  firstDate: start.add(const Duration(days: 1)),
+                                  lastDate: DateTime.now().add(const Duration(days: 731)),
                                 );
-                                if (d != null) setS(() => end = DateTime(d.year, d.month, d.day));
+                                if (d != null) setS(() => end = d.subtract(const Duration(days: 1)));
                               },
-                              child: Text('Au: ${end.day}/${end.month}/${end.year}'),
+                              label: Text('Retour : ${returnDate.day.toString().padLeft(2,'0')}/${returnDate.month.toString().padLeft(2,'0')}/${returnDate.year}'),
                             ),
                           ),
                         ],
                       ),
-                    const SizedBox(height: 6),
-                    // ── Compteur de jours ──
+                    const SizedBox(height: 8),
+                    // ── Durée calculée ──
                     Builder(builder: (_) {
                       final days = end.difference(start).inDays + 1;
-                      final valid = !end.isBefore(start);
+                      final valid = !end.isBefore(start) && days > 0;
                       return Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
@@ -2411,16 +2308,10 @@ class _AdminLeaveView extends StatelessWidget {
                         ),
                         child: Row(
                           children: [
-                            Icon(
-                              Icons.date_range,
-                              size: 16,
-                              color: valid ? AppColors.brand : Colors.red.shade700,
-                            ),
+                            Icon(Icons.date_range, size: 16, color: valid ? AppColors.brand : Colors.red.shade700),
                             const SizedBox(width: 8),
                             Text(
-                              valid
-                                  ? '$days jour${days > 1 ? 's' : ''} de congé'
-                                  : 'Date de fin invalide',
+                              valid ? '$days jour${days > 1 ? 's' : ''} de congé' : 'Dates invalides',
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
@@ -2439,11 +2330,10 @@ class _AdminLeaveView extends StatelessWidget {
                       onChanged: (v) {
                         setS(() {
                           leaveTypeId = v;
-                          // Pré-remplir le motif avec le motif par défaut du type sélectionné
                           if (v != null) {
-                            final selected = leaveTypes.where((t) => t.id == v).toList();
-                            if (selected.isNotEmpty && selected.first.defaultReason.isNotEmpty) {
-                              reasonCtrl.text = selected.first.defaultReason;
+                            final sel = leaveTypes.where((t) => t.id == v).toList();
+                            if (sel.isNotEmpty && sel.first.defaultReason.isNotEmpty) {
+                              reasonCtrl.text = sel.first.defaultReason;
                             }
                           }
                         });
@@ -2453,8 +2343,8 @@ class _AdminLeaveView extends StatelessWidget {
                     TextField(
                       controller: reasonCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Motif',
-                        hintText: 'Pré-rempli selon le type sélectionné',
+                        labelText: 'Motif (optionnel)',
+                        hintText: 'Ex: Congé annuel',
                         border: OutlineInputBorder(),
                       ),
                       maxLines: 2,
@@ -2467,7 +2357,7 @@ class _AdminLeaveView extends StatelessWidget {
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
               FilledButton(
                 onPressed: () async {
-                  if (employeeId == null || leaveTypeId == null || end.isBefore(start) || reasonCtrl.text.trim().isEmpty) return;
+                  if (employeeId == null || leaveTypeId == null || end.isBefore(start)) return;
                   final emp = filteredEmployees.firstWhere((e) => e.id == employeeId);
                   final lt = leaveTypes.firstWhere((t) => t.id == leaveTypeId);
                   Navigator.pop(ctx);
@@ -2477,11 +2367,11 @@ class _AdminLeaveView extends StatelessWidget {
                     end,
                     lt.id,
                     lt.label,
-                    reasonCtrl.text.trim(),
+                    reasonCtrl.text.trim().isEmpty ? lt.label : reasonCtrl.text.trim(),
                     '',
                   );
                 },
-                child: const Text('Créer + Approuver'),
+                child: const Text('Enregistrer le congé'),
               ),
             ],
           );
@@ -2986,13 +2876,10 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
   String? _employeeId;
   String? _adminId;
   List<_AdminRecipient> _admins = const [];
-  bool _loadingAdmins = true;
   List<_LeaveType> _leaveTypes = const [];
   String? _leaveTypeId;
   bool _loadingLeaveTypes = true;
   bool _saving = false;
-  final TextEditingController _employeeFilterCtrl = TextEditingController();
-  String _employeeFilter = '';
 
   bool _isAtelierPoste(String poste) {
     final p = poste.trim().toLowerCase();
@@ -3069,15 +2956,10 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     super.initState();
     _loadAdmins();
     _loadLeaveTypes();
-    _employeeFilterCtrl.addListener(() {
-      if (!mounted) return;
-      setState(() => _employeeFilter = _employeeFilterCtrl.text.trim().toLowerCase());
-    });
   }
 
   @override
   void dispose() {
-    _employeeFilterCtrl.dispose();
     _reasonCtrl.dispose();
     _detailsCtrl.dispose();
     super.dispose();
@@ -3101,7 +2983,6 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
       setState(() {
         _admins = list;
         _adminId = list.isNotEmpty ? list.first.id : null;
-        _loadingAdmins = false;
       });
     }
   }
@@ -3137,266 +3018,436 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     final auth = context.watch<AuthProvider>();
     final empProv = context.watch<EmployeesProvider>();
     final distGroupsProv = context.watch<DistributionGroupsProvider>();
-    final conges = context.watch<CongesProvider>();
     final equipe = _resolveEquipe(auth, empProv);
     final employeesRaw = _resolveTeamEmployees(equipe, empProv, auth, distGroupsProv);
-    final employeesUnique = <String, Employe>{for (final e in employeesRaw) e.id: e}.values.toList();
-    final employeeIds = employeesUnique.map((e) => e.id).toList();
-    if (employeeIds.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        conges.loadDaysTakenForEmployees(employeeIds);
-      });
-    }
-    final employeesEligible = employeesUnique.where((e) {
-      final acquired = leaveDaysAcquired(e.dateDebut) + e.leaveDaysExtra;
-      final taken = conges.getCachedDaysTaken(e.id) ?? e.leaveDaysTaken;
-      final remaining = (acquired - taken).clamp(0.0, double.infinity);
-      return remaining > 0;
-    }).toList();
-    final employeesFiltered = _employeeFilter.isEmpty
-        ? employeesEligible
-        : employeesEligible
-            .where((e) => e.nom.toLowerCase().contains(_employeeFilter))
-            .toList();
-    if (employeesEligible.isEmpty) {
+    final employees = <String, Employe>{for (final e in employeesRaw) e.id: e}.values.toList();
+
+    if (employees.isEmpty) {
       _employeeId = null;
-    } else if (_employeeId == null || !employeesFiltered.any((e) => e.id == _employeeId)) {
-      _employeeId = employeesFiltered.isNotEmpty ? employeesFiltered.first.id : null;
+    } else if (_employeeId == null || !employees.any((e) => e.id == _employeeId)) {
+      _employeeId = employees.first.id;
     }
 
+    // Auto-sélection silencieuse de l'admin destinataire
     final adminsUnique = <String, _AdminRecipient>{for (final a in _admins) a.id: a}.values.toList();
-    Employe? selectedEmployee;
-    if (_employeeId != null) {
-      final selected = employeesEligible.where((e) => e.id == _employeeId).toList();
-      if (selected.isNotEmpty) selectedEmployee = selected.first;
-    }
+    Employe? selectedEmployee = _employeeId == null
+        ? null
+        : employees.where((e) => e.id == _employeeId).firstOrNull;
     final adminsEligible = _eligibleAdminsForPoste(auth, selectedEmployee?.poste ?? '', adminsUnique);
-    if (adminsEligible.isEmpty) {
-      _adminId = null;
-    } else if (_adminId == null || !adminsEligible.any((a) => a.id == _adminId)) {
+    if (adminsEligible.isNotEmpty && (_adminId == null || !adminsEligible.any((a) => a.id == _adminId))) {
       _adminId = adminsEligible.first.id;
     }
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Nouvelle demande de congé', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    final returnDate = _end.add(const Duration(days: 1));
+    final nbJours = _end.difference(_start).inDays + 1;
+    final datesValides = !_end.isBefore(_start) && nbJours > 0;
+
+    final fmtDate = (DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')} / ${d.month.toString().padLeft(2, '0')} / ${d.year}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── En-tête avec dégradé de marque ──
+        Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.brand, AppColors.brandDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.brand.withValues(alpha: 0.35),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
               ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.beach_access_outlined, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Demande de congé',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'La demande sera soumise en attente de validation.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        fontSize: 12,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // ── Corps du formulaire ──
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+
+                // ── Section 1 : Collaborateur ──
+                _chefFormSectionLabel('Collaborateur', Icons.person_outline),
+                const SizedBox(height: 8),
+                if (employees.isEmpty)
+                  _chefFormEmptyTeam()
+                else
+                  DropdownButtonFormField<String?>(
+                    value: _employeeId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      hintText: 'Choisir un collaborateur',
+                      prefixIcon: Icon(Icons.person_pin_outlined),
+                    ),
+                    items: employees
+                        .map((e) => DropdownMenuItem<String?>(
+                              value: e.id,
+                              child: Text(e.nom, overflow: TextOverflow.ellipsis),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _employeeId = v;
+                      _adminId = null;
+                    }),
+                  ),
+                const SizedBox(height: 22),
+
+                // ── Section 2 : Période ──
+                _chefFormSectionLabel('Période de congé', Icons.date_range_outlined),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _employeeFilterCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Filtrer par nom',
-                              prefixIcon: Icon(Icons.search),
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<String?>(
-                            value: _employeeId,
-                            isExpanded: true,
-                            decoration: const InputDecoration(labelText: 'Collaborateur concerné', border: OutlineInputBorder()),
-                            items: employeesFiltered
-                                .map((e) {
-                                  final rem = (leaveDaysAcquired(e.dateDebut) + e.leaveDaysExtra - e.leaveDaysTaken)
-                                      .clamp(0.0, double.infinity);
-                                  return DropdownMenuItem<String?>(
-                                    value: e.id,
-                                    child: Text('${e.nom} (${rem.toStringAsFixed(1)}j)', overflow: TextOverflow.ellipsis),
-                                  );
-                                })
-                                .toList(),
-                            onChanged: (v) => setState(() => _employeeId = v),
-                          ),
-                        ],
+                      child: _chefDateTile(
+                        label: 'Début de congé',
+                        date: _start,
+                        icon: Icons.flight_takeoff_rounded,
+                        accentColor: const Color(0xFF1565C0),
+                        formatted: fmtDate(_start),
+                        onTap: () async {
+                          final d = await showDatePicker(
+                            context: context,
+                            initialDate: _start,
+                            firstDate: DateTime(2020, 1, 1),
+                            lastDate: DateTime.now().add(const Duration(days: 730)),
+                          );
+                          if (d != null) {
+                            setState(() {
+                              _start = DateTime(d.year, d.month, d.day);
+                              if (_end.isBefore(_start)) _end = _start;
+                            });
+                          }
+                        },
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: _loadingAdmins
-                          ? const LinearProgressIndicator()
-                          : DropdownButtonFormField<String?>(
-                              value: _adminId,
-                              isExpanded: true,
-                              decoration: const InputDecoration(labelText: 'Admin destinataire', border: OutlineInputBorder()),
-                              items: adminsEligible
-                                  .map((a) => DropdownMenuItem<String?>(
-                                        value: a.id,
-                                        child: Text(
-                                          '${a.name.isEmpty ? a.email : a.name}${a.role.isNotEmpty ? ' (${a.role})' : ''}',
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) => setState(() => _adminId = v),
-                            ),
+                      child: _chefDateTile(
+                        label: 'Retour au service',
+                        date: returnDate,
+                        icon: Icons.flight_land_rounded,
+                        accentColor: const Color(0xFF2E7D32),
+                        formatted: fmtDate(returnDate),
+                        onTap: () async {
+                          final minReturn = _start.add(const Duration(days: 1));
+                          final initReturn =
+                              returnDate.isBefore(minReturn) ? minReturn : returnDate;
+                          final d = await showDatePicker(
+                            context: context,
+                            initialDate: initReturn,
+                            firstDate: minReturn,
+                            lastDate: DateTime.now().add(const Duration(days: 731)),
+                          );
+                          if (d != null) {
+                            setState(() => _end = d.subtract(const Duration(days: 1)));
+                          }
+                        },
+                      ),
                     ),
                   ],
                 ),
-                if (!_loadingAdmins && adminsEligible.isEmpty)
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 10),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Text(
-                      'Aucun validateur supérieur disponible pour ce poste.',
-                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                if (employeesEligible.isEmpty)
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 10),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Text(
-                      'Aucun collaborateur avec solde de congé disponible.',
-                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w600),
+                const SizedBox(height: 12),
+
+                // ── Badge durée ──
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: datesValides
+                        ? const Color(0xFFE8F5E9)
+                        : const Color(0xFFFFEBEE),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: datesValides
+                          ? const Color(0xFFA5D6A7)
+                          : const Color(0xFFEF9A9A),
                     ),
                   ),
-                if (employeesEligible.isNotEmpty && employeesFiltered.isEmpty)
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 10),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blueGrey.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.blueGrey.shade200),
-                    ),
-                    child: Text(
-                      'Aucun collaborateur trouvé avec ce filtre.',
-                      style: TextStyle(color: Colors.blueGrey.shade900, fontWeight: FontWeight.w600),
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        datesValides
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.error_outline_rounded,
+                        size: 16,
+                        color: datesValides
+                            ? const Color(0xFF2E7D32)
+                            : const Color(0xFFC62828),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          datesValides
+                              ? '$nbJours jour${nbJours > 1 ? 's' : ''} de congé  ·  du ${fmtDate(_start)} au ${fmtDate(_end)}'
+                              : 'Dates invalides — vérifiez les dates saisies',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                            color: datesValides
+                                ? const Color(0xFF2E7D32)
+                                : const Color(0xFFC62828),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                if (selectedEmployee != null) ...[
-                  const SizedBox(height: 10),
-                  Builder(
-                    builder: (context) {
-                      final emp = selectedEmployee!;
-                      return Consumer<CongesProvider>(
-                        builder: (context, conges, _) {
-                          final cachedTaken = conges.getCachedDaysTaken(emp.id);
-                          if (cachedTaken == null) {
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              conges.loadDaysTaken(emp.id);
-                            });
-                            return const LinearProgressIndicator();
+                ),
+                const SizedBox(height: 22),
+
+                // ── Section 3 : Type de congé ──
+                _chefFormSectionLabel('Type de congé', Icons.category_outlined),
+                const SizedBox(height: 8),
+                if (_loadingLeaveTypes)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  )
+                else
+                  DropdownButtonFormField<String?>(
+                    value: _leaveTypeId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      hintText: 'Choisir un type de congé',
+                      prefixIcon: Icon(Icons.label_outline),
+                    ),
+                    items: _leaveTypes
+                        .map((t) => DropdownMenuItem<String?>(
+                              value: t.id,
+                              child: Text(t.label),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      setState(() {
+                        _leaveTypeId = v;
+                        if (v != null) {
+                          final sel = _leaveTypes.where((t) => t.id == v).toList();
+                          if (sel.isNotEmpty && sel.first.defaultReason.isNotEmpty) {
+                            _reasonCtrl.text = sel.first.defaultReason;
                           }
-                          final acquired = leaveDaysAcquired(emp.dateDebut);
-                          final extra = emp.leaveDaysExtra;
-                          final remaining = (acquired + extra - cachedTaken).clamp(0.0, double.infinity);
-                          return Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: AppColors.brandLight,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: AppColors.brandLight),
-                            ),
-                            child: Text(
-                              'Solde congé (${emp.nom}) - Autorisé: ${acquired.toStringAsFixed(1)}j + Extra: ${extra.toStringAsFixed(1)}j • Pris: ${cachedTaken.toStringAsFixed(1)}j • Restant: ${remaining.toStringAsFixed(1)}j',
-                              style: TextStyle(color: AppColors.brandDark, fontWeight: FontWeight.w600),
-                            ),
-                          );
-                        },
-                      );
+                        }
+                      });
                     },
                   ),
-                ],
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(child: _dateField(context, 'Du', _start, (d) => setState(() => _start = d))),
-                    const SizedBox(width: 8),
-                    Expanded(child: _dateField(context, 'Au', _end, (d) => setState(() => _end = d))),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                _loadingLeaveTypes
-                    ? const LinearProgressIndicator()
-                    : DropdownButtonFormField<String?>(
-                        value: _leaveTypeId,
-                        decoration: const InputDecoration(
-                          labelText: 'Type de congé',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: _leaveTypes
-                            .map((t) => DropdownMenuItem<String?>(
-                                  value: t.id,
-                                  child: Text(t.label),
-                                ))
-                            .toList(),
-                        onChanged: (v) {
-                          setState(() {
-                            _leaveTypeId = v;
-                            // Pré-remplir le motif avec le motif par défaut du type sélectionné
-                            if (v != null) {
-                              final selected = _leaveTypes.where((t) => t.id == v).toList();
-                              if (selected.isNotEmpty && selected.first.defaultReason.isNotEmpty) {
-                                _reasonCtrl.text = selected.first.defaultReason;
-                              }
-                            }
-                          });
-                        },
-                      ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 18),
+
+                // ── Section 4 : Motif ──
+                _chefFormSectionLabel('Motif', Icons.notes_outlined),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _reasonCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Motif',
-                    hintText: 'Pré-rempli selon le type sélectionné',
-                    border: OutlineInputBorder(),
+                    hintText: 'Motif du congé (optionnel)',
+                    prefixIcon: Icon(Icons.edit_note_outlined),
                   ),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Requis' : null,
                   maxLines: 2,
                 ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _detailsCtrl,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Détails professionnels (remplacement, contexte, tâches)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 24),
+
+                // ── Bouton soumettre ──
                 SizedBox(
                   width: double.infinity,
+                  height: 50,
                   child: FilledButton.icon(
-                    onPressed: (_saving || employeesEligible.isEmpty) ? null : () => _submit(context, equipe, employeesEligible),
+                    onPressed: (_saving || employees.isEmpty || !datesValides)
+                        ? null
+                        : () => _submit(context, equipe, employees),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.brand,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: AppColors.brandBorder,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
                     icon: _saving
-                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.send),
-                    label: Text(_saving ? 'Envoi...' : 'Envoyer la demande'),
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.send_rounded, size: 18),
+                    label: Text(
+                      _saving ? 'Envoi en cours...' : 'Soumettre la demande',
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Cairo'),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _chefFormSectionLabel(String text, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: AppColors.textMuted),
+        const SizedBox(width: 6),
+        Text(
+          text.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textMuted,
+            letterSpacing: 0.8,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _chefFormEmptyTeam() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Aucun collaborateur disponible dans votre équipe.',
+              style: TextStyle(
+                color: Colors.orange.shade800,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chefDateTile({
+    required String label,
+    required DateTime date,
+    required IconData icon,
+    required Color accentColor,
+    required String formatted,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: accentColor.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: accentColor.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 13, color: accentColor),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: accentColor,
+                        letterSpacing: 0.3,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Icon(Icons.edit_calendar_outlined,
+                      size: 13, color: accentColor.withValues(alpha: 0.55)),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                formatted,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -3523,29 +3574,6 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     return base;
   }
 
-  Widget _dateField(BuildContext context, String label, DateTime value, ValueChanged<DateTime> onPick) {
-    final auth = context.read<AuthProvider>();
-    final today = DateTime.now();
-    final tomorrow = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
-    final earliestAllowedDate = _canBackdateLeave(auth)
-        ? DateTime(2020, 1, 1)
-        : tomorrow;
-    final initialDate = value.isBefore(earliestAllowedDate) ? earliestAllowedDate : value;
-    return OutlinedButton.icon(
-      onPressed: () async {
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: initialDate,
-          firstDate: earliestAllowedDate,
-          lastDate: DateTime.now().add(const Duration(days: 730)),
-        );
-        if (picked != null) onPick(DateTime(picked.year, picked.month, picked.day));
-      },
-      icon: const Icon(Icons.calendar_today_outlined, size: 16),
-      label: Text('$label: ${value.day}/${value.month}/${value.year}'),
-    );
-  }
-
   Future<void> _submit(BuildContext context, Equipe? equipe, List<Employe> employees) async {
     if (!_formKey.currentState!.validate()) return;
     if (_employeeId == null || _adminId == null) return;
@@ -3604,31 +3632,10 @@ class _ChefLeaveFormState extends State<_ChefLeaveForm> {
     final leaveTypeId = selectedType.id;
     final leaveTypeLabel = selectedType.label;
 
-    // Full-day leave by default (no manual time selection).
     final startAt = DateTime(_start.year, _start.month, _start.day, 0, 0);
     final endAt = DateTime(_end.year, _end.month, _end.day, 23, 59);
-    final requestedDays = (DateTime(_end.year, _end.month, _end.day)
-                .difference(DateTime(_start.year, _start.month, _start.day))
-                .inDays +
-            1)
-        .toDouble();
-    final conges = context.read<CongesProvider>();
-    final taken = conges.getCachedDaysTaken(employee.id) ?? employee.leaveDaysTaken;
-    final acquired = leaveDaysAcquired(employee.dateDebut) + employee.leaveDaysExtra;
-    final remaining = (acquired - taken).clamp(0.0, double.infinity);
-    if (requestedDays > remaining) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Solde insuffisant: restant ${remaining.toStringAsFixed(1)}j, demandé ${requestedDays.toStringAsFixed(1)}j.',
-          ),
-        ),
-      );
-      return;
-    }
 
     setState(() => _saving = true);
-    final repo = _LeaveRepository();
     final req = LeaveRequest(
       id: '',
       employeeId: employee.id,

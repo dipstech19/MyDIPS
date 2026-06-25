@@ -2727,13 +2727,23 @@ class PointageExportService {
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool useOcpGrid = false,
+    bool useDessalementGrid = false,
     bool singleSheet = false,
     String singleSheetName = 'Société',
     bool includeEquipeColumnInSingleSheet = true,
   }) async {
     final Uint8List bytes;
     final String name;
-    if (useOcpGrid) {
+    if (useDessalementGrid) {
+      bytes = await buildDessalementEquipesExcel(
+        startDate: startDate,
+        endDate: endDate,
+        rows: rows,
+        reasonConfigs: reasonConfigs,
+      );
+      name =
+          'pointage_dessalement_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
+    } else if (useOcpGrid) {
       bytes = await buildOcpPointageExcel(
         startDate: startDate,
         endDate: endDate,
@@ -3570,6 +3580,343 @@ class PointageExportService {
     if (id.startsWith('distribution:')) return 'Distribution';
     if (id.startsWith('groupe:')) return 'Groupe';
     return 'Équipe';
+  }
+
+  /// Format dessalement simplifié : groupé par équipe, couleur par équipe, sans distribution.
+  static Future<Uint8List> buildDessalementEquipesExcel({
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<PointageExportRow> rows,
+    List<AbsenceReasonConfig>? reasonConfigs,
+  }) async {
+    // Filter: exclude distribution
+    final dessalRows = rows.where((r) =>
+        r.orgTypeLabel != 'Distribution' &&
+        !(r.equipeId?.startsWith('distribution:') ?? false)).toList();
+
+    // Build day list
+    final start = _dayKey(startDate);
+    final end = _dayKey(endDate);
+    final days = <DateTime>[];
+    for (var d = start; !d.isAfter(end); d = DateTime(d.year, d.month, d.day + 1)) {
+      days.add(d);
+    }
+
+    // Group by equipe, preserve insertion order
+    final equipeOrder = <String>[];
+    final equipeGroups = <String, List<PointageExportRow>>{};
+    for (final r in dessalRows) {
+      final key = r.equipeName.trim();
+      if (!equipeGroups.containsKey(key)) {
+        equipeOrder.add(key);
+        equipeGroups[key] = [];
+      }
+      equipeGroups[key]!.add(r);
+    }
+
+    // Assign color by equipe name: P1=green, P2=red, P3=yellow, P4=blue,
+    // Nettoyage=orange, Management=cold violet, others=fallback gray.
+    ({String bg, String fg}) equipeColor(String name) {
+      final n = name.toLowerCase();
+      if (n.contains('nettoyage')) return (bg: '#FFCC80', fg: '#E65100');
+      if (n.contains('management') || n.contains('managment')) return (bg: '#CE93D8', fg: '#4A148C');
+      // word-boundary digit match so "poste 1" or "e1" or "equipe 1" all work
+      bool hasNum(int num) => RegExp('(?:^|\\D)$num(?:\\D|\$)').hasMatch(n);
+      if (hasNum(1)) return (bg: '#A5D6A7', fg: '#1B5E20'); // green
+      if (hasNum(2)) return (bg: '#EF9A9A', fg: '#B71C1C'); // red
+      if (hasNum(3)) return (bg: '#FFF176', fg: '#795548'); // yellow
+      if (hasNum(4)) return (bg: '#90CAF9', fg: '#0D47A1'); // blue
+      // fallback
+      return (bg: '#E0E0E0', fg: '#424242');
+    }
+
+    final book = excel.Excel.createExcel();
+    book.delete('Sheet1');
+    final sheet = book['Pointage'];
+
+    // Column indices (1-based)
+    const colDispo = 1;
+    const colNom = 2;
+    const colPrenom = 3;
+    const colPoste = 4;
+    const firstDayCol = 5;
+    final jfCol = firstDayCol + days.length;
+    final shiftsCol = firstDayCol + days.length + 1;
+    final totalPiCol = firstDayCol + days.length + 2;
+
+    // Row indices (0-based)
+    const rowTitle1 = 0;
+    const rowTitle2 = 1;
+    const rowTitle3 = 2;
+    const rowLegend = 3;
+    const rowHeaders = 6;
+    const rowDates = 7;
+    const firstDataRow = 8;
+
+    // Borders
+    final borderThin = excel.Border(
+      borderStyle: excel.BorderStyle.Thin,
+      borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+    );
+    final borderMedium = excel.Border(
+      borderStyle: excel.BorderStyle.Medium,
+      borderColorHex: excel.ExcelColor.fromHexString('#424242'),
+    );
+
+    // Style factory
+    excel.CellStyle cs({
+      bool bold = false,
+      String bg = '#FFFFFF',
+      String fg = '#000000',
+      excel.HorizontalAlign align = excel.HorizontalAlign.Center,
+      excel.VerticalAlign vAlign = excel.VerticalAlign.Center,
+      bool thick = false,
+      excel.TextWrapping? wrap,
+    }) {
+      final b = thick ? borderMedium : borderThin;
+      return excel.CellStyle(
+        bold: bold,
+        horizontalAlign: align,
+        verticalAlign: vAlign,
+        textWrapping: wrap,
+        backgroundColorHex: excel.ExcelColor.fromHexString(bg),
+        fontColorHex: excel.ExcelColor.fromHexString(fg),
+        leftBorder: b, rightBorder: b, topBorder: b, bottomBorder: b,
+      );
+    }
+
+    void put(int col, int row, String value, excel.CellStyle style) {
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row),
+        excel.TextCellValue(value),
+        cellStyle: style,
+      );
+    }
+
+    void putI(int col, int row, int value, excel.CellStyle style) {
+      sheet.updateCell(
+        excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row),
+        excel.IntCellValue(value),
+        cellStyle: style,
+      );
+    }
+
+    void span(int col, int row, int endCol, int endRow, String value, excel.CellStyle style) {
+      final si = excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row);
+      final ei = excel.CellIndex.indexByColumnRow(columnIndex: endCol, rowIndex: endRow);
+      sheet.merge(si, ei);
+      sheet.cell(si).value = excel.TextCellValue(value);
+      sheet.cell(si).cellStyle = style;
+      sheet.setMergedCellStyle(si, style);
+    }
+
+    String monthBanner() {
+      final ref = DateTime(start.year, start.month, 1);
+      try {
+        final m = DateFormat('MMMM', 'fr_FR').format(ref);
+        if (m.isEmpty) throw Exception();
+        return 'Mois de ${m[0].toUpperCase()}${m.substring(1)} ${ref.year}';
+      } catch (_) {
+        const mn = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+            'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+        final n = ref.month >= 1 && ref.month <= 12 ? mn[ref.month] : '${ref.month}';
+        return 'Mois de $n ${ref.year}';
+      }
+    }
+
+    String rowDayStatus(PointageExportRow r, DateTime d) {
+      final k = _dayKey(d);
+      for (final e in r.dayStatusByDay.entries) {
+        if (_dayKey(e.key) == k) return e.value;
+      }
+      return '';
+    }
+
+    // ─── Title rows ───────────────────────────────────────────────────────
+    final titleSt = cs(bold: true, bg: '#D9E1F2', fg: '#1F4E78', align: excel.HorizontalAlign.Left);
+    span(1, rowTitle1, totalPiCol, rowTitle1, 'DIPS  / WAVE 2 EAST', titleSt);
+    span(1, rowTitle2, totalPiCol, rowTitle2, 'FEUILLE DE POINTAGE — DESSALEMENT', titleSt);
+    span(1, rowTitle3, totalPiCol, rowTitle3,
+        'Période : ${DateFormat('dd/MM/yyyy').format(start)} – ${DateFormat('dd/MM/yyyy').format(end)}',
+        cs(bg: '#F5F5F5', fg: '#424242', align: excel.HorizontalAlign.Left));
+
+    // ─── Legend row ───────────────────────────────────────────────────────
+    put(1, rowLegend, 'JF', cs(bold: true, bg: '#BBDEFB', fg: '#0D47A1'));
+    put(2, rowLegend, 'Jour Férié', cs(bg: '#E3F2FD', fg: '#0D47A1', align: excel.HorizontalAlign.Left));
+    put(4, rowLegend, '1', cs(bold: true, bg: '#C8E6C9', fg: '#1B5E20'));
+    put(5, rowLegend, 'Formation', cs(bg: '#E8F5E9', fg: '#1B5E20', align: excel.HorizontalAlign.Left));
+    final bannerStart = (totalPiCol - 4).clamp(7, totalPiCol);
+    span(bannerStart, rowLegend, totalPiCol, rowLegend, monthBanner(),
+        cs(bold: true, bg: '#FFCDD2', fg: '#B71C1C', thick: true));
+
+    // ─── Column headers (rows 7-8): fixed cols span both rows, day cols have name/date ──
+    final hDark = cs(bold: true, bg: '#263238', fg: '#ECEFF1');
+    final hMed = cs(bold: true, bg: '#37474F', fg: '#ECEFF1');
+    span(colDispo, rowHeaders, colDispo, rowDates, 'Effectif\ndisponible',
+        cs(bold: true, bg: '#263238', fg: '#ECEFF1', wrap: excel.TextWrapping.WrapText));
+    span(colNom, rowHeaders, colNom, rowDates, 'Nom', hDark);
+    span(colPrenom, rowHeaders, colPrenom, rowDates, 'Prénom', hDark);
+    span(colPoste, rowHeaders, colPoste, rowDates, 'POSTE', hDark);
+    span(jfCol, rowHeaders, jfCol, rowDates, 'JF', hMed);
+    span(shiftsCol, rowHeaders, shiftsCol, rowDates, 'Nombre de Shift',
+        cs(bold: true, bg: '#37474F', fg: '#ECEFF1', wrap: excel.TextWrapping.WrapText));
+    span(totalPiCol, rowHeaders, totalPiCol, rowDates, 'Shifts par Pi',
+        cs(bold: true, bg: '#37474F', fg: '#ECEFF1', wrap: excel.TextWrapping.WrapText));
+
+    // Day columns: row 7 = day name, row 8 = date (dd-Mmm)
+    // Use a hardcoded French month map to avoid locale init issues at runtime.
+    const frMonths = <int, String>{
+      1: 'Janv', 2: 'Fév', 3: 'Mars', 4: 'Avr', 5: 'Mai', 6: 'Juin',
+      7: 'Juil', 8: 'Août', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Déc',
+    };
+    for (int i = 0; i < days.length; i++) {
+      final d = days[i];
+      final c = firstDayCol + i;
+      final dayName = _weekdayNameFr(d.weekday);
+      final isWknd = d.weekday == DateTime.saturday || d.weekday == DateTime.sunday;
+      final dBg = isWknd ? '#455A64' : '#1F4E78';
+      put(c, rowHeaders, dayName, cs(bold: true, bg: dBg, fg: '#ECEFF1'));
+      final mmm = frMonths[d.month] ?? '${d.month}';
+      final dateLabel = '${d.day.toString().padLeft(2, '0')}-$mmm';
+      put(c, rowDates, dateLabel, cs(bold: true, bg: dBg, fg: '#ECEFF1'));
+    }
+
+    // Column widths
+    sheet.setColumnWidth(colDispo,
+        ocpExcelColumnWidthForText('Effectif disponible', min: 12, max: 18));
+    var maxNomLen = 3;
+    var maxPrenomLen = 6;
+    var maxPosteLen = 9;
+    for (final r in dessalRows) {
+      final np = splitNomPrenomForExcel(r.employeNom.trim());
+      if (np.nom.length > maxNomLen) maxNomLen = np.nom.length;
+      if (np.prenom.length > maxPrenomLen) maxPrenomLen = np.prenom.length;
+      if (r.poste.length > maxPosteLen) maxPosteLen = r.poste.length;
+    }
+    sheet.setColumnWidth(colNom,
+        ocpExcelColumnWidthForText('N' * maxNomLen, min: 20, max: 44));
+    sheet.setColumnWidth(colPrenom,
+        ocpExcelColumnWidthForText('N' * maxPrenomLen, min: 18, max: 40));
+    sheet.setColumnWidth(colPoste,
+        ocpExcelColumnWidthForText('N' * maxPosteLen, min: 18, max: 36));
+    for (int i = 0; i < days.length; i++) {
+      sheet.setColumnWidth(firstDayCol + i,
+          ocpExcelColumnWidthForText('Mercredi', min: 11, max: 14));
+    }
+    sheet.setColumnWidth(jfCol, ocpExcelColumnWidthForText('JF', min: 6, max: 8));
+    sheet.setColumnWidth(shiftsCol,
+        ocpExcelColumnWidthForText('Nombre de Shift', min: 12, max: 18));
+    sheet.setColumnWidth(totalPiCol,
+        ocpExcelColumnWidthForText('Shifts par Pi', min: 11, max: 16));
+
+    // ─── Data rows ────────────────────────────────────────────────────────
+    // Pre-compute team total shifts for "Shifts par Pi" (avg shifts per person)
+    final teamTotalShifts = <String, int>{};
+    for (final equipeName in equipeOrder) {
+      final equipeRows = equipeGroups[equipeName]!;
+      var total = 0;
+      for (final r in equipeRows) {
+        for (final d in days) {
+          final st = rowDayStatus(r, d);
+          if (st == 'present' || st == 'leave' || st == 'formation' || st == 'arrangement') total++;
+        }
+      }
+      teamTotalShifts[equipeName] = total;
+    }
+
+    int rowIndex = firstDataRow;
+
+    for (int ei = 0; ei < equipeOrder.length; ei++) {
+      final equipeName = equipeOrder[ei];
+      final equipeRows = equipeGroups[equipeName]!;
+      final color = equipeColor(equipeName);
+      final bg = color.bg;
+      final fg = color.fg;
+      final headcount = equipeRows.length;
+      final equipeStartRow = rowIndex;
+      final teamShifts = teamTotalShifts[equipeName] ?? 0;
+
+      for (final r in equipeRows) {
+        final np = splitNomPrenomForExcel(r.employeNom.trim());
+        final nom = np.nom.trim().toUpperCase();
+        final prenom = np.prenom.trim().toUpperCase();
+        final poste = r.poste.trim().isEmpty ? 'Opérateur' : r.poste.trim();
+
+        // Only Nom/Prénom/Poste cells carry the equipe color; all others are white.
+        put(colNom, rowIndex, nom,
+            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+        put(colPrenom, rowIndex, prenom,
+            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+        put(colPoste, rowIndex, poste,
+            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+
+        var jfCount = 0;
+        var shiftsWorked = 0;
+
+        for (int i = 0; i < days.length; i++) {
+          final d = days[i];
+          final c = firstDayCol + i;
+          final status = rowDayStatus(r, d);
+
+          String marker;
+          String cellFg;
+          if (status == 'public_holiday') {
+            marker = 'JF'; cellFg = '#4A148C';
+            jfCount++;
+          } else if (status == 'formation') {
+            marker = '1'; cellFg = '#1B5E20';
+            shiftsWorked++;
+          } else if (status == 'present' || status == 'leave' || status == 'arrangement') {
+            marker = '1'; cellFg = '#000000';
+            shiftsWorked++;
+          } else if (status == 'rest') {
+            marker = 'repos'; cellFg = '#9E9E9E';
+          } else if (status == 'absent' || status == 'paid_absence' ||
+              status == 'arrangement_pending') {
+            marker = 'ABS'; cellFg = '#B71C1C';
+          } else {
+            marker = ''; cellFg = '#000000';
+          }
+
+          put(c, rowIndex, marker, cs(bg: '#FFFFFF', fg: cellFg));
+        }
+
+        putI(jfCol, rowIndex, jfCount, cs(bg: '#FFFFFF', fg: '#000000'));
+        putI(shiftsCol, rowIndex, shiftsWorked, cs(bg: '#FFFFFF', fg: '#000000'));
+
+        rowIndex++;
+      }
+
+      // Effectif disponible: white bg, equipe fg, merged vertically for the group
+      final siDispo = excel.CellIndex.indexByColumnRow(
+          columnIndex: colDispo, rowIndex: equipeStartRow);
+      final dispoSt = cs(bold: true, bg: '#FFFFFF', fg: fg, thick: true);
+      if (headcount > 1) {
+        final eiDispo = excel.CellIndex.indexByColumnRow(
+            columnIndex: colDispo, rowIndex: rowIndex - 1);
+        sheet.merge(siDispo, eiDispo);
+        sheet.setMergedCellStyle(siDispo, dispoSt);
+      }
+      sheet.cell(siDispo).value = excel.IntCellValue(headcount);
+      sheet.cell(siDispo).cellStyle = dispoSt;
+
+      // Total shifts par Pi: merged vertically for the equipe, shows total equipe shifts
+      final siPi = excel.CellIndex.indexByColumnRow(
+          columnIndex: totalPiCol, rowIndex: equipeStartRow);
+      final piSt = cs(bold: true, bg: '#FFFFFF', fg: fg, thick: true);
+      if (headcount > 1) {
+        final eiPi = excel.CellIndex.indexByColumnRow(
+            columnIndex: totalPiCol, rowIndex: rowIndex - 1);
+        sheet.merge(siPi, eiPi);
+        sheet.setMergedCellStyle(siPi, piSt);
+      }
+      sheet.cell(siPi).value = excel.IntCellValue(teamShifts);
+      sheet.cell(siPi).cellStyle = piSt;
+    }
+
+    final bytes = book.encode();
+    if (bytes == null) return Uint8List(0);
+    return Uint8List.fromList(bytes);
   }
 
   static String _weekdayNameFr(int weekday) {

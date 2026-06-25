@@ -38,10 +38,16 @@ class EmployeesRepository {
   }
 
   Future<void> updateEmployeStatut(String id, EmployeStatut statut) async {
+    final now = DateTime.now();
+    final dateStr = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
     await _firestore
         .collection(_employesCollection)
         .doc(id)
-        .update({'statut': statut.name});
+        .update({
+          'statut': statut.name,
+          if (statut == EmployeStatut.quitte) 'dateQuitte': dateStr,
+          if (statut != EmployeStatut.quitte) 'dateQuitte': '',
+        });
   }
 
   // ——— Equipes ———

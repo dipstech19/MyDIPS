@@ -241,6 +241,8 @@ class Employe {
   final String ocpExcelSegment;
   /// Traiter comme « salle de contrôle » pour la classification P1 si le libellé poste ne le contient pas.
   final bool ocpForceSalleControle;
+  /// Date à laquelle le collaborateur a été déclaré quitté (format dd/MM/yyyy). Vide si jamais quitté.
+  final String dateQuitte;
 
   Employe({
     required this.id,
@@ -271,6 +273,7 @@ class Employe {
     this.leaveDaysExtra = 0.0,
     this.ocpExcelSegment = '',
     this.ocpForceSalleControle = false,
+    this.dateQuitte = '',
   }) : _siteId = siteId;
 
   /// للمراكز/المواقع — إن لم يكن معرّفاً يُستخدم 'all'
@@ -303,6 +306,7 @@ class Employe {
       'leaveDaysExtra': leaveDaysExtra,
       'ocpExcelSegment': ocpExcelSegment,
       'ocpForceSalleControle': ocpForceSalleControle,
+      'dateQuitte': dateQuitte,
       if (_siteId != null) 'siteId': _siteId,
       'documents': documents.map((d) => {
             'id': d.id,
@@ -389,6 +393,7 @@ class Employe {
       leaveDaysExtra: leaveDaysExtra,
       ocpExcelSegment: ocpSeg,
       ocpForceSalleControle: map['ocpForceSalleControle'] as bool? ?? false,
+      dateQuitte: map['dateQuitte'] as String? ?? '',
     );
   }
 
@@ -421,6 +426,7 @@ class Employe {
     double? leaveDaysExtra,
     String? ocpExcelSegment,
     bool? ocpForceSalleControle,
+    String? dateQuitte,
   }) {
     return Employe(
       id: id ?? this.id,
@@ -451,6 +457,7 @@ class Employe {
       leaveDaysExtra: leaveDaysExtra ?? this.leaveDaysExtra,
       ocpExcelSegment: ocpExcelSegment ?? this.ocpExcelSegment,
       ocpForceSalleControle: ocpForceSalleControle ?? this.ocpForceSalleControle,
+      dateQuitte: dateQuitte ?? this.dateQuitte,
     );
   }
 }

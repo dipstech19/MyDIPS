@@ -1,4 +1,5 @@
 import '../../employees/models/employe_model.dart';
+import '../../employees/models/equipe_model.dart';
 import '../../pointage/data/pointage_repository.dart';
 import '../../pointage/models/pointage_model.dart';
 import '../../shifts/models/shift_models.dart';
@@ -11,7 +12,16 @@ import '../models/distribution_swap_model.dart';
 class DistributionSwapService {
   static const int arrangementMinutes = 480;
 
-  static String equipeIdForGroup(String groupId) => 'distribution:$groupId';
+  /// Retourne l'equipeId utilisé dans les records de pointage pour ce groupe.
+  /// Distribution : préfixe 'distribution:groupId'
+  /// Dessalement  : l'ID de l'équipe lui-même (pas de préfixe)
+  static String equipeIdForGroup(String groupId, [String sectionType = 'distribution']) {
+    if (sectionType == 'dessalement') return groupId;
+    return 'distribution:$groupId';
+  }
+
+  static String sectionLabel(String sectionType) =>
+      sectionType == 'dessalement' ? 'Dessalement' : 'Distribution';
 
   /// Doc Firestore standard : `{employeId}_{yyyy-MM-dd}`.
   static String standardDayDocId(String employeId, DateTime day) {
@@ -74,20 +84,35 @@ class DistributionSwapService {
     required DistributionSwap swap,
     required PointageRepository pointageRepo,
     required Map<String, Employe> employesById,
-    required Map<String, DistributionGroup> groupsById,
+    Map<String, DistributionGroup> groupsById = const {},
+    Map<String, Equipe> equipesById = const {},
   }) async {
     final dateA = DistributionSwap.dayOnly(swap.dateAInGroupB);
     final dateB = DistributionSwap.dayOnly(swap.dateBInGroupA!);
     final empA = employesById[swap.employeAId];
     final empB = employesById[swap.employeBId];
-    final gA = groupsById[swap.groupAId];
-    final gB = groupsById[swap.groupBId];
-    if (empA == null || empB == null || gA == null || gB == null) return;
+    if (empA == null || empB == null) return;
 
-    final eqA = equipeIdForGroup(swap.groupAId);
-    final eqB = equipeIdForGroup(swap.groupBId);
-    final nameA = 'Distribution: ${gA.nom}';
-    final nameB = 'Distribution: ${gB.nom}';
+    final eqA = equipeIdForGroup(swap.groupAId, swap.sectionType);
+    final eqB = equipeIdForGroup(swap.groupBId, swap.sectionType);
+    final String nameA, nameB;
+    final String chefName;
+
+    if (swap.sectionType == 'dessalement') {
+      final gA = equipesById[swap.groupAId];
+      final gB = equipesById[swap.groupBId];
+      if (gA == null || gB == null) return;
+      nameA = 'Dessalement: ${gA.nom}';
+      nameB = 'Dessalement: ${gB.nom}';
+      chefName = 'Responsable Dessalement';
+    } else {
+      final gA = groupsById[swap.groupAId];
+      final gB = groupsById[swap.groupBId];
+      if (gA == null || gB == null) return;
+      nameA = 'Distribution: ${gA.nom}';
+      nameB = 'Distribution: ${gB.nom}';
+      chefName = 'Responsable Distribution';
+    }
 
     await pointageRepo.createOrUpdateRenfortRecord(
       employeId: empA.id,
@@ -95,7 +120,7 @@ class DistributionSwapService {
       employeCin: empA.cin,
       targetEquipeId: eqB,
       targetEquipeName: nameB,
-      targetChefName: 'Responsable Distribution',
+      targetChefName: chefName,
       originalEquipeId: eqA,
       day: dateA,
       defaultOvertimeMinutes: arrangementMinutes,
@@ -107,7 +132,7 @@ class DistributionSwapService {
       employeCin: empB.cin,
       targetEquipeId: eqA,
       targetEquipeName: nameA,
-      targetChefName: 'Responsable Distribution',
+      targetChefName: chefName,
       originalEquipeId: eqB,
       day: dateB,
       defaultOvertimeMinutes: arrangementMinutes,
@@ -140,6 +165,45 @@ class DistributionSwapService {
       unlockWhenWorkDate: dateA,
       pending: true,
     );
+
+  }
+
+  /// Crée immédiatement le renfort pour empA chez GroupB sur dateA dès la création
+  /// de l'échange (statut awaitingReturnDate), avant même que dateB soit connue.
+  static Future<void> applyInitialSwap({
+    required DistributionSwap swap,
+    required PointageRepository pointageRepo,
+    required Map<String, Employe> employesById,
+    Map<String, DistributionGroup> groupsById = const {},
+    Map<String, Equipe> equipesById = const {},
+  }) async {
+    final dateA = DistributionSwap.dayOnly(swap.dateAInGroupB);
+    final empA = employesById[swap.employeAId];
+    if (empA == null) return;
+
+    final String targetName;
+    if (swap.sectionType == 'dessalement') {
+      final gB = equipesById[swap.groupBId];
+      if (gB == null) return;
+      targetName = 'Dessalement: ${gB.nom}';
+    } else {
+      final gA = groupsById[swap.groupAId];
+      final gB = groupsById[swap.groupBId];
+      if (gA == null || gB == null) return;
+      targetName = 'Distribution: ${gB.nom}';
+    }
+
+    await pointageRepo.createOrUpdateRenfortRecord(
+      employeId: empA.id,
+      employeNom: empA.nom,
+      employeCin: empA.cin,
+      targetEquipeId: equipeIdForGroup(swap.groupBId, swap.sectionType),
+      targetEquipeName: targetName,
+      targetChefName: 'Responsable ${sectionLabel(swap.sectionType)}',
+      originalEquipeId: equipeIdForGroup(swap.groupAId, swap.sectionType),
+      day: dateA,
+      defaultOvertimeMinutes: arrangementMinutes,
+    );
   }
 
   /// Journée de manœuvre (renfort) terminée → débloque l'« E » de l'autre.
@@ -150,7 +214,16 @@ class DistributionSwapService {
     required List<DistributionSwap> swaps,
   }) async {
     if (!completedRecord.tempAssigned) return;
-    if (!completedRecord.equipeId.startsWith('distribution:')) return;
+    final eqId = completedRecord.equipeId;
+    final isDistribution = eqId.startsWith('distribution:');
+    if (!isDistribution) {
+      // Vérifie si ce renfort correspond à un échange Dessalement actif
+      final isDessalement = swaps.any((s) =>
+          s.sectionType == 'dessalement' &&
+          s.status != DistributionSwapStatus.cancelled &&
+          (s.groupAId == eqId || s.groupBId == eqId));
+      if (!isDessalement) return;
+    }
     if (completedRecord.chefStatus != ChefPointageStatus.present) return;
     if (completedRecord.departureStatus != DepartureStatus.finished) return;
 
@@ -166,7 +239,7 @@ class DistributionSwapService {
         await pointageRepo.confirmDistSwapArrangement(
           employeId: swap.employeBId,
           day: workDay,
-          homeEquipeId: equipeIdForGroup(swap.groupBId),
+          homeEquipeId: equipeIdForGroup(swap.groupBId, swap.sectionType),
         );
       }
 
@@ -177,7 +250,7 @@ class DistributionSwapService {
         await pointageRepo.confirmDistSwapArrangement(
           employeId: swap.employeAId,
           day: workDay,
-          homeEquipeId: equipeIdForGroup(swap.groupAId),
+          homeEquipeId: equipeIdForGroup(swap.groupAId, swap.sectionType),
         );
       }
 
@@ -197,12 +270,12 @@ class DistributionSwapService {
     final bArr = await pointageRepo.getDistSwapArrangement(
       employeId: swap.employeBId,
       day: dateA,
-      homeEquipeId: equipeIdForGroup(swap.groupBId),
+      homeEquipeId: equipeIdForGroup(swap.groupBId, swap.sectionType),
     );
     final aArr = await pointageRepo.getDistSwapArrangement(
       employeId: swap.employeAId,
       day: dateB,
-      homeEquipeId: equipeIdForGroup(swap.groupAId),
+      homeEquipeId: equipeIdForGroup(swap.groupAId, swap.sectionType),
     );
     if (bArr != null &&
         !bArr.distSwapArrangementPending &&
@@ -280,22 +353,29 @@ class DistributionSwapService {
     for (final id in group.membreIds) {
       final e = byId[id];
       if (e == null || e.statut != EmployeStatut.enService) continue;
-      final arr = dayRecords.where((r) =>
+      // Renfort away prend la priorité sur l'arrangement (cas échange même jour).
+      final renfortAway = dayRecords.any((r) =>
           r.employeId == id &&
-          r.equipeId == eqId &&
-          r.distSwapArrangement &&
+          r.tempAssigned &&
+          r.originalEquipeId == eqId &&
           DistributionSwap.dayOnly(r.date) == d);
-      if (arr.isNotEmpty) {
-        final r = arr.first;
-        add(e, r, arrangement: true, pending: r.distSwapArrangementPending);
-      } else {
-        final renfortAway = dayRecords.any((r) =>
+      if (renfortAway) {
+        // Passe le record arrangement si disponible (affichage statut E dans le pointage).
+        final arrRecords = dayRecords.where((r) =>
             r.employeId == id &&
-            r.tempAssigned &&
-            r.originalEquipeId == eqId &&
+            r.equipeId == eqId &&
+            r.distSwapArrangement &&
             DistributionSwap.dayOnly(r.date) == d);
-        if (renfortAway) {
-          add(e, null, away: true);
+        add(e, arrRecords.isNotEmpty ? arrRecords.first : null, away: true);
+      } else {
+        final arr = dayRecords.where((r) =>
+            r.employeId == id &&
+            r.equipeId == eqId &&
+            r.distSwapArrangement &&
+            DistributionSwap.dayOnly(r.date) == d);
+        if (arr.isNotEmpty) {
+          final r = arr.first;
+          add(e, r, arrangement: true, pending: r.distSwapArrangementPending);
         } else {
           add(e, pickRecord(id, eqId));
         }
@@ -308,6 +388,90 @@ class DistributionSwapService {
       final e = byId[r.employeId];
       if (e == null) continue;
       add(e, r, guest: true);
+    }
+
+    // ─── Fallback swap : couvre les échanges sans enregistrement pointage encore créé ───
+    // Utile pour les swaps au statut awaitingReturnDate (records pas encore générés)
+    // et comme filet de sécurité si les records Firestore n'ont pas encore été lus.
+    for (final swap in swaps) {
+      if (swap.status == DistributionSwapStatus.cancelled) continue;
+      final dayA = DistributionSwap.dayOnly(swap.dateAInGroupB);
+      final dayB = swap.dateBInGroupA != null
+          ? DistributionSwap.dayOnly(swap.dateBInGroupA!)
+          : null;
+
+      // dateA : empA part chez GroupB → absent de GroupA, invité dans GroupB
+      if (dayA == d) {
+        if (swap.groupAId == group.id) {
+          final empA = byId[swap.employeAId];
+          if (empA != null && empA.statut == EmployeStatut.enService) {
+            // Remplace l'entrée normale par "absent (renfort)" si elle n'est pas déjà correcte
+            final idx = result.indexWhere((r) =>
+                r.employe.id == empA.id &&
+                !r.isAwayOnRenfort &&
+                !r.isArrangement &&
+                !r.isGuest);
+            if (idx >= 0) {
+              result[idx] = (
+                employe: empA,
+                record: null,
+                isGuest: false,
+                isArrangement: false,
+                arrangementPending: false,
+                isAwayOnRenfort: true,
+              );
+            }
+          }
+        }
+        if (swap.groupBId == group.id) {
+          final empA = byId[swap.employeAId];
+          if (empA != null &&
+              empA.statut == EmployeStatut.enService &&
+              !group.membreIds.contains(empA.id)) {
+            final alreadyShown = result
+                .any((r) => r.employe.id == empA.id && (r.isGuest || r.isArrangement));
+            if (!alreadyShown && !added.contains(empA.id)) {
+              add(empA, null, guest: true);
+            }
+          }
+        }
+      }
+
+      // dateB : empB part chez GroupA → absent de GroupB, invité dans GroupA
+      if (dayB != null && dayB == d) {
+        if (swap.groupBId == group.id) {
+          final empB = byId[swap.employeBId];
+          if (empB != null && empB.statut == EmployeStatut.enService) {
+            final idx = result.indexWhere((r) =>
+                r.employe.id == empB.id &&
+                !r.isAwayOnRenfort &&
+                !r.isArrangement &&
+                !r.isGuest);
+            if (idx >= 0) {
+              result[idx] = (
+                employe: empB,
+                record: null,
+                isGuest: false,
+                isArrangement: false,
+                arrangementPending: false,
+                isAwayOnRenfort: true,
+              );
+            }
+          }
+        }
+        if (swap.groupAId == group.id) {
+          final empB = byId[swap.employeBId];
+          if (empB != null &&
+              empB.statut == EmployeStatut.enService &&
+              !group.membreIds.contains(empB.id)) {
+            final alreadyShown = result
+                .any((r) => r.employe.id == empB.id && (r.isGuest || r.isArrangement));
+            if (!alreadyShown && !added.contains(empB.id)) {
+              add(empB, null, guest: true);
+            }
+          }
+        }
+      }
     }
 
     result.sort((a, b) => a.employe.nom.compareTo(b.employe.nom));

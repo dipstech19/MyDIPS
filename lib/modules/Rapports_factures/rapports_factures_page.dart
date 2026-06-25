@@ -1,6 +1,5 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
-import '../../core/theme/app_theme.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/utils/responsive.dart';
@@ -582,7 +581,7 @@ class _TotalCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF000966), Color(0xFF000966)],
+          colors: [Color(0xFF000966), Color(0xFF000D80)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

@@ -766,7 +766,7 @@ class _SideDrawer extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerRight,
         child: Container(
-          width: 440,
+          width: min(440, MediaQuery.of(context).size.width),
           height: double.infinity,
           decoration: const BoxDecoration(
             color: Colors.white,
@@ -1376,13 +1376,16 @@ class _AdminTableRow extends StatefulWidget {
 
 class _AdminTableRowState extends State<_AdminTableRow> {
   bool _hovered = false;
+  void _setHovered(bool v) {
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) setState(() => _hovered = v); });
+  }
 
   @override
   Widget build(BuildContext context) {
     final a = widget.admin;
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit:  (_) => setState(() => _hovered = false),
+      onEnter: (_) => _setHovered(true),
+      onExit:  (_) => _setHovered(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         color: _hovered ? _kRowHover : (widget.isEven ? Colors.white : const Color(0xFFFAFBFD)),
@@ -1483,9 +1486,9 @@ class _AdminTableRowState extends State<_AdminTableRow> {
       barrierColor: Colors.black45,
       builder: (dialogContext) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
+        insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 12 : 60, vertical: 40),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680, maxHeight: 600),
+          constraints: BoxConstraints(maxWidth: min(680, MediaQuery.of(context).size.width * 0.93), maxHeight: 600),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2734,14 +2737,17 @@ class _ChefEquipeRow extends StatefulWidget {
 
 class _ChefEquipeRowState extends State<_ChefEquipeRow> {
   bool _hovered = false;
+  void _setHovered(bool v) {
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) setState(() => _hovered = v); });
+  }
 
   @override
   Widget build(BuildContext context) {
     final v = widget.view;
     final eq = v.equipe;
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit:  (_) => setState(() => _hovered = false),
+      onEnter: (_) => _setHovered(true),
+      onExit:  (_) => _setHovered(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         color: _hovered ? _kRowHover : (widget.isEven ? Colors.white : const Color(0xFFFAFBFD)),
@@ -2808,7 +2814,7 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
         builder: (ctx, setDlg) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           child: SizedBox(
-            width: 420,
+            width: min(420, MediaQuery.of(ctx).size.width * 0.93),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2943,9 +2949,9 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
     final dc = widget.deptColor;
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 12 : 40, vertical: 30),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 820, maxHeight: 700),
+        constraints: BoxConstraints(maxWidth: min(820, MediaQuery.of(context).size.width * 0.93), maxHeight: 700),
         child: Column(
           children: [
             // ── Header ──
@@ -3644,7 +3650,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
           return AlertDialog(
             title: Text(isEdit ? 'Modifier le compte chef' : 'Ajouter un compte chef'),
             content: SizedBox(
-              width: 400,
+              width: min(400, MediaQuery.of(ctx).size.width * 0.93),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -3818,7 +3824,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
           return AlertDialog(
             title: Text(existing == null ? 'Nouveau groupe' : 'Modifier groupe'),
             content: SizedBox(
-              width: 520,
+              width: min(520, MediaQuery.of(ctx).size.width * 0.93),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -4068,7 +4074,7 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
           return AlertDialog(
             title: Text(existing == null ? 'Nouveau compte groupe' : 'Modifier compte groupe'),
             content: SizedBox(
-              width: 420,
+              width: min(420, MediaQuery.of(ctx).size.width * 0.93),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -4313,7 +4319,7 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
           return AlertDialog(
             title: Text('Ajouter membre — ${g.nom}'),
             content: SizedBox(
-              width: 420,
+              width: min(420, MediaQuery.of(ctx).size.width * 0.93),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -4399,7 +4405,7 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
           return AlertDialog(
             title: Text('Échanger ${member.nom}'),
             content: SizedBox(
-              width: 440,
+              width: min(440, MediaQuery.of(ctx).size.width * 0.93),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4687,7 +4693,7 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
           return AlertDialog(
             title: const Text('Choisir un chef'),
             content: SizedBox(
-              width: 520,
+              width: min(520, MediaQuery.of(ctx).size.width * 0.93),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -4765,7 +4771,7 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
           return AlertDialog(
           title: Text(existing == null ? 'Nouveau compte Distribution' : 'Modifier compte Distribution'),
           content: SizedBox(
-            width: 520,
+            width: min(520, MediaQuery.of(ctx).size.width * 0.93),
             child: SingleChildScrollView(
               child: Column(
                 children: [
@@ -5213,7 +5219,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
           return AlertDialog(
             title: Text(isEdit ? 'Modifier le chauffeur' : 'Ajouter un chauffeur'),
             content: SizedBox(
-              width: 400,
+              width: min(400, MediaQuery.of(ctx).size.width * 0.93),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,

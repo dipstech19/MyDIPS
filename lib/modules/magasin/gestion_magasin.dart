@@ -14,7 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import '../../core/notifications/ops_notifications_service.dart';
-import 'package:excel/excel.dart' hide Border;
+import 'package:excel/excel.dart' hide Border, BorderStyle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -517,6 +517,7 @@ class MagasinProvider extends ChangeNotifier {
   Future<void> deleteProduit(String id) async => _produitsRef.doc(id).delete();
 
   Future<void> _appliquerMouvement(Mouvement m, {required bool annuler}) async {
+    if (m.produitId.isEmpty) return;
     final prodDoc = _produitsRef.doc(m.produitId);
     final snap = await prodDoc.get();
     if (!snap.exists) return;
@@ -532,7 +533,7 @@ class MagasinProvider extends ChangeNotifier {
     } else {
       final newVariantes = produit.variantes.map((v) {
         final ligne = m.lignes.firstWhere(
-              (l) => l.unite == v.unite,
+          (l) => l.unite == v.unite,
           orElse: () => LigneMouvement(unite: v.unite, quantite: 0),
         );
         return VarianteProduit(
@@ -572,10 +573,14 @@ class MagasinProvider extends ChangeNotifier {
   }
 
   Future<void> deleteEntree(String id) async {
-    final snap = await _mouvementsRef.doc(id).get();
-    if (!snap.exists) return;
-    await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
-    await _mouvementsRef.doc(id).delete();
+    try {
+      final snap = await _mouvementsRef.doc(id).get();
+      if (!snap.exists) return;
+      await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
+      await _mouvementsRef.doc(id).delete();
+    } catch (e) {
+      debugPrint('deleteEntree error: $e');
+    }
   }
 
   Future<void> updateEntree(String id, Mouvement mouvement) async =>
@@ -616,14 +621,33 @@ class MagasinProvider extends ChangeNotifier {
   }
 
   Future<void> deleteSortie(String id) async {
-    final snap = await _mouvementsRef.doc(id).get();
-    if (!snap.exists) return;
-    await _appliquerMouvement(Mouvement.fromFirestore(snap), annuler: true);
-    await _mouvementsRef.doc(id).delete();
+    try {
+      final snap = await _mouvementsRef.doc(id).get();
+      if (!snap.exists) return;
+      final mouvement = Mouvement.fromFirestore(snap);
+      await _appliquerMouvement(mouvement, annuler: true);
+      await _mouvementsRef.doc(id).delete();
+    } catch (e) {
+      debugPrint('deleteSortie error: $e');
+    }
   }
 
   Future<void> updateSortie(String id, Mouvement mouvement) async =>
       _updateMouvement(id, mouvement);
+
+  Future<void> ajusterQuantiteDirecte(Produit produit, {int? nouvelleQuantite, List<VarianteProduit>? nouvellesVariantes}) async {
+    if (produit.aVariantes && nouvellesVariantes != null) {
+      await _produitsRef.doc(produit.id).update({
+        'variantes': nouvellesVariantes.map((v) => v.toMap()).toList(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } else if (!produit.aVariantes && nouvelleQuantite != null) {
+      await _produitsRef.doc(produit.id).update({
+        'quantiteStock': nouvelleQuantite.clamp(0, 999999),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+  }
 }
 
 extension _MouvX on Mouvement {
@@ -1765,7 +1789,7 @@ class _StockPageState extends State<_StockPage> {
             itemBuilder: (ctx, i) => _ProduitCard(
               produit: list[i],
               fournisseur: widget.magasin.fournisseurById(list[i].fournisseurId),
-              onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel))),
+              onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel), magasin: widget.magasin)),
             ),
           )
               : Padding(
@@ -1813,7 +1837,7 @@ class _StockPageState extends State<_StockPage> {
                     child: Text('${p.total}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: stockColor)),
                   )),
                   Center(child: _IconBtn(Icons.visibility_outlined, 'Détails', kBlueLt, kBlue, () {
-                    _showDialog(context, _DetailsDialog(produit: p, groupe: g));
+                    _showDialog(context, _DetailsDialog(produit: p, groupe: g, magasin: widget.magasin));
                   })),
                 ]);
               }).toList(),
@@ -1833,7 +1857,7 @@ class _StockPageState extends State<_StockPage> {
                   itemBuilder: (ctx, i) => _ProduitCard(
                     produit: list[i],
                     fournisseur: widget.magasin.fournisseurById(list[i].fournisseurId),
-                    onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel))),
+                    onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel), magasin: widget.magasin)),
                   ),
                 )
               : Padding(
@@ -1881,7 +1905,7 @@ class _StockPageState extends State<_StockPage> {
                           child: Text('${p.total}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: stockColor)),
                         )),
                         Center(child: _IconBtn(Icons.visibility_outlined, 'Détails', kBlueLt, kBlue, () {
-                          _showDialog(context, _DetailsDialog(produit: p, groupe: g));
+                          _showDialog(context, _DetailsDialog(produit: p, groupe: g, magasin: widget.magasin));
                         })),
                       ]);
                     }).toList(),
@@ -2163,6 +2187,14 @@ class _SortiesPageState extends State<_SortiesPage> {
   String _search = '';
   final TextEditingController _searchCtrl = TextEditingController();
 
+  String _msgRestitution(Mouvement m) {
+    if (!m.aVariantes || m.lignes.isEmpty) {
+      return 'La suppression restituera ${m.quantite} unité(s) au stock de ce produit.';
+    }
+    final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
+    return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
+  }
+
   @override
   void dispose() {
     _searchCtrl.dispose();
@@ -2239,6 +2271,18 @@ class _SortiesPageState extends State<_SortiesPage> {
             ),
           ),
         ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(padding, 6, padding, 0),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.person_search_rounded, size: 16),
+              label: const Text('Récap par personne', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(foregroundColor: kOrange, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
+              onPressed: () => showDialog(context: context, builder: (_) => _RecapPreneurDialog(sorties: widget.sorties)),
+            ),
+          ),
+        ),
         const SizedBox(height: 10),
         if (widget.internalScroll)
           Expanded(
@@ -2253,7 +2297,7 @@ class _SortiesPageState extends State<_SortiesPage> {
               m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
               modulaireNom: list[i].modulaireNom,
               onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kOrange, bgColor: kOrangeLt)),
-              onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+              onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
             ),
           )
@@ -2264,7 +2308,7 @@ class _SortiesPageState extends State<_SortiesPage> {
               columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 2)],
               rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
                 onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kOrange, bgColor: kOrangeLt)),
-                onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
+                onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
@@ -2283,7 +2327,7 @@ class _SortiesPageState extends State<_SortiesPage> {
                   itemBuilder: (ctx, i) => _MouvCard(
                     m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
                     modulaireNom: list[i].modulaireNom,
-                    onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                    onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                     onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
                   ),
                 )
@@ -2293,12 +2337,186 @@ class _SortiesPageState extends State<_SortiesPage> {
                     empty: false, accentColor: kOrange,
                     columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
                     rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
-                      onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette sortie ? Le stock sera restitué.', onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
+                      onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                       onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
                     )).toList(),
                   ),
                 )),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  RÉCAP PAR PERSONNE
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RecapPreneurDialog extends StatefulWidget {
+  final List<Mouvement> sorties;
+  const _RecapPreneurDialog({required this.sorties});
+  @override
+  State<_RecapPreneurDialog> createState() => _RecapPreneurDialogState();
+}
+
+class _RecapPreneurDialogState extends State<_RecapPreneurDialog> {
+  String _search = '';
+  String? _selected;
+  final TextEditingController _ctrl = TextEditingController();
+
+  List<String> get _allNoms {
+    final noms = widget.sorties
+        .where((m) => m.preneurNom != null && m.preneurNom!.isNotEmpty)
+        .map((m) => m.preneurNom!)
+        .toSet()
+        .toList()
+      ..sort();
+    return noms;
+  }
+
+  List<String> get _filteredNoms {
+    if (_search.isEmpty) return _allNoms;
+    return _allNoms.where((n) => n.toLowerCase().contains(_search.toLowerCase())).toList();
+  }
+
+  List<Mouvement> get _selectedSorties => widget.sorties
+      .where((m) => m.preneurNom == _selected)
+      .toList()
+    ..sort((a, b) => b.date.compareTo(a.date));
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = DateFormat('dd/MM/yyyy');
+    final selectedSorties = _selectedSorties;
+    final totalQte = selectedSorties.fold(0, (s, m) => s + m.totalQte);
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF92400E), Color(0xFFD97706)]),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.person_search_rounded, color: Colors.white, size: 22),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Récap par personne', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 20), onPressed: () => Navigator.of(context).pop(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                ],
+              ),
+            ),
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: _ctrl,
+                      onChanged: (v) => setState(() { _search = v; _selected = null; }),
+                      decoration: InputDecoration(
+                        hintText: 'Rechercher un préleveur…',
+                        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                        suffixIcon: _search.isNotEmpty
+                            ? IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { _ctrl.clear(); setState(() { _search = ''; _selected = null; }); })
+                            : null,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kOrange, width: 1.5)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (_selected == null) ...[
+                      if (_filteredNoms.isEmpty)
+                        const Padding(padding: EdgeInsets.all(24), child: Text('Aucun préleveur trouvé', style: TextStyle(color: kMuted)))
+                      else
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: _filteredNoms.length,
+                            separatorBuilder: (_, _) => const Divider(height: 1),
+                            itemBuilder: (ctx, i) {
+                              final nom = _filteredNoms[i];
+                              final count = widget.sorties.where((m) => m.preneurNom == nom).length;
+                              return ListTile(
+                                dense: true,
+                                leading: const CircleAvatar(backgroundColor: kOrangeLt, child: Icon(Icons.person_outline_rounded, color: kOrange, size: 18)),
+                                title: Text(nom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                trailing: Chip(
+                                  label: Text('$count sortie${count != 1 ? "s" : ""}', style: const TextStyle(fontSize: 11)),
+                                  backgroundColor: kOrangeLt,
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                ),
+                                onTap: () => setState(() => _selected = nom),
+                              );
+                            },
+                          ),
+                        ),
+                    ] else ...[
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                            onPressed: () => setState(() => _selected = null),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_selected!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(20)),
+                            child: Text(
+                              '$totalQte unité${totalQte != 1 ? "s" : ""} · ${selectedSorties.length} sortie${selectedSorties.length != 1 ? "s" : ""}',
+                              style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600, fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: selectedSorties.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (ctx, i) {
+                            final m = selectedSorties[i];
+                            return ListTile(
+                              dense: true,
+                              leading: Text(fmt.format(m.date), style: const TextStyle(fontSize: 11, color: kMuted, fontWeight: FontWeight.w500)),
+                              title: Text(m.nomProduit, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                              subtitle: Text(m.categorie, style: const TextStyle(fontSize: 11, color: kMuted)),
+                              trailing: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(12)),
+                                child: Text('${m.totalQte} unité${m.totalQte != 1 ? "s" : ""}', style: const TextStyle(color: kOrange, fontWeight: FontWeight.bold, fontSize: 11)),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2626,6 +2844,15 @@ class _HistoriquePage extends StatefulWidget {
 class _HistoriquePageState extends State<_HistoriquePage> {
   String _typeFiltre = 'Tout';
   String _magasinFiltre = 'Tous';
+
+  String _msgSuppression(Mouvement m) {
+    if (m.type == 'entree') return 'Supprimer cette entrée du journal ?';
+    if (!m.aVariantes || m.lignes.isEmpty) {
+      return 'La suppression restituera ${m.quantite} unité(s) au stock de ce produit.';
+    }
+    final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
+    return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
+  }
   String _fournisseurFiltre = 'Tous';
   String _modulaireFiltre = 'Tous';
   DateTime? _dateDebut, _dateFin;
@@ -2815,7 +3042,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                 showPreneur: false,
                 fournisseurNom: isE ? m.fournisseurNom : null,
                 modulaireNom: m.modulaireNom,
-                onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: isE ? 'Supprimer cette entrée ?' : 'Supprimer cette sortie ?', onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               );
             },
@@ -2895,7 +3122,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                       showPreneur: false,
                       fournisseurNom: isE ? m.fournisseurNom : null,
                       modulaireNom: m.modulaireNom,
-                      onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: isE ? 'Supprimer cette entrée ?' : 'Supprimer cette sortie ?', onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
+                      onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                       onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
                     );
                   },
@@ -3349,6 +3576,50 @@ class _MouvForm extends StatefulWidget {
   State<_MouvForm> createState() => _MouvFormState();
 }
 
+class _EpiItem {
+  final Produit produit;
+  bool checked = false;
+  final Set<String> selVar = {};
+  final Map<String, TextEditingController> varCtrl = {};
+  final TextEditingController qteCtrl = TextEditingController(text: '1');
+  String? stockError;
+  Map<String, String> varStockErrors = {};
+
+  _EpiItem(this.produit);
+
+  void dispose() {
+    qteCtrl.dispose();
+    for (final c in varCtrl.values) c.dispose();
+  }
+
+  void validateStock() {
+    if (!checked) { stockError = null; varStockErrors = {}; return; }
+    if (!produit.aVariantes) {
+      final d = int.tryParse(qteCtrl.text) ?? 0;
+      stockError = d > produit.total ? 'Max ${produit.total}' : null;
+      varStockErrors = {};
+    } else {
+      stockError = null;
+      final errors = <String, String>{};
+      for (final u in selVar) {
+        final d = int.tryParse(varCtrl[u]?.text ?? '0') ?? 0;
+        final vm = produit.variantes.where((v) => v.unite == u);
+        final dispo = vm.isEmpty ? 0 : vm.first.quantite;
+        if (d > dispo) errors[u] = 'Max $dispo';
+      }
+      varStockErrors = errors;
+    }
+  }
+
+  bool get hasStockError => stockError != null || varStockErrors.isNotEmpty;
+
+  bool get isValid {
+    if (!checked) return true;
+    if (produit.aVariantes) return selVar.isNotEmpty && varStockErrors.isEmpty;
+    return (int.tryParse(qteCtrl.text) ?? 0) > 0 && stockError == null;
+  }
+}
+
 class _MouvFormState extends State<_MouvForm> {
   String? _selMag = 'Base de vie';
   String? _selCat;
@@ -3375,6 +3646,10 @@ class _MouvFormState extends State<_MouvForm> {
   bool _newModulaireMode = false;
   final _newModulaireCtrl = TextEditingController();
 
+  // EPI multi-select
+  final List<_EpiItem> _epiItems = [];
+  final _epiSearchCtrl = TextEditingController();
+
   late DateTime _mvtDate;
   final _dateCtrl = TextEditingController(); // NOUVEAU : date manuelle
   final _puCtrl = TextEditingController();   // P.U en MAD (optionnel)
@@ -3388,6 +3663,8 @@ class _MouvFormState extends State<_MouvForm> {
 
   GroupeUnites? get _groupe => _newProdMode ? groupeByLabel(_newGroupeLabel) : groupeByLabel(_selProd?.groupeUniteLabel);
   bool get _hasVar => _newProdMode ? _newHasVar : (_selProd?.aVariantes ?? false);
+
+  bool get _isEpiMode => _isSortie && !_isEditing && _selCat == 'EPI';
 
   List<Produit> get _filteredProduits => widget.magasin.produits.where((p) => _selCat == null || p.categorie == _selCat).toList();
 
@@ -3480,8 +3757,9 @@ class _MouvFormState extends State<_MouvForm> {
     _newCatCtrl.dispose(); _newNomCtrl.dispose(); _newRefCtrl.dispose();
     _mvtNomCtrl.dispose(); _mvtRefCtrl.dispose(); _qteC.dispose();
     _prodSearchC.dispose(); _preneurC.dispose(); _dateCtrl.dispose(); _puCtrl.dispose();
-    _newModulaireCtrl.dispose();
+    _newModulaireCtrl.dispose(); _epiSearchCtrl.dispose();
     for (final c in _varCtrl.values) c.dispose();
+    for (final item in _epiItems) item.dispose();
     super.dispose();
   }
 
@@ -3515,6 +3793,10 @@ class _MouvFormState extends State<_MouvForm> {
 
   bool get _canSave {
     if (_saving) return false;
+    if (_isEpiMode) {
+      final checked = _epiItems.where((e) => e.checked).toList();
+      return checked.isNotEmpty && checked.every((e) => e.isValid);
+    }
     final catOk = _newCatMode ? _newCatCtrl.text.trim().isNotEmpty : _selCat != null;
     final prodOk = _newProdMode ? (_newNomCtrl.text.trim().isNotEmpty && _newRefCtrl.text.trim().isNotEmpty) : _selProd != null;
     final qteOk = _hasVar ? _selVar.isNotEmpty : (int.tryParse(_qteC.text) ?? 0) > 0;
@@ -3533,6 +3815,38 @@ class _MouvFormState extends State<_MouvForm> {
       final catFinal = _newCatMode ? _newCatCtrl.text.trim() : (_selCat ?? '');
       if (catFinal.isEmpty) throw Exception('Catégorie manquante');
       if (_newCatMode) await widget.magasin.addCategorie(catFinal);
+
+      // ── Mode EPI : plusieurs articles en une fois ──────────────────
+      if (_isEpiMode) {
+        final auth = scaffoldCtx != null ? Provider.of<AuthProvider>(scaffoldCtx, listen: false) : null;
+        final checkedItems = _epiItems.where((e) => e.checked && e.isValid).toList();
+        if (checkedItems.isEmpty) throw Exception('Aucun article EPI sélectionné');
+        for (final item in checkedItems) {
+          final prod = item.produit;
+          final lignes = prod.aVariantes
+              ? item.selVar.map((u) => LigneMouvement(unite: u, quantite: int.tryParse(item.varCtrl[u]?.text ?? '0') ?? 0)).where((l) => l.quantite > 0).toList()
+              : <LigneMouvement>[];
+          final qte = prod.aVariantes ? 0 : (int.tryParse(item.qteCtrl.text) ?? 0);
+          final mvt = Mouvement(
+            id: '', type: 'sortie', produitId: prod.id, nomProduit: prod.nom,
+            reference: prod.reference, categorie: catFinal, magasin: magasinFinal,
+            aVariantes: prod.aVariantes, groupeUniteLabel: prod.aVariantes ? prod.groupeUniteLabel : null,
+            quantite: qte, lignes: lignes, date: _mvtDate,
+            preneurNom: _preneurC.text.trim().isNotEmpty ? _preneurC.text.trim() : null,
+            siteId: _siteId, fournisseurId: null, fournisseurNom: null,
+            modulaireId: null, modulaireNom: null, prixUnitaire: null,
+          );
+          await widget.magasin.addSortie(mvt, actorUserId: auth?.currentUser?.id, actorUserName: auth?.currentUser?.nom);
+        }
+        if (Navigator.of(dialogCtx, rootNavigator: true).canPop()) Navigator.of(dialogCtx, rootNavigator: true).pop();
+        if (scaffoldCtx != null && scaffoldCtx.mounted) {
+          ScaffoldMessenger.of(scaffoldCtx).showSnackBar(SnackBar(
+            content: Text('${checkedItems.length} sortie(s) EPI enregistrée(s)'),
+            backgroundColor: kOrange, behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2),
+          ));
+        }
+        return;
+      }
 
       // Résolution fournisseur (N.A = pas de fournisseur)
       final fouId = (_isSortie || _selFournisseurId == '__NA__') ? null : _selFournisseurId;
@@ -3927,7 +4241,15 @@ class _MouvFormState extends State<_MouvForm> {
               : _StyledDrop<String>(
             value: _selCat, hint: cats.isEmpty ? 'Aucune catégorie' : 'Sélectionner une catégorie',
             items: cats.map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis))).toList(),
-            onChanged: (v) => setState(() { _selCat = v; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear(); }),
+            onChanged: (v) => setState(() {
+              _selCat = v; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear();
+              for (final item in _epiItems) item.dispose();
+              _epiItems.clear(); _epiSearchCtrl.clear();
+              if (v == 'EPI' && _isSortie && !_isEditing) {
+                final epiProds = widget.magasin.produits.where((p) => p.categorie == 'EPI').toList()..sort((a, b) => a.nom.compareTo(b.nom));
+                _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
+              }
+            }),
           );
 
           if (!allowCreate) return field;
@@ -3945,207 +4267,373 @@ class _MouvFormState extends State<_MouvForm> {
         const SizedBox(height: 20),
 
         if (_selCat != null || _newCatMode) ...[
-          // ── Produit ──────────────────────────────────────────────────
-          Builder(builder: (ctx) {
-            final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
-            return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
-          }),
-          const SizedBox(height: 10),
-          Builder(builder: (ctx) {
-            final allowCreate = !_isSortie;
-            final field = _newProdMode
-                ? _NewProdBlock(
-              nomCtrl: _newNomCtrl, refCtrl: _newRefCtrl, hasVar: _newHasVar, groupeLabel: _newGroupeLabel, color: _col,
-              onHasVarChanged: (v) => setState(() { _newHasVar = v; _selVar.clear(); _varCtrl.clear(); }),
-              onGroupeChanged: (v) => setState(() { _newGroupeLabel = v; _selVar.clear(); _varCtrl.clear(); }),
-              onChanged: () => setState(() {}),
-            )
-                : Builder(builder: (ctx) {
-              final query = _prodSearchC.text.trim().toLowerCase();
-              final matches = query.isEmpty ? const <Produit>[] : _filteredProduits.where((p) => p.nom.toLowerCase().contains(query) || p.reference.toLowerCase().contains(query)).take(8).toList();
-              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                SizedBox(
-                  height: 42,
-                  child: TextField(
-                    controller: _prodSearchC,
-                    style: const TextStyle(fontSize: 12),
-                    decoration: InputDecoration(
-                      hintText: 'Rechercher un produit…',
-                      hintStyle: const TextStyle(fontSize: 12, color: kBorderMd),
-                      prefixIcon: const Icon(Icons.search_rounded, color: kBlue, size: 17),
-                      suffixIcon: query.isNotEmpty ? IconButton(icon: const Icon(Icons.close_rounded, size: 14), onPressed: () => setState(() => _prodSearchC.clear())) : null,
-                      filled: true, fillColor: kSurface,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBlue, width: 2)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (_selProd != null && query.isEmpty) Text('Produit sélectionné : ${_selProd!.nom}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1),
-                if (query.isNotEmpty)
-                  Container(
-                    decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
-                    constraints: BoxConstraints(maxHeight: mobile ? 240 : 220),
-                    child: matches.isEmpty
-                        ? const Padding(padding: EdgeInsets.all(14), child: Text('Aucun produit', style: TextStyle(fontSize: 12)))
-                        : ListView.builder(padding: EdgeInsets.zero, shrinkWrap: true, itemCount: matches.length, itemBuilder: (_, i) {
-                      final p = matches[i];
-                      final isSel = _selProd?.id == p.id;
-                      return InkWell(
-                        onTap: () => setState(() {
-                          _selProd = p; _prodSearchC.text = p.nom;
-                          _mvtNomCtrl.text = p.nom; _mvtRefCtrl.text = p.reference;
-                          _selVar.clear(); _varCtrl.clear(); _stockError = null; _varStockErrors = {};
-                          if (!_isSortie && p.fournisseurId != null) _selFournisseurId = p.fournisseurId;
-                          _validateStock();
-                        }),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                            Text(p.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis, maxLines: 1),
-                            const SizedBox(height: 4),
-                            Wrap(spacing: 6, runSpacing: 6, children: [
-                              _PillBadge(p.reference, kBlueLt, kBlue),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                decoration: BoxDecoration(color: p.rupture ? kRedLt : p.bas ? kOrangeLt : kGreenLt, borderRadius: BorderRadius.circular(20)),
-                                child: Text('${p.total}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: p.rupture ? kRed : p.bas ? kOrange : kGreen)),
-                              ),
-                              if (isSel) const Icon(Icons.check_circle_rounded, size: 14, color: kBlue),
-                            ]),
-                          ]),
-                        ),
-                      );
-                    }),
-                  ),
-              ]);
-            });
-
-            if (!allowCreate) return field;
-            if (mobile) {
-              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                field, const SizedBox(height: 8),
-                _ModeBtn(label: _newProdMode ? '← Existant' : '+ Nouveau', color: _col, onTap: () => setState(() { _newProdMode = !_newProdMode; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear(); _stockError = null; _varStockErrors = {}; })),
-              ]);
-            }
-            return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: field), const SizedBox(width: 8),
-              _ModeBtn(label: _newProdMode ? '← Existant' : '+ Nouveau', color: _col, onTap: () => setState(() { _newProdMode = !_newProdMode; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear(); _stockError = null; _varStockErrors = {}; })),
-            ]);
-          }),
-          const SizedBox(height: 20),
-
-          if (_isEditing && !_newProdMode && _selProd != null) ...[
-            Wrap(spacing: 10, runSpacing: 10, children: [
-              SizedBox(width: mobile ? double.infinity : 280, child: _StyledTF(ctrl: _mvtNomCtrl, hint: 'Nom (mouvement)', prefix: const Icon(Icons.edit_note_rounded, size: 18, color: kMuted), onChanged: (_) => setState(() {}))),
-              SizedBox(width: mobile ? double.infinity : 220, child: _StyledTF(ctrl: _mvtRefCtrl, hint: 'Référence (mouvement)', prefix: const Icon(Icons.tag_rounded, size: 18, color: kMuted), onChanged: (_) => setState(() {}))),
-            ]),
-            const SizedBox(height: 14),
-          ],
-
-          if (_selProd != null || _newProdMode) ...[
-            // ── Quantité ────────────────────────────────────────────────
-            Builder(builder: (ctx) {
-              final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
-              return _SectionHdr('$secNum. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col);
-            }),
+          if (_isEpiMode) ...[
+            // ── Mode EPI : liste multi-sélection ─────────────────────
+            _SectionHdr('4. Articles EPI', Icons.verified_user_rounded, _col),
             const SizedBox(height: 10),
-
-            if (_isSortie && _selProd != null && !_newProdMode && _stockError != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kRed.withOpacity(0.3))),
-                child: Row(children: [
-                  const Icon(Icons.warning_amber_rounded, color: kRed, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_stockError!, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kRed))),
-                ]),
-              ),
-
-            if (!_hasVar)
-              ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: mobile ? double.infinity : 220),
-                child: _NumStepField(ctrl: _qteC, color: _col, onChanged: () { setState(() {}); _validateStock(); }),
-              )
-            else if (_groupe != null) ...[
-              Wrap(spacing: 7, runSpacing: 7, children: _groupe!.unites.map((u) {
-                final sel = _selVar.contains(u);
-                int? disp;
-                if (_isSortie && _selProd != null) {
-                  final vm = _selProd!.variantes.where((v) => v.unite == u);
-                  disp = vm.isEmpty ? 0 : vm.first.quantite;
-                }
-                return InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => _toggleVar(u),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: sel ? _col : kSurface, borderRadius: BorderRadius.circular(8), border: Border.all(color: sel ? _col : kBorder, width: sel ? 2 : 1.5)),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(u, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : kMuted)),
-                      if (disp != null) Text('$disp dispo', style: TextStyle(fontSize: 9, color: sel ? Colors.white70 : kMuted)),
-                    ]),
-                  ),
-                );
-              }).toList()),
-              if (_selVar.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                _VarQteTable(selVar: _selVar, varCtrl: _varCtrl, color: _col, onRemove: _toggleVar, stockErrors: _varStockErrors, stockDisp: _isSortie && _selProd != null ? {for (var v in _selProd!.variantes) v.unite: v.quantite} : {}, onQteChanged: _validateStock),
-              ],
-            ],
-            const SizedBox(height: 20),
-          ],
-
-          if (!_isSortie && (_selProd != null || _newProdMode)) ...[
-            Builder(builder: (ctx) {
-              final secNum = _selMag == 'Base de vie' ? '8' : '7';
-              return _SectionHdr('$secNum. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
-            }),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: kGreenLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kGreen.withValues(alpha: 0.2))),
-              child: Row(children: [
-                Icon(Icons.info_outline_rounded, size: 12, color: kGreen.withValues(alpha: 0.7)),
-                const SizedBox(width: 6),
-                const Flexible(child: Text('Optionnel — saisir le prix unitaire en MAD.', style: TextStyle(fontSize: 10, color: kGreen))),
-              ]),
-            ),
-            const SizedBox(height: 8),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 220),
+            SizedBox(
+              height: 42,
               child: TextField(
-                controller: _puCtrl,
-                style: const TextStyle(fontSize: 12, color: kText),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
-                onChanged: (_) => setState(() {}),
+                controller: _epiSearchCtrl,
+                style: const TextStyle(fontSize: 12),
                 decoration: InputDecoration(
-                  hintText: 'Ex: 150.00',
+                  hintText: 'Rechercher un article EPI…',
                   hintStyle: const TextStyle(fontSize: 12, color: kBorderMd),
-                  prefixIcon: const Icon(Icons.payments_outlined, size: 18, color: kMuted),
-                  suffixText: 'MAD',
-                  suffixStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kMuted),
+                  prefixIcon: const Icon(Icons.search_rounded, color: kBlue, size: 17),
+                  suffixIcon: _epiSearchCtrl.text.isNotEmpty ? IconButton(icon: const Icon(Icons.close_rounded, size: 14), onPressed: () => setState(() => _epiSearchCtrl.clear())) : null,
                   filled: true, fillColor: kSurface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kGreen, width: 2)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBlue, width: 2)),
                   enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
                 ),
+                onChanged: (_) => setState(() {}),
               ),
             ),
+            const SizedBox(height: 8),
+            Builder(builder: (ctx) {
+              final q = _epiSearchCtrl.text.trim().toLowerCase();
+              final visibleItems = q.isEmpty ? _epiItems : _epiItems.where((e) => e.produit.nom.toLowerCase().contains(q) || e.produit.reference.toLowerCase().contains(q)).toList();
+              if (visibleItems.isEmpty) {
+                return Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
+                  child: const Center(child: Text('Aucun article EPI', style: TextStyle(fontSize: 12, color: kMuted))),
+                );
+              }
+              return Container(
+                constraints: BoxConstraints(maxHeight: mobile ? 400 : 360),
+                decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: visibleItems.length,
+                  itemBuilder: (_, idx) {
+                    final item = visibleItems[idx];
+                    final p = item.produit;
+                    final groupe = groupeByLabel(p.groupeUniteLabel);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: () => setState(() {
+                            item.checked = !item.checked;
+                            if (!item.checked) {
+                              for (final c in item.varCtrl.values) c.dispose();
+                              item.selVar.clear(); item.varCtrl.clear();
+                              item.stockError = null; item.varStockErrors = {};
+                            } else { item.validateStock(); }
+                          }),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            child: Row(children: [
+                              SizedBox(
+                                width: 24, height: 24,
+                                child: Checkbox(
+                                  value: item.checked,
+                                  onChanged: (v) => setState(() {
+                                    item.checked = v ?? false;
+                                    if (!item.checked) {
+                                      for (final c in item.varCtrl.values) c.dispose();
+                                      item.selVar.clear(); item.varCtrl.clear();
+                                      item.stockError = null; item.varStockErrors = {};
+                                    } else { item.validateStock(); }
+                                  }),
+                                  activeColor: _col,
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                                Text(p.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis),
+                                const SizedBox(height: 3),
+                                Wrap(spacing: 6, runSpacing: 4, children: [
+                                  _PillBadge(p.reference, kBlueLt, kBlue),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(color: p.rupture ? kRedLt : p.bas ? kOrangeLt : kGreenLt, borderRadius: BorderRadius.circular(20)),
+                                    child: Text('Stock: ${p.total}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: p.rupture ? kRed : p.bas ? kOrange : kGreen)),
+                                  ),
+                                ]),
+                              ])),
+                            ]),
+                          ),
+                        ),
+                        if (item.checked) ...[
+                          if (p.aVariantes && groupe != null) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(46, 0, 12, 6),
+                              child: Wrap(spacing: 6, runSpacing: 6, children: groupe.unites.map((u) {
+                                final sel = item.selVar.contains(u);
+                                final vm = p.variantes.where((v) => v.unite == u);
+                                final dispo = vm.isEmpty ? 0 : vm.first.quantite;
+                                return InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () => setState(() {
+                                    if (sel) { item.selVar.remove(u); item.varCtrl.remove(u)?.dispose(); }
+                                    else { item.selVar.add(u); item.varCtrl[u] = TextEditingController(text: '1'); }
+                                    item.validateStock();
+                                  }),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: sel ? _col : kSurface,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: sel ? _col : kBorder, width: sel ? 2 : 1.5),
+                                    ),
+                                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                      Text(u, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: sel ? Colors.white : (dispo == 0 ? kRed : kMuted))),
+                                      Text('$dispo', style: TextStyle(fontSize: 9, color: sel ? Colors.white70 : (dispo == 0 ? kRed : kMuted))),
+                                    ]),
+                                  ),
+                                );
+                              }).toList()),
+                            ),
+                            if (item.selVar.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(46, 0, 12, 8),
+                                child: _VarQteTable(
+                                  selVar: item.selVar, varCtrl: item.varCtrl, color: _col,
+                                  onRemove: (u) => setState(() { item.selVar.remove(u); item.varCtrl.remove(u)?.dispose(); item.validateStock(); }),
+                                  stockErrors: item.varStockErrors,
+                                  stockDisp: {for (var v in p.variantes) v.unite: v.quantite},
+                                  onQteChanged: () => setState(() => item.validateStock()),
+                                ),
+                              ),
+                          ] else ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(46, 0, 12, 10),
+                              child: Row(children: [
+                                const Text('Quantité :', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kMuted)),
+                                const SizedBox(width: 10),
+                                SizedBox(
+                                  width: 130,
+                                  child: _NumStepField(ctrl: item.qteCtrl, color: _col, onChanged: () => setState(() => item.validateStock())),
+                                ),
+                                if (item.stockError != null) ...[
+                                  const SizedBox(width: 8),
+                                  Flexible(child: Text(item.stockError!, style: const TextStyle(fontSize: 10, color: kRed, fontWeight: FontWeight.w600))),
+                                ],
+                              ]),
+                            ),
+                          ],
+                        ],
+                        if (idx < visibleItems.length - 1) const Divider(height: 1, indent: 46, color: kBorder),
+                      ],
+                    );
+                  },
+                ),
+              );
+            }),
             const SizedBox(height: 20),
-          ],
-
-          if (_isSortie && (_selProd != null || _newProdMode)) ...[
             _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
             const SizedBox(height: 10),
             _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
+          ] else ...[
+            // ── Mode standard : sélection d'un seul produit ───────────
+            Builder(builder: (ctx) {
+              final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
+              return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
+            }),
+            const SizedBox(height: 10),
+            Builder(builder: (ctx) {
+              final allowCreate = !_isSortie;
+              final field = _newProdMode
+                  ? _NewProdBlock(
+                nomCtrl: _newNomCtrl, refCtrl: _newRefCtrl, hasVar: _newHasVar, groupeLabel: _newGroupeLabel, color: _col,
+                onHasVarChanged: (v) => setState(() { _newHasVar = v; _selVar.clear(); _varCtrl.clear(); }),
+                onGroupeChanged: (v) => setState(() { _newGroupeLabel = v; _selVar.clear(); _varCtrl.clear(); }),
+                onChanged: () => setState(() {}),
+              )
+                  : Builder(builder: (ctx) {
+                final query = _prodSearchC.text.trim().toLowerCase();
+                final matches = query.isEmpty ? const <Produit>[] : _filteredProduits.where((p) => p.nom.toLowerCase().contains(query) || p.reference.toLowerCase().contains(query)).take(8).toList();
+                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  SizedBox(
+                    height: 42,
+                    child: TextField(
+                      controller: _prodSearchC,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: InputDecoration(
+                        hintText: 'Rechercher un produit…',
+                        hintStyle: const TextStyle(fontSize: 12, color: kBorderMd),
+                        prefixIcon: const Icon(Icons.search_rounded, color: kBlue, size: 17),
+                        suffixIcon: query.isNotEmpty ? IconButton(icon: const Icon(Icons.close_rounded, size: 14), onPressed: () => setState(() => _prodSearchC.clear())) : null,
+                        filled: true, fillColor: kSurface,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBlue, width: 2)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_selProd != null && query.isEmpty) Text('Produit sélectionné : ${_selProd!.nom}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText), overflow: TextOverflow.ellipsis, maxLines: 1),
+                  if (query.isNotEmpty)
+                    Container(
+                      decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBorder)),
+                      constraints: BoxConstraints(maxHeight: mobile ? 240 : 220),
+                      child: matches.isEmpty
+                          ? const Padding(padding: EdgeInsets.all(14), child: Text('Aucun produit', style: TextStyle(fontSize: 12)))
+                          : ListView.builder(padding: EdgeInsets.zero, shrinkWrap: true, itemCount: matches.length, itemBuilder: (_, i) {
+                        final p = matches[i];
+                        final isSel = _selProd?.id == p.id;
+                        return InkWell(
+                          onTap: () => setState(() {
+                            _selProd = p; _prodSearchC.text = p.nom;
+                            _mvtNomCtrl.text = p.nom; _mvtRefCtrl.text = p.reference;
+                            _selVar.clear(); _varCtrl.clear(); _stockError = null; _varStockErrors = {};
+                            if (!_isSortie && p.fournisseurId != null) _selFournisseurId = p.fournisseurId;
+                            _validateStock();
+                          }),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                              Text(p.nom, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis, maxLines: 1),
+                              const SizedBox(height: 4),
+                              Wrap(spacing: 6, runSpacing: 6, children: [
+                                _PillBadge(p.reference, kBlueLt, kBlue),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(color: p.rupture ? kRedLt : p.bas ? kOrangeLt : kGreenLt, borderRadius: BorderRadius.circular(20)),
+                                  child: Text('${p.total}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: p.rupture ? kRed : p.bas ? kOrange : kGreen)),
+                                ),
+                                if (isSel) const Icon(Icons.check_circle_rounded, size: 14, color: kBlue),
+                              ]),
+                            ]),
+                          ),
+                        );
+                      }),
+                    ),
+                ]);
+              });
+
+              if (!allowCreate) return field;
+              if (mobile) {
+                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  field, const SizedBox(height: 8),
+                  _ModeBtn(label: _newProdMode ? '← Existant' : '+ Nouveau', color: _col, onTap: () => setState(() { _newProdMode = !_newProdMode; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear(); _stockError = null; _varStockErrors = {}; })),
+                ]);
+              }
+              return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: field), const SizedBox(width: 8),
+                _ModeBtn(label: _newProdMode ? '← Existant' : '+ Nouveau', color: _col, onTap: () => setState(() { _newProdMode = !_newProdMode; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear(); _stockError = null; _varStockErrors = {}; })),
+              ]);
+            }),
+            const SizedBox(height: 20),
+
+            if (_isEditing && !_newProdMode && _selProd != null) ...[
+              Wrap(spacing: 10, runSpacing: 10, children: [
+                SizedBox(width: mobile ? double.infinity : 280, child: _StyledTF(ctrl: _mvtNomCtrl, hint: 'Nom (mouvement)', prefix: const Icon(Icons.edit_note_rounded, size: 18, color: kMuted), onChanged: (_) => setState(() {}))),
+                SizedBox(width: mobile ? double.infinity : 220, child: _StyledTF(ctrl: _mvtRefCtrl, hint: 'Référence (mouvement)', prefix: const Icon(Icons.tag_rounded, size: 18, color: kMuted), onChanged: (_) => setState(() {}))),
+              ]),
+              const SizedBox(height: 14),
+            ],
+
+            if (_selProd != null || _newProdMode) ...[
+              Builder(builder: (ctx) {
+                final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
+                return _SectionHdr('$secNum. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col);
+              }),
+              const SizedBox(height: 10),
+
+              if (_isSortie && _selProd != null && !_newProdMode && _stockError != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kRed.withOpacity(0.3))),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded, color: kRed, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_stockError!, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kRed))),
+                  ]),
+                ),
+
+              if (!_hasVar)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: mobile ? double.infinity : 220),
+                  child: _NumStepField(ctrl: _qteC, color: _col, onChanged: () { setState(() {}); _validateStock(); }),
+                )
+              else if (_groupe != null) ...[
+                Wrap(spacing: 7, runSpacing: 7, children: _groupe!.unites.map((u) {
+                  final sel = _selVar.contains(u);
+                  int? disp;
+                  if (_isSortie && _selProd != null) {
+                    final vm = _selProd!.variantes.where((v) => v.unite == u);
+                    disp = vm.isEmpty ? 0 : vm.first.quantite;
+                  }
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _toggleVar(u),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(color: sel ? _col : kSurface, borderRadius: BorderRadius.circular(8), border: Border.all(color: sel ? _col : kBorder, width: sel ? 2 : 1.5)),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(u, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : kMuted)),
+                        if (disp != null) Text('$disp dispo', style: TextStyle(fontSize: 9, color: sel ? Colors.white70 : kMuted)),
+                      ]),
+                    ),
+                  );
+                }).toList()),
+                if (_selVar.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _VarQteTable(selVar: _selVar, varCtrl: _varCtrl, color: _col, onRemove: _toggleVar, stockErrors: _varStockErrors, stockDisp: _isSortie && _selProd != null ? {for (var v in _selProd!.variantes) v.unite: v.quantite} : {}, onQteChanged: _validateStock),
+                ],
+              ],
+              const SizedBox(height: 20),
+            ],
+
+            if (!_isSortie && (_selProd != null || _newProdMode)) ...[
+              Builder(builder: (ctx) {
+                final secNum = _selMag == 'Base de vie' ? '8' : '7';
+                return _SectionHdr('$secNum. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
+              }),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: kGreenLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kGreen.withValues(alpha: 0.2))),
+                child: Row(children: [
+                  Icon(Icons.info_outline_rounded, size: 12, color: kGreen.withValues(alpha: 0.7)),
+                  const SizedBox(width: 6),
+                  const Flexible(child: Text('Optionnel — saisir le prix unitaire en MAD.', style: TextStyle(fontSize: 10, color: kGreen))),
+                ]),
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 220),
+                child: TextField(
+                  controller: _puCtrl,
+                  style: const TextStyle(fontSize: 12, color: kText),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Ex: 150.00',
+                    hintStyle: const TextStyle(fontSize: 12, color: kBorderMd),
+                    prefixIcon: const Icon(Icons.payments_outlined, size: 18, color: kMuted),
+                    suffixText: 'MAD',
+                    suffixStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kMuted),
+                    filled: true, fillColor: kSurface,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kGreen, width: 2)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            if (_isSortie && (_selProd != null || _newProdMode)) ...[
+              _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
+              const SizedBox(height: 10),
+              _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
+            ],
           ],
         ],
       ]),
@@ -4295,10 +4783,153 @@ class _VarQteTableState extends State<_VarQteTable> {
 //  SECTION 14 — DIALOGS
 // ─────────────────────────────────────────────────────────────────────────────
 
+class _AjustementStockDialog extends StatefulWidget {
+  final Produit produit;
+  final GroupeUnites? groupe;
+  final MagasinProvider magasin;
+  const _AjustementStockDialog({required this.produit, this.groupe, required this.magasin});
+
+  @override
+  State<_AjustementStockDialog> createState() => _AjustementStockDialogState();
+}
+
+class _AjustementStockDialogState extends State<_AjustementStockDialog> {
+  late final TextEditingController _qteCtrl;
+  late final Map<String, TextEditingController> _varianteCtrls;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.produit;
+    if (!p.aVariantes) {
+      _qteCtrl = TextEditingController(text: '${p.quantiteStock}');
+      _varianteCtrls = {};
+    } else {
+      _qteCtrl = TextEditingController();
+      _varianteCtrls = {
+        for (final v in p.variantes) v.unite: TextEditingController(text: '${v.quantite}'),
+      };
+    }
+  }
+
+  @override
+  void dispose() {
+    _qteCtrl.dispose();
+    for (final c in _varianteCtrls.values) c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      final p = widget.produit;
+      if (!p.aVariantes) {
+        final val = int.tryParse(_qteCtrl.text.trim()) ?? 0;
+        await widget.magasin.ajusterQuantiteDirecte(p, nouvelleQuantite: val);
+      } else {
+        final nouvellesVariantes = p.variantes.map((v) {
+          final val = int.tryParse(_varianteCtrls[v.unite]?.text.trim() ?? '') ?? v.quantite;
+          return VarianteProduit(unite: v.unite, quantite: val.clamp(0, 999999));
+        }).toList();
+        await widget.magasin.ajusterQuantiteDirecte(p, nouvellesVariantes: nouvellesVariantes);
+      }
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.produit;
+    final g = widget.groupe;
+
+    return _FullDialog(
+      color: kIndigo,
+      icon: Icons.tune_rounded,
+      title: 'Ajuster le stock — ${p.nom}',
+      saveLabel: 'Enregistrer',
+      onSave: _save,
+      saving: _saving,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: kIndigoLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kIndigo.withOpacity(0.2))),
+          child: Row(children: [
+            const Icon(Icons.info_outline_rounded, color: kIndigo, size: 16),
+            const SizedBox(width: 8),
+            const Flexible(child: Text('Modification directe du stock sans déclaration de mouvement.', style: TextStyle(fontSize: 12, color: kIndigo, fontWeight: FontWeight.w500))),
+          ]),
+        ),
+        const SizedBox(height: 16),
+        if (!p.aVariantes) ...[
+          const Text('Nouvelle quantité en stock', style: _label),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 44,
+            child: TextField(
+              controller: _qteCtrl,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText),
+              decoration: InputDecoration(
+                hintText: 'Quantité',
+                hintStyle: const TextStyle(fontSize: 12, color: kMuted),
+                filled: true, fillColor: kBg,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kIndigo, width: 1.5)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+          ),
+        ] else ...[
+          Text('Quantités par ${g?.label.toLowerCase() ?? "variante"}', style: _label),
+          const SizedBox(height: 10),
+          ...p.variantes.map((v) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 60, maxWidth: 90),
+                child: Container(
+                  height: 34, alignment: Alignment.center,
+                  decoration: BoxDecoration(color: kBlue, borderRadius: BorderRadius.circular(7)),
+                  child: Text(v.unite, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white), overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: SizedBox(
+                height: 40,
+                child: TextField(
+                  controller: _varianteCtrls[v.unite],
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText),
+                  decoration: InputDecoration(
+                    hintText: 'Quantité',
+                    hintStyle: const TextStyle(fontSize: 12, color: kMuted),
+                    filled: true, fillColor: kBg,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kBorder)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(kR), borderSide: const BorderSide(color: kIndigo, width: 1.5)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              )),
+            ]),
+          )),
+        ],
+      ]),
+    );
+  }
+}
+
 class _DetailsDialog extends StatelessWidget {
   final Produit produit;
   final GroupeUnites? groupe;
-  const _DetailsDialog({required this.produit, this.groupe});
+  final MagasinProvider? magasin;
+  const _DetailsDialog({required this.produit, this.groupe, this.magasin});
 
   @override
   Widget build(BuildContext context) {
@@ -4357,6 +4988,25 @@ class _DetailsDialog extends StatelessWidget {
               Text('TOTAL', style: _label.copyWith(color: kBlue)),
               Text('${p.total}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: kBlue)),
             ]),
+          ),
+        ],
+        if (magasin != null) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kIndigo, foregroundColor: Colors.white, elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kR)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+              icon: const Icon(Icons.tune_rounded, size: 16),
+              label: const Text('Ajuster le stock', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              onPressed: () {
+                Navigator.of(context, rootNavigator: true).pop();
+                _showDialog(context, _AjustementStockDialog(produit: p, groupe: g, magasin: magasin!));
+              },
+            ),
           ),
         ],
       ]),
@@ -4608,10 +5258,13 @@ class _RowWidget extends StatefulWidget {
 
 class _RowWidgetState extends State<_RowWidget> {
   bool _hov = false;
+  void _setHov(bool v) {
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) setState(() => _hov = v); });
+  }
   @override
   Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) => setState(() => _hov = true),
-    onExit: (_) => setState(() => _hov = false),
+    onEnter: (_) => _setHov(true),
+    onExit: (_) => _setHov(false),
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 120),
       color: _hov ? widget.accentColor.withOpacity(0.04) : kSurface,

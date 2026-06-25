@@ -1,5 +1,4 @@
 ﻿import 'package:flutter/material.dart';
-import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
@@ -370,7 +369,15 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           ActionChip(
                             avatar: const Icon(Icons.swap_horiz, size: 16),
                             label: const Text('Échanges'),
-                            onPressed: () => DistributionSwapDialogs.showManageSheet(context),
+                            onPressed: () async {
+                              await DistributionSwapDialogs.showManageSheet(context);
+                              // Recharge les enregistrements pointage après toute
+                              // modification d'échange (step 1 ou step 2).
+                              if (mounted) {
+                                await _reloadPointageDataAfterAction(
+                                  pointageProv, overtimeProv, day);
+                              }
+                            },
                           ),
                       ],
                     ),
@@ -734,17 +741,33 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           ),
                         ),
                       ),
-                    ] else if (isGuest) ...[
-                      Chip(
-                        avatar: const Icon(Icons.person_pin_circle_outlined, size: 16),
-                        label: const Text('Manœuvre (groupe invité)'),
-                      ),
                     ] else if (isAwayOnRenfort) ...[
                       Chip(
-                        avatar: const Icon(Icons.directions_run, size: 16),
-                        label: const Text('En manœuvre dans un autre groupe'),
-                        backgroundColor: AppColors.brandLight,
+                        avatar: const Icon(Icons.close, size: 16, color: Colors.white),
+                        label: const Text(
+                          'Absent — Échange Distribution',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                        ),
+                        backgroundColor: Colors.red[400],
                       ),
+                      if (r != null && r.distSwapArrangement)
+                        Chip(
+                          avatar: Icon(
+                            Icons.swap_horiz,
+                            size: 16,
+                            color: r.distSwapArrangementPending ? Colors.orange[900] : Colors.green[900],
+                          ),
+                          backgroundColor: r.distSwapArrangementPending
+                              ? const Color(0xFFFFF9C4)
+                              : const Color(0xFFFFF59D),
+                          label: Text(
+                            r.distSwapArrangementPending ? 'E — en attente' : 'E — 8h confirmés',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: r.distSwapArrangementPending ? Colors.orange[900] : Colors.green[900],
+                            ),
+                          ),
+                        ),
                     ],
                     if (!isArrangement && !isAwayOnRenfort && !isReviewer && !reportConfirmed) ...[
                       if ((present || absent) && !_manualStatusEditMode.contains(e.id)) ...[
@@ -856,14 +879,31 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
+                                if (isGuest)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.swap_horiz, size: 13, color: Colors.blue[700]),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'Remplaçant (échange)',
+                                          style: TextStyle(fontSize: 11, color: Colors.blue[700], fontWeight: FontWeight.w500),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 const SizedBox(height: 4),
                                 Text(
                                   isArrangement
                                       ? (arrangementPending
                                           ? 'Arrangement — 8h comptées après le retour de l\'autre'
                                           : 'Arrangement — 8h comptées automatiquement (E)')
-                                      : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
-                                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                      : isAwayOnRenfort
+                                          ? 'Absent — en manœuvre dans un autre groupe'
+                                          : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
+                                  style: TextStyle(fontSize: 12, color: isAwayOnRenfort ? Colors.red[300] : Colors.grey[700]),
                                 ),
                                 const SizedBox(height: 6),
                                 if (present && !isArrangement)
@@ -949,14 +989,31 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
+                                      if (isGuest)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 2),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.swap_horiz, size: 13, color: Colors.blue[700]),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                'Remplaçant (échange)',
+                                                style: TextStyle(fontSize: 11, color: Colors.blue[700], fontWeight: FontWeight.w500),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
                                       const SizedBox(height: 4),
                                       Text(
                                         isArrangement
                                             ? (arrangementPending
                                                 ? 'Arrangement — 8h comptées après le retour de l\'autre'
                                                 : 'Arrangement — 8h comptées automatiquement (E)')
-                                            : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
-                                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                            : isAwayOnRenfort
+                                                ? 'Absent — en manœuvre dans un autre groupe'
+                                                : 'Entrée: ${fmt(arrival)}  •  Sortie: ${fmt(departure)}',
+                                        style: TextStyle(fontSize: 12, color: isAwayOnRenfort ? Colors.red[300] : Colors.grey[700]),
                                       ),
                                       const SizedBox(height: 6),
                                       if (present && !isArrangement)
@@ -1045,7 +1102,12 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   final absent = <String>[];
                   final absentReasons = <String?>[];
                   for (final row in pointageMembers) {
-                    if (row.isArrangement || row.isAwayOnRenfort) continue;
+                    if (row.isArrangement) continue;
+                    if (row.isAwayOnRenfort) {
+                      absent.add(row.employe.nom);
+                      absentReasons.add('Échange Distribution');
+                      continue;
+                    }
                     final r = recordForRow(row);
                     if (r?.chefStatus == ChefPointageStatus.present) {
                       present.add(row.employe.nom);
@@ -1180,17 +1242,27 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           if (row.isArrangement || row.isAwayOnRenfort) continue;
                           var rec = recordForRow(row);
                           if (rec == null || rec.chefStatus == ChefPointageStatus.unset) {
-                            await pointageProv.markDistributionAttendanceForDate(
-                              employeId: row.employe.id,
-                              employeNom: row.employe.nom,
-                              employeCin: row.employe.cin,
-                              equipeId: currentEquipeId,
-                              equipeName: 'Distribution: ${g.nom}',
-                              chefName: chefNameConfirm,
-                              chefStatus: ChefPointageStatus.absent,
-                              pointageDate: day,
-                              chefId: auth.currentUser?.id,
-                            );
+                            if (rec != null && rec.id.isNotEmpty && rec.tempAssigned) {
+                              // Remplaçant (renfort) non marqué → absent via renfort record
+                              await pointageProv.markRenfortChefAttendance(
+                                renfortRecord: rec,
+                                chefStatus: ChefPointageStatus.absent,
+                                chefId: auth.currentUser?.id,
+                                bypassTimeWindows: true,
+                              );
+                            } else {
+                              await pointageProv.markDistributionAttendanceForDate(
+                                employeId: row.employe.id,
+                                employeNom: row.employe.nom,
+                                employeCin: row.employe.cin,
+                                equipeId: currentEquipeId,
+                                equipeName: 'Distribution: ${g.nom}',
+                                chefName: chefNameConfirm,
+                                chefStatus: ChefPointageStatus.absent,
+                                pointageDate: day,
+                                chefId: auth.currentUser?.id,
+                              );
+                            }
                           }
                           rec = recordForRow(row);
                           if (rec != null &&
@@ -1222,7 +1294,17 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                           bool isRestDay,
                         })>[];
                         for (final row in pointageMembers) {
-                          if (row.isAwayOnRenfort) continue;
+                          if (row.isAwayOnRenfort) {
+                            empSnapshots.add((
+                              employeId: row.employe.id,
+                              employeNom: row.employe.nom,
+                              employeCin: row.employe.cin,
+                              status: 'absent',
+                              absenceReason: 'echange_distribution',
+                              isRestDay: isRest,
+                            ));
+                            continue;
+                          }
                           if (row.isArrangement) {
                             empSnapshots.add((
                               employeId: row.employe.id,

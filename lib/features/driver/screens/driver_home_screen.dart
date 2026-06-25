@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/locale/app_locale.dart';
 import '../../../core/theme/app_theme.dart';
@@ -141,18 +141,18 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: AppColors.brandLight,
+              color: const Color(0xFF000966).withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.brandBorder),
+              border: Border.all(color: const Color(0xFF000966).withValues(alpha: 0.25)),
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline, size: 18, color: AppColors.brand),
+                const Icon(Icons.info_outline, size: 18, color: Color(0xFF000966)),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     tr(context, 'use_pointage_tab'),
-                    style: TextStyle(fontSize: 12, color: AppColors.brand),
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF000966)),
                   ),
                 ),
               ],

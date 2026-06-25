@@ -1,4 +1,5 @@
-/// Échange / manœuvre entre deux membres de groupes Distribution (même mois).
+/// Échange / manœuvre entre deux membres d'équipes (même mois).
+/// [sectionType] : 'distribution' | 'dessalement'
 enum DistributionSwapStatus {
   /// Date de travail du 1er employé fixée ; en attente de la date de retour.
   awaitingReturnDate,
@@ -22,6 +23,8 @@ class DistributionSwap {
   final String createdById;
   final String createdByName;
   final DateTime createdAt;
+  /// 'distribution' | 'dessalement'
+  final String sectionType;
 
   const DistributionSwap({
     required this.id,
@@ -36,6 +39,7 @@ class DistributionSwap {
     this.createdById = '',
     this.createdByName = '',
     required this.createdAt,
+    this.sectionType = 'distribution',
   });
 
   static String monthKeyFor(DateTime d) =>
@@ -58,6 +62,7 @@ class DistributionSwap {
         'createdById': createdById,
         'createdByName': createdByName,
         'createdAt': createdAt.toIso8601String(),
+        'sectionType': sectionType,
       };
 
   static DistributionSwap fromMap(Map<String, dynamic> map) {
@@ -82,12 +87,14 @@ class DistributionSwap {
       createdById: map['createdById'] as String? ?? '',
       createdByName: map['createdByName'] as String? ?? '',
       createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ?? DateTime.now(),
+      sectionType: map['sectionType'] as String? ?? 'distribution',
     );
   }
 
   DistributionSwap copyWith({
     DateTime? dateBInGroupA,
     DistributionSwapStatus? status,
+    String? sectionType,
   }) =>
       DistributionSwap(
         id: id,
@@ -102,5 +109,6 @@ class DistributionSwap {
         createdById: createdById,
         createdByName: createdByName,
         createdAt: createdAt,
+        sectionType: sectionType ?? this.sectionType,
       );
 }
