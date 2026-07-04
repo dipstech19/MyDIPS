@@ -20,7 +20,7 @@ class ShiftsRepository {
       DateTime startDate = DateTime.now();
       if (startStamp != null) {
         if (startStamp is Timestamp) {
-          startDate = (startStamp as Timestamp).toDate();
+          startDate = startStamp.toDate();
         } else if (startStamp is String) {
           startDate = DateTime.tryParse(startStamp) ?? startDate;
         }

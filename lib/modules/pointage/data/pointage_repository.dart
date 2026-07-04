@@ -700,7 +700,6 @@ class PointageRepository {
     final ref = _firestore.collection(_pointageCollection).doc(docId);
     final snap = await ref.get();
     if (!snap.exists) return;
-    final now = DateTime.now();
     await ref.update({
       'distSwapArrangementPending': false,
       'chefStatus': ChefPointageStatus.present.name,

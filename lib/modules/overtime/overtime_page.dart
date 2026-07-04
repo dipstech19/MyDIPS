@@ -428,64 +428,6 @@ class _ChefOvertimeCard extends StatelessWidget {
   }
 }
 
-class _OvertimeStatusChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final Color color;
-  final bool disabled;
-  final VoidCallback? onTap;
-
-  const _OvertimeStatusChip({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.color,
-    required this.disabled,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: disabled && !selected ? 0.5 : 1.0,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: selected
-                ? color.withValues(alpha: 0.12)
-                : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected ? color : Colors.grey.shade300,
-              width: selected ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon,
-                  size: 18,
-                  color: selected ? color : Colors.grey.shade500),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight:
-                        selected ? FontWeight.w600 : FontWeight.normal,
-                    color: selected ? color : Colors.grey.shade600,
-                  )),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ════════════════════════════════════════════════════════════════
 // Vue Admin
 // ════════════════════════════════════════════════════════════════

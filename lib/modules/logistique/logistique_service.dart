@@ -67,12 +67,6 @@ class LogistiqueService {
   /// Stream d'un véhicule complet avec ses sous-collections en temps réel
   Stream<Vehicule> streamVehiculeComplet(String vehiculeId) {
     final vehiculeStream = _vehiculesRef.doc(vehiculeId).snapshots();
-    final vidangesStream =
-        _vidangesRef(vehiculeId).orderBy('date', descending: true).snapshots();
-    final pleinsStream =
-        _pleinsRef(vehiculeId).orderBy('date', descending: true).snapshots();
-    final reparationsStream =
-        _reparationsRef(vehiculeId).orderBy('date', descending: true).snapshots();
 
     // Combine les 4 streams via StreamBuilder dans l'UI
     // Ici on expose un stream simple du document principal

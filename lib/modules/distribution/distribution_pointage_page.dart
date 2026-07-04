@@ -240,13 +240,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
         }
         final records = snap.data?.records ?? const <PointageRecord>[];
         final overtimeAssignments = snap.data?.overtime ?? const <OvertimeAssignment>[];
-        PointageRecord? recFor(String id) {
-          try {
-            return records.firstWhere((r) => r.employeId == id);
-          } catch (_) {
-            return null;
-          }
-        }
         final currentEquipeId = 'distribution:${g.id}';
         final pointageMembers = DistributionSwapService.membersForPointage(
           group: g,

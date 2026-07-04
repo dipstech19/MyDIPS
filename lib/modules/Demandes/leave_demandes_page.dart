@@ -497,16 +497,6 @@ class _DemandesPageState extends State<DemandesPage>
     return (e.difference(s).inDays + 1).toDouble();
   }
 
-  String _deriveEquipeIdForEmployee(Employe e, List<Equipe> equipes) {
-    final direct = equipes.where((q) => q.chefId == e.id || q.membreIds.contains(e.id)).toList();
-    return direct.isNotEmpty ? direct.first.id : '';
-  }
-
-  String _deriveEquipeNameForEmployee(Employe e, List<Equipe> equipes) {
-    final direct = equipes.where((q) => q.chefId == e.id || q.membreIds.contains(e.id)).toList();
-    return direct.isNotEmpty ? direct.first.nom : 'Équipe non définie';
-  }
-
   /// Identifiant « équipe » pour congés / pointage : id d’[Equipe] ou `groupe:<id>` pour un [Groupe] (ex. équipe normale).
   String _deriveLeaveEquipeIdForEmployee(Employe e, List<Equipe> equipes, List<Groupe> groupes) {
     final direct = equipes.where((q) => q.chefId == e.id || q.membreIds.contains(e.id)).toList();
@@ -537,8 +527,6 @@ class _DemandesPageState extends State<DemandesPage>
     final auth = context.read<AuthProvider>();
     final empProv = context.read<EmployeesProvider>();
     final conges = context.read<CongesProvider>();
-    final adminSiteIds = auth.currentUser?.allowedSiteIds ?? const <String>['all'];
-    final hasAllSites = adminSiteIds.isEmpty || adminSiteIds.contains('all');
     final pointageProvider = context.read<PointageProvider>();
     final requestedDays = _requestedLeaveDays(start, end);
 
@@ -1235,20 +1223,6 @@ class _DemandesPageState extends State<DemandesPage>
     }
   }
 
-  pw.TableRow _pdfRow(String label, String value) {
-    return pw.TableRow(
-      children: [
-        pw.Padding(
-          padding: const pw.EdgeInsets.all(6),
-          child: pw.Text(label, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-        ),
-        pw.Padding(
-          padding: const pw.EdgeInsets.all(6),
-          child: pw.Text(value, style: const pw.TextStyle(fontSize: 10)),
-        ),
-      ],
-    );
-  }
 }
 
 class _ChefLeaveView extends StatefulWidget {
@@ -2135,7 +2109,7 @@ class _AdminLeaveView extends StatelessWidget {
     }).toList();
     if (activeEmployees.isNotEmpty) {
       employeeId = activeEmployees.first.id;
-      final tk = teamIdForEmployee(employeeId!);
+      final tk = teamIdForEmployee(employeeId);
       selectedTeamId = auth.isChefAtelierAdmin ? tk : (tk ?? '__no_team__');
     }
 

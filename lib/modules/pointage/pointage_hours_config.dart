@@ -32,14 +32,6 @@ class PointageHoursConfig {
     this.isRestDay = false,
   });
 
-  int get _startMinutes => startHour * 60 + startMinute;
-  int get _endMinutes => endHour * 60 + endMinute;
-  /// نافذة الوصول: من بداية العمل حتى بداية العمل + 1 ساعة
-  int get _arrivalEndMinutes => _startMinutes + 60;
-  /// نافذة الخروج: من نهاية العمل حتى نهاية العمل + 1 ساعة
-  int get _departureStartMinutes => _endMinutes;
-  int get _departureEndMinutes => _endMinutes + 60;
-
   /// وردية ليلية (نفس اليوم → اليوم التالي)
   bool get isNightShift => _isOvernight(this);
 

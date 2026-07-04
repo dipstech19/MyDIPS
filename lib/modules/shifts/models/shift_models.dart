@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart';
-
 enum ShiftType { morning, evening, night, rest }
 
 /// Représente un jour de travail doublé (×2) — jour férié travaillé ou jour exceptionnel.

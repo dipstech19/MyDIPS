@@ -1,5 +1,4 @@
-﻿import 'dart:convert';
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:math' show max;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -45,6 +44,9 @@ class PointageExportRow {
   /// Code [OcpExcelSegmentCode] copié depuis la fiche employé ; vide = déduction auto.
   final String ocpExcelSegment;
   final bool ocpForceSalleControle;
+  final bool isQuitte;
+  /// Date de départ (parsed from dateQuitte dd/MM/yyyy). Null if unknown or still active.
+  final DateTime? quitDate;
 
   const PointageExportRow({
     required this.employeId,
@@ -66,6 +68,8 @@ class PointageExportRow {
     this.absenceReasonIdByDay = const {},
     this.ocpExcelSegment = '',
     this.ocpForceSalleControle = false,
+    this.isQuitte = false,
+    this.quitDate,
   });
 }
 
@@ -2731,6 +2735,7 @@ class PointageExportService {
     bool singleSheet = false,
     String singleSheetName = 'Société',
     bool includeEquipeColumnInSingleSheet = true,
+    bool Function(DateTime)? isPublicHoliday,
   }) async {
     final Uint8List bytes;
     final String name;
@@ -2740,6 +2745,7 @@ class PointageExportService {
         endDate: endDate,
         rows: rows,
         reasonConfigs: reasonConfigs,
+        isPublicHoliday: isPublicHoliday,
       );
       name =
           'pointage_dessalement_${startDate.day}-${startDate.month}-${startDate.year}_${endDate.day}-${endDate.month}-${endDate.year}.xlsx';
@@ -2916,35 +2922,6 @@ class PointageExportService {
     return '$shiftCode|$bucket';
   }
 
-  /// Présence réelle sur un jour d'après les enregistrements pointage (hors snapshot).
-  static String? _inferDayStatusFromPointageRecords(
-    List<PointageRecord> dayRecords, {
-    required bool isGroupScope,
-    required bool isDistributionScope,
-    List<AbsenceReasonConfig>? reasonConfigs,
-    String? preferredEquipeId,
-  }) {
-    if (dayRecords.isEmpty) return null;
-    for (final r in dayRecords) {
-      if (r.distSwapArrangement) {
-        return r.distSwapArrangementPending ? 'arrangement_pending' : 'arrangement';
-      }
-    }
-    final best = _bestPointageRecordForExport(
-      dayRecords: dayRecords,
-      equipeId: preferredEquipeId,
-    );
-    if (best != null) {
-      return resolveSnapshotStatus(
-        rec: best,
-        isGroupScope: isGroupScope,
-        isDistributionScope: isDistributionScope,
-        reasonConfigs: reasonConfigs,
-      );
-    }
-    return 'absent';
-  }
-
   /// Snapshot confirmé pour un employé/jour (équipe courante puis toute équipe).
   static DailyEmployeeSnapshot? _snapshotForEmployeeDay(
     Map<String, Map<String, Map<DateTime, DailyEmployeeSnapshot>>> byEmpEquipe,
@@ -3075,7 +3052,7 @@ class PointageExportService {
   static List<PointageExportRow> computeExcelRows({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet, bool isQuitte, String dateQuitte})> employees,
     required List<PointageRecord> records,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
@@ -3351,6 +3328,8 @@ class PointageExportService {
           return raw;
         }(),
         ocpForceSalleControle: ocpForceSalleControleByEmployeId?[emp.id] ?? false,
+        isQuitte: emp.isQuitte,
+        quitDate: _parseQuitteDate(emp.dateQuitte),
       ));
     }
 
@@ -3366,7 +3345,7 @@ class PointageExportService {
   static List<PointageExportRow> computeExcelRowsFromSnapshots({
     required DateTime startDate,
     required DateTime endDate,
-    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})> employees,
+    required List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet, bool isQuitte, String dateQuitte})> employees,
     required List<DailyEmployeeSnapshot> snapshots,
     List<AbsenceReasonConfig>? reasonConfigs,
     bool Function(DateTime date, String equipeId)? isRestDay,
@@ -3568,10 +3547,17 @@ class PointageExportService {
           return raw;
         }(),
         ocpForceSalleControle: ocpForceSalleControleByEmployeId?[emp.id] ?? false,
+        isQuitte: emp.isQuitte,
+        quitDate: _parseQuitteDate(emp.dateQuitte),
       ));
     }
 
     return rows;
+  }
+
+  static DateTime? _parseQuitteDate(String s) {
+    if (s.isEmpty) return null;
+    try { return DateFormat('dd/MM/yyyy').parseStrict(s); } catch (_) { return null; }
   }
 
   static String _orgTypeLabel(String? equipeId) {
@@ -3588,6 +3574,7 @@ class PointageExportService {
     required DateTime endDate,
     required List<PointageExportRow> rows,
     List<AbsenceReasonConfig>? reasonConfigs,
+    bool Function(DateTime)? isPublicHoliday,
   }) async {
     // Filter: exclude distribution
     final dessalRows = rows.where((r) =>
@@ -3615,23 +3602,29 @@ class PointageExportService {
     }
 
     // Assign color by equipe name: P1=green, P2=red, P3=yellow, P4=blue,
-    // Nettoyage=orange, Management=cold violet, others=fallback gray.
+    // Nettoyage=orange, Management=violet, others=fallback gray.
+    // All foreground colors are black for readability.
     ({String bg, String fg}) equipeColor(String name) {
       final n = name.toLowerCase();
-      if (n.contains('nettoyage')) return (bg: '#FFCC80', fg: '#E65100');
-      if (n.contains('management') || n.contains('managment')) return (bg: '#CE93D8', fg: '#4A148C');
+      if (n.contains('nettoyage')) return (bg: '#FFCC80', fg: '#000000');
+      if (n.contains('management') || n.contains('managment')) return (bg: '#CE93D8', fg: '#000000');
       // word-boundary digit match so "poste 1" or "e1" or "equipe 1" all work
       bool hasNum(int num) => RegExp('(?:^|\\D)$num(?:\\D|\$)').hasMatch(n);
-      if (hasNum(1)) return (bg: '#A5D6A7', fg: '#1B5E20'); // green
-      if (hasNum(2)) return (bg: '#EF9A9A', fg: '#B71C1C'); // red
-      if (hasNum(3)) return (bg: '#FFF176', fg: '#795548'); // yellow
-      if (hasNum(4)) return (bg: '#90CAF9', fg: '#0D47A1'); // blue
+      if (hasNum(1)) return (bg: '#A5D6A7', fg: '#000000'); // green
+      if (hasNum(2)) return (bg: '#EF9A9A', fg: '#000000'); // red
+      if (hasNum(3)) return (bg: '#FFF176', fg: '#000000'); // yellow
+      if (hasNum(4)) return (bg: '#90CAF9', fg: '#000000'); // blue
       // fallback
-      return (bg: '#E0E0E0', fg: '#424242');
+      return (bg: '#E0E0E0', fg: '#000000');
     }
 
     final book = excel.Excel.createExcel();
-    book.delete('Sheet1');
+    // Rename the default sheet (Sheet1) to 'Pointage'.
+    // Using rename instead of delete avoids the "can't delete last sheet" guard in excel 4.x.
+    final defaultSheetName = book.getDefaultSheet() ?? 'Sheet1';
+    if (defaultSheetName != 'Pointage') {
+      book.rename(defaultSheetName, 'Pointage');
+    }
     final sheet = book['Pointage'];
 
     // Column indices (1-based)
@@ -3640,9 +3633,10 @@ class PointageExportService {
     const colPrenom = 3;
     const colPoste = 4;
     const firstDayCol = 5;
-    final jfCol = firstDayCol + days.length;
-    final shiftsCol = firstDayCol + days.length + 1;
-    final totalPiCol = firstDayCol + days.length + 2;
+    // One empty spacer column separates the day cells from the cumul columns.
+    final jfCol = firstDayCol + days.length + 1;
+    final shiftsCol = firstDayCol + days.length + 2;
+    final totalPiCol = firstDayCol + days.length + 3;
 
     // Row indices (0-based)
     const rowTitle1 = 0;
@@ -3662,6 +3656,10 @@ class PointageExportService {
       borderStyle: excel.BorderStyle.Medium,
       borderColorHex: excel.ExcelColor.fromHexString('#424242'),
     );
+    final borderSeparator = excel.Border(
+      borderStyle: excel.BorderStyle.Medium,
+      borderColorHex: excel.ExcelColor.fromHexString('#000000'),
+    );
 
     // Style factory
     excel.CellStyle cs({
@@ -3672,8 +3670,15 @@ class PointageExportService {
       excel.VerticalAlign vAlign = excel.VerticalAlign.Center,
       bool thick = false,
       excel.TextWrapping? wrap,
+      bool strike = false,
     }) {
       final b = thick ? borderMedium : borderThin;
+      final diag = strike
+          ? excel.Border(
+              borderStyle: excel.BorderStyle.Thin,
+              borderColorHex: excel.ExcelColor.fromHexString('#9E9E9E'),
+            )
+          : null;
       return excel.CellStyle(
         bold: bold,
         horizontalAlign: align,
@@ -3682,6 +3687,8 @@ class PointageExportService {
         backgroundColorHex: excel.ExcelColor.fromHexString(bg),
         fontColorHex: excel.ExcelColor.fromHexString(fg),
         leftBorder: b, rightBorder: b, topBorder: b, bottomBorder: b,
+        diagonalBorder: diag ?? excel.Border(),
+        diagonalBorderDown: strike,
       );
     }
 
@@ -3745,7 +3752,9 @@ class PointageExportService {
     put(2, rowLegend, 'Jour Férié', cs(bg: '#E3F2FD', fg: '#0D47A1', align: excel.HorizontalAlign.Left));
     put(4, rowLegend, '1', cs(bold: true, bg: '#C8E6C9', fg: '#1B5E20'));
     put(5, rowLegend, 'Formation', cs(bg: '#E8F5E9', fg: '#1B5E20', align: excel.HorizontalAlign.Left));
-    final bannerStart = (totalPiCol - 4).clamp(7, totalPiCol);
+    put(7, rowLegend, '1', cs(bold: true, bg: '#FFE0B2', fg: '#E65100'));
+    put(8, rowLegend, 'Congé', cs(bg: '#FFF3E0', fg: '#E65100', align: excel.HorizontalAlign.Left));
+    final bannerStart = (totalPiCol - 4).clamp(10, totalPiCol);
     span(bannerStart, rowLegend, totalPiCol, rowLegend, monthBanner(),
         cs(bold: true, bg: '#FFCDD2', fg: '#B71C1C', thick: true));
 
@@ -3835,6 +3844,11 @@ class PointageExportService {
       final headcount = equipeRows.length;
       final equipeStartRow = rowIndex;
       final teamShifts = teamTotalShifts[equipeName] ?? 0;
+      // Nettoyage and Management teams don't work on Sundays → colour those cells.
+      final sundayOff = equipeName.toLowerCase().contains('nettoyage') ||
+          equipeName.toLowerCase().contains('management') ||
+          equipeName.toLowerCase().contains('managment');
+
 
       for (final r in equipeRows) {
         final np = splitNomPrenomForExcel(r.employeNom.trim());
@@ -3842,43 +3856,101 @@ class PointageExportService {
         final prenom = np.prenom.trim().toUpperCase();
         final poste = r.poste.trim().isEmpty ? 'Opérateur' : r.poste.trim();
 
-        // Only Nom/Prénom/Poste cells carry the equipe color; all others are white.
+        // Nom/Prénom/Poste cells carry the equipe color; text is always black.
         put(colNom, rowIndex, nom,
-            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+            cs(bg: bg, fg: '#000000', align: excel.HorizontalAlign.Left));
         put(colPrenom, rowIndex, prenom,
-            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+            cs(bg: bg, fg: '#000000', align: excel.HorizontalAlign.Left));
         put(colPoste, rowIndex, poste,
-            cs(bg: bg, fg: fg, align: excel.HorizontalAlign.Left));
+            cs(bg: bg, fg: '#000000', align: excel.HorizontalAlign.Left));
 
         var jfCount = 0;
         var shiftsWorked = 0;
 
+        // Suppress colored highlights for employees that should have plain cells.
+        final noHighlight = nom == 'CHAAIJ' && prenom.contains('YOUNESS');
+
+        // Normalize quit date to midnight for day-level comparison.
+        // If isQuitte is true but quitDate is null (no date recorded), grey all cells.
+        final qd = r.quitDate != null
+            ? DateTime(r.quitDate!.year, r.quitDate!.month, r.quitDate!.day)
+            : null;
+        final greyAllCells = r.isQuitte && qd == null;
+
         for (int i = 0; i < days.length; i++) {
           final d = days[i];
           final c = firstDayCol + i;
-          final status = rowDayStatus(r, d);
 
-          String marker;
-          String cellFg;
-          if (status == 'public_holiday') {
-            marker = 'JF'; cellFg = '#4A148C';
-            jfCount++;
-          } else if (status == 'formation') {
-            marker = '1'; cellFg = '#1B5E20';
-            shiftsWorked++;
-          } else if (status == 'present' || status == 'leave' || status == 'arrangement') {
-            marker = '1'; cellFg = '#000000';
-            shiftsWorked++;
-          } else if (status == 'rest') {
-            marker = 'repos'; cellFg = '#9E9E9E';
-          } else if (status == 'absent' || status == 'paid_absence' ||
-              status == 'arrangement_pending') {
-            marker = 'ABS'; cellFg = '#B71C1C';
-          } else {
-            marker = ''; cellFg = '#000000';
+          // From the departure date onwards (inclusive) → grey + diagonal strike.
+          if (greyAllCells || (qd != null && !d.isBefore(qd))) {
+            put(c, rowIndex, '', cs(bg: '#BDBDBD', fg: '#9E9E9E', strike: true));
+            continue;
           }
 
-          put(c, rowIndex, marker, cs(bg: '#FFFFFF', fg: cellFg));
+          // Sunday is a day off for Nettoyage and Management teams.
+          if (sundayOff && d.weekday == DateTime.sunday) {
+            put(c, rowIndex, '', cs(bg: '#E0E0E0', fg: '#000000'));
+            continue;
+          }
+
+          final status = rowDayStatus(r, d);
+
+          // Public holiday handling.
+          if (isPublicHoliday != null && isPublicHoliday(d)) {
+            final jfBg = noHighlight ? '#FFFFFF' : '#BBDEFB';
+            if (sundayOff) {
+              // Management / Nettoyage: always label "JF", no jfCount cumul.
+              put(c, rowIndex, 'JF', cs(bg: jfBg, fg: '#000000'));
+            } else {
+              final presentOnJf = status == 'present' ||
+                  status == 'formation' ||
+                  status == 'arrangement';
+              if (presentOnJf) {
+                // Present on a JF: show 1 (blue), count it in jfCount.
+                putI(c, rowIndex, 1, cs(bg: jfBg, fg: '#000000'));
+                shiftsWorked++;
+                jfCount++;
+              } else {
+                // Not present on JF: label "JF" (blue), no cumul.
+                put(c, rowIndex, 'JF', cs(bg: jfBg, fg: '#000000'));
+              }
+            }
+            continue;
+          }
+
+          int? numericMarker;
+          String? textMarker;
+          String cellBg;
+          if (status == 'formation') {
+            numericMarker = 1;
+            cellBg = noHighlight ? '#FFFFFF' : '#C8E6C9';
+            shiftsWorked++;
+          } else if (status == 'leave') {
+            numericMarker = 1;
+            cellBg = noHighlight ? '#FFFFFF' : '#FFE0B2';
+            shiftsWorked++;
+          } else if (status == 'present' || status == 'arrangement') {
+            numericMarker = 1;
+            cellBg = '#FFFFFF';
+            shiftsWorked++;
+          } else if (status == 'rest') {
+            textMarker = 'repos';
+            cellBg = '#FFFFFF';
+          } else if (status == 'absent' || status == 'paid_absence' ||
+              status == 'arrangement_pending') {
+            textMarker = 'ABS';
+            cellBg = '#FFFFFF';
+          } else {
+            textMarker = '';
+            cellBg = '#FFFFFF';
+          }
+
+          final style = cs(bg: cellBg, fg: '#000000');
+          if (numericMarker != null) {
+            putI(c, rowIndex, numericMarker, style);
+          } else {
+            put(c, rowIndex, textMarker ?? '', style);
+          }
         }
 
         putI(jfCol, rowIndex, jfCount, cs(bg: '#FFFFFF', fg: '#000000'));
@@ -3912,6 +3984,18 @@ class PointageExportService {
       }
       sheet.cell(siPi).value = excel.IntCellValue(teamShifts);
       sheet.cell(siPi).cellStyle = piSt;
+
+      // Draw a solid separator on the bottom of the last equipe row.
+      final lastEquipeRow = rowIndex - 1;
+      for (int col = colDispo; col <= totalPiCol; col++) {
+        final ci = excel.CellIndex.indexByColumnRow(
+            columnIndex: col, rowIndex: lastEquipeRow);
+        final style = sheet.cell(ci).cellStyle;
+        if (style != null) {
+          sheet.cell(ci).cellStyle =
+              style.copyWith(bottomBorderVal: borderSeparator);
+        }
+      }
     }
 
     final bytes = book.encode();

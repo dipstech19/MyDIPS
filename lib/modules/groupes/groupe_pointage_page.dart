@@ -9,7 +9,6 @@ import '../pointage/models/pointage_model.dart';
 import '../pointage/pointage_hours_config.dart';
 import '../pointage/pointage_provider.dart';
 import 'groupes_provider.dart';
-import 'models/groupe_model.dart';
 
 /// Pointage pour un "Groupe" مستقل (خارج نظام équipes / shifts).
 /// يُخزّن السجلات باستعمال equipeId = "groupe:<groupeId>".

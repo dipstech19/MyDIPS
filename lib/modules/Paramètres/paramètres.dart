@@ -726,18 +726,6 @@ const _kBg       = Color(0xFFF4F7FC);
 const _kBorder   = Color(0xFFDDE3EE);
 const _kRowHover = Color(0xFFF0F6FF);
 
-/// Header cell
-Widget _th(String label, {int flex = 1, TextAlign align = TextAlign.left}) =>
-    Expanded(
-      flex: flex,
-      child: Text(label,
-          textAlign: align,
-          style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-              color: Color(0xFF6B7A99))),
-    );
 
 /// Reusable drawer panel
 class _SideDrawer extends StatelessWidget {
@@ -870,7 +858,6 @@ class _DrawerField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final String hint;
-  final bool isPassword;
   final bool isNumber;
   final TextInputType? keyboardType;
 
@@ -878,7 +865,6 @@ class _DrawerField extends StatelessWidget {
     required this.label,
     required this.controller,
     this.hint = '',
-    this.isPassword = false,
     this.isNumber = false,
     this.keyboardType,
   });
@@ -894,7 +880,6 @@ class _DrawerField extends StatelessWidget {
         const SizedBox(height: 5),
         TextFormField(
           controller: controller,
-          obscureText: isPassword,
           keyboardType: isNumber
               ? TextInputType.number
               : (keyboardType ?? TextInputType.text),
@@ -3177,9 +3162,8 @@ class _ChefDetailsDialogState extends State<_ChefDetailsDialog> {
 
 // ── Chef sliding drawer ──
 class _ChefDrawer extends StatefulWidget {
-  final _ParamChefEquipe? existing;
   final Function(_ParamChefEquipe) onSave;
-  const _ChefDrawer({this.existing, required this.onSave});
+  const _ChefDrawer({required this.onSave});
   @override
   State<_ChefDrawer> createState() => _ChefDrawerState();
 }
@@ -3197,14 +3181,13 @@ class _ChefDrawerState extends State<_ChefDrawer> {
   @override
   void initState() {
     super.initState();
-    final e = widget.existing;
-    _nomCtrl   = TextEditingController(text: e?.nom ?? '');
-    _prenomCtrl = TextEditingController(text: e?.prenom ?? '');
-    _emailCtrl = TextEditingController(text: e?.email ?? '');
-    _telCtrl   = TextEditingController(text: e?.telephone ?? '');
-    _nbEmpCtrl = TextEditingController(text: '${e?.nbEmployes ?? 0}');
-    _dept  = e?.departement ?? 'Production';
-    _actif = e?.actif ?? true;
+    _nomCtrl   = TextEditingController();
+    _prenomCtrl = TextEditingController();
+    _emailCtrl = TextEditingController();
+    _telCtrl   = TextEditingController();
+    _nbEmpCtrl = TextEditingController(text: '0');
+    _dept  = 'Production';
+    _actif = true;
   }
 
   @override
@@ -3216,11 +3199,8 @@ class _ChefDrawerState extends State<_ChefDrawer> {
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
-    final isNew = widget.existing == null;
     widget.onSave(_ParamChefEquipe(
-      id: isNew
-          ? 'CE${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'
-          : widget.existing!.id,
+      id: 'CE${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}',
       nom: _nomCtrl.text.trim(),
       prenom: _prenomCtrl.text.trim(),
       email: _emailCtrl.text.trim(),
@@ -3228,20 +3208,19 @@ class _ChefDrawerState extends State<_ChefDrawer> {
       departement: _dept,
       nbEmployes: int.tryParse(_nbEmpCtrl.text) ?? 0,
       actif: _actif,
-      dateCreation: widget.existing?.dateCreation ?? DateTime.now(),
+      dateCreation: DateTime.now(),
     ));
     Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.existing != null;
     return _SideDrawer(
-      title: isEdit ? 'Modifier le chef d\'équipe' : 'Nouveau chef d\'équipe',
-      subtitle: isEdit ? 'Mettre à jour les informations' : 'Enregistrer un nouveau chef',
-      icon: isEdit ? Icons.manage_accounts : Icons.group_add,
+      title: 'Nouveau chef d\'équipe',
+      subtitle: 'Enregistrer un nouveau chef',
+      icon: Icons.group_add,
       accentColor: _kDark,
-      saveLabel: isEdit ? 'Modifier' : 'Enregistrer',
+      saveLabel: 'Enregistrer',
       onSave: _save,
       body: Form(
         key: _formKey,
@@ -3320,37 +3299,6 @@ class _ChefDrawerState extends State<_ChefDrawer> {
 // ─────────────────────────────────────────────
 //  SHARED SMALL WIDGETS (ERP style)
 // ─────────────────────────────────────────────
-
-class _KpiChip extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  const _KpiChip({required this.label, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(value,
-              style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w800, color: color)),
-          const SizedBox(width: 5),
-          Text(label,
-              style:
-              TextStyle(fontSize: 11, color: Colors.grey[600])),
-        ],
-      ),
-    );
-  }
-}
 
 class _TableBtn extends StatelessWidget {
   final IconData icon;
@@ -6595,17 +6543,11 @@ class _FormField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final String hint;
-  final bool isEmail;
-  final bool isPassword;
-  final bool isNumber;
 
   const _FormField({
     required this.label,
     required this.controller,
     required this.hint,
-    this.isEmail = false,
-    this.isPassword = false,
-    this.isNumber = false,
   });
 
   @override
@@ -6617,8 +6559,7 @@ class _FormField extends StatelessWidget {
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,
-          obscureText: isPassword,
-          keyboardType: isNumber ? TextInputType.number : (isEmail ? TextInputType.emailAddress : TextInputType.text),
+          keyboardType: TextInputType.text,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
@@ -6665,57 +6606,6 @@ class _PasswordField extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _MiniStat extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-
-  const _MiniStat({required this.label, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-          const SizedBox(width: 6),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        ],
-      ),
-    );
-  }
-}
-
-class _IconBtn extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _IconBtn({required this.icon, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(7),
-        ),
-        child: Icon(icon, size: 16, color: color),
-      ),
     );
   }
 }
@@ -6839,50 +6729,6 @@ class _DropdownSetting extends StatelessWidget {
           onChanged: onChanged,
         ),
       ],
-    );
-  }
-}
-
-class _DbActionCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _DbActionCard({required this.icon, required this.title, required this.subtitle, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.2)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13)),
-                  Text(subtitle, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -7029,19 +6875,6 @@ class _ExportFormatBtn extends StatelessWidget {
     );
   }
 }
-
-// ─────────────────────────────────────────────
-//  OLD _th helper kept for backward compat
-// ─────────────────────────────────────────────
-Widget _the(String label, {int flex = 1, TextAlign align = TextAlign.left}) =>
-    Expanded(
-      flex: flex,
-      child: Text(label,
-          textAlign: align,
-          style: const TextStyle(
-              fontSize: 11, fontWeight: FontWeight.w700,
-              letterSpacing: 0.6, color: Color(0xFF6B7A99))),
-    );
 
 void _showSaveSuccess(BuildContext context) {
   ScaffoldMessenger.of(context).showSnackBar(

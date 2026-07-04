@@ -1186,7 +1186,6 @@ class PointageProvider extends ChangeNotifier {
       chefId: chefId,
       ignoreLock: _ignoreTimeWindowsForTest,
     );
-    await _invalidateDailyConfirmationAfterMutation(equipeId, pointageDate);
   }
 
   /// ØªØ³Ø¬ÙŠÙ„ Ø­Ø§Ù„Ø© Ø§Ù„Ø®Ø±ÙˆØ¬: Ù„Ø§ ÙŠØ²Ø§Ù„ ÙŠØ¹Ù…Ù„ | Ø§Ù†ØªÙ‡Ù‰ (Ù…Ø¹ Ø§Ø®ØªÙŠØ§Ø±ÙŠ Ø³Ø§Ø¹Ø§Øª Ø¥Ø¶Ø§ÙÙŠØ©).

@@ -3641,7 +3641,6 @@ class _MouvFormState extends State<_MouvForm> {
   bool _saving = false;
   String _siteId = SiteId.jadida;
   String? _selFournisseurId;      // NOUVEAU
-  String? _newProdFournisseurId;  // NOUVEAU (pour nouveau produit)
   String? _selModulaireId;        // MODULAIRE (Base de vie)
   bool _newModulaireMode = false;
   final _newModulaireCtrl = TextEditingController();

@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
@@ -2684,24 +2683,6 @@ class _Avatar extends StatelessWidget {
       ),
     );
   }
-}
-
-class _TeamChip extends StatelessWidget {
-  final String label;
-  const _TeamChip({required this.label});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-    decoration: BoxDecoration(
-      color: kBlueFaint, borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: kBlueBorder),
-    ),
-    child: Text(label,
-        style: const TextStyle(
-            fontSize: 10, color: kBlueMid, fontWeight: FontWeight.w600),
-        overflow: TextOverflow.ellipsis),
-  );
 }
 
 class _IBtn extends StatelessWidget {

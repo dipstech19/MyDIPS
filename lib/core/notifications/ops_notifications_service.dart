@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import '../auth/app_permissions.dart';
 import '../auth/auth_model.dart';
 import '../../modules/logistique/logistique_service.dart';
-import '../../modules/logistique/vehicule_model.dart';
 import '../../modules/magasin/gestion_magasin.dart';
 
 /// Événements stock / logistique → collection `ops_events` → Cloud Functions → FCM.

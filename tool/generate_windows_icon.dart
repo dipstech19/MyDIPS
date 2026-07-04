@@ -23,7 +23,7 @@ void main() async {
     resized = img.copyResize(image, width: 256, height: 256);
   }
   final icoBytes = img.encodeIco(resized);
-  if (icoBytes != null && icoBytes.isNotEmpty) {
+  if (icoBytes.isNotEmpty) {
     final outDir = Directory('windows/runner/resources');
     if (!await outDir.exists()) await outDir.create(recursive: true);
     await File('windows/runner/resources/app_icon.ico').writeAsBytes(icoBytes);
@@ -46,10 +46,8 @@ void main() async {
       final size = e.$2;
       final png = img.copyResize(image, width: size, height: size);
       final pngBytes = img.encodePng(png);
-      if (pngBytes != null) {
-        await File('${dir.path}/ic_launcher.png').writeAsBytes(pngBytes);
-        print('OK: android/.../res/${e.$1}/ic_launcher.png');
-      }
+      await File('${dir.path}/ic_launcher.png').writeAsBytes(pngBytes);
+      print('OK: android/.../res/${e.$1}/ic_launcher.png');
     }
   }
   print('Done. Rebuild the app to see the new icon.');

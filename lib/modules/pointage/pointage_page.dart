@@ -3,14 +3,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/auth/app_permissions.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
 import '../../core/site/site_model.dart';
 import '../../core/site/site_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
-import '../../core/widgets/async_busy.dart';
 import '../../shared/widgets/shared_widgets.dart';
 import '../../shared/widgets/smart_avatar.dart';
 import '../../features/chef/screens/chef_home_screen.dart';
@@ -76,59 +74,6 @@ class _DriverChefBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: Text(label, style: TextStyle(fontSize: mobile ? 12 : 10, fontWeight: FontWeight.w700, color: color)),
-    );
-  }
-}
-
-class _AdminTabChip extends StatelessWidget {
-  final bool selected;
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _AdminTabChip({
-    required this.selected,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).primaryColor;
-    return Material(
-      color: selected ? color.withValues(alpha: 0.12) : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: selected ? color.withValues(alpha: 0.25) : Colors.grey.shade200),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 18, color: selected ? color : Colors.grey.shade700),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: selected ? color : Colors.grey.shade800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -283,7 +228,6 @@ class _PointagePageState extends State<PointagePage> {
   DateTime? _yesterdayConfirmationsStreamDate;
 
   String? _selectedEquipeIdAdmin;
-  String? _lastOvertimeListenEquipeId;
   DateTime _hsFilterDate = DateTime.now();
   String? _lastOvertimeListenDateKey;
   _AdminPointageView _adminContentView = _AdminPointageView.workers;
@@ -370,36 +314,6 @@ class _PointagePageState extends State<PointagePage> {
         _adminMonthLoaded = m;
         _adminMonthLoading = false;
       });
-    }
-  }
-
-  AttendanceState _convertStatus(AttendanceStatus status) {
-    switch (status) {
-      case AttendanceStatus.present:
-        return AttendanceState.present;
-      case AttendanceStatus.absent:
-        return AttendanceState.absent;
-      case AttendanceStatus.notInVehicle:
-        return AttendanceState.notInVehicle;
-      case AttendanceStatus.unmarked:
-        return AttendanceState.unmarked;
-      case AttendanceStatus.training:
-        return AttendanceState.present; // en formation = considéré présent pour l'affichage
-      case AttendanceStatus.leave:
-        return AttendanceState.present; // congé = considéré présent pour l'affichage
-    }
-  }
-
-  AttendanceStatus _convertState(AttendanceState state) {
-    switch (state) {
-      case AttendanceState.present:
-        return AttendanceStatus.present;
-      case AttendanceState.absent:
-        return AttendanceStatus.absent;
-      case AttendanceState.notInVehicle:
-        return AttendanceStatus.notInVehicle;
-      case AttendanceState.unmarked:
-        return AttendanceStatus.unmarked;
     }
   }
 
@@ -1072,7 +986,7 @@ class _PointagePageState extends State<PointagePage> {
               );
 
               final exportBtn = ElevatedButton.icon(
-                onPressed: () => _showExcelExportDialog(context, teams, equipes, employes, pointageProvider),
+                onPressed: () => _showExcelExportDialog(context, allTeams, equipes, employes, pointageProvider, shiftsProvider: shiftsProvider),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF000966),
                   foregroundColor: Colors.white,
@@ -1705,6 +1619,7 @@ class _PointagePageState extends State<PointagePage> {
                                         child: FilledButton.icon(
                                           onPressed: () => _showExcelExportDialog(
                                             context, allTeams, equipes, employes, pointageProvider,
+                                            shiftsProvider: shiftsProvider,
                                           ),
                                           style: FilledButton.styleFrom(
                                             backgroundColor: Colors.green,
@@ -1731,7 +1646,7 @@ class _PointagePageState extends State<PointagePage> {
                                       final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
                                       final shiftLabel = t.equipeId == 'hors_equipe'
                                           ? null
-                                          : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay)?.shortLabel;
+                                          : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay).shortLabel;
                                       final isSelected = _selectedEquipeIdAdmin == t.equipeId;
                                       final isConfirmed = confirmedIds.contains(t.equipeId);
 
@@ -2114,7 +2029,8 @@ class _PointagePageState extends State<PointagePage> {
     List<Employe> employes,
     PointageProvider pointageProvider,
     {String? initialScope,
-    String? initialEquipeId,}
+    String? initialEquipeId,
+    ShiftsProvider? shiftsProvider,}
   ) async {
     final now = DateTime.now();
     DateTime start = DateTime(now.year, now.month, 1);
@@ -2149,7 +2065,17 @@ class _PointagePageState extends State<PointagePage> {
 
     // بناء قائمة الموظفين أولاً حتى نتمكن من تمرير معرفاتهم عند جلب السجلات،
     // مما يضمن جلب سجلاتهم حتى لو لم يُسجَّل لهم أي بوانتاج في الفترة.
-    final employees = <({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})>[];
+    final employees = <({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet, bool isQuitte, String dateQuitte})>[];
+    // Helper: parse dd/MM/yyyy → DateTime, returns null on failure.
+    DateTime? parseQd(String s) {
+      if (s.isEmpty) return null;
+      final p = s.split('/');
+      if (p.length != 3) return null;
+      final d = int.tryParse(p[0]), m = int.tryParse(p[1]), y = int.tryParse(p[2]);
+      if (d == null || m == null || y == null) return null;
+      return DateTime(y, m, d);
+    }
+    final periodStart = DateTime(start.year, start.month, start.day);
     // IMPORTANT: les renforts doivent être attribués à l'équipe d'origine dans l'Excel.
     // Donc on construit la liste des employés depuis l'appartenance "réelle" (equipes.membreIds / chefId),
     // et on n'utilise pas la liste temp-aware (teams) pour déterminer equipeId.
@@ -2164,6 +2090,12 @@ class _PointagePageState extends State<PointagePage> {
         final empList = employes.where((e) => e.id == id).toList();
         if (empList.isEmpty) continue;
         final w = empList.first;
+        // Skip employees who left before (or without a recorded date for) the period start.
+        if (w.statut == EmployeStatut.quitte) {
+          if (w.dateQuitte.isEmpty) continue; // no date → treat as left before period
+          final qd = parseQd(w.dateQuitte);
+          if (qd == null || qd.isBefore(periodStart)) continue;
+        }
         employees.add((
           id: w.id,
           cin: w.cin,
@@ -2172,6 +2104,8 @@ class _PointagePageState extends State<PointagePage> {
           equipeName: label,
           equipeId: eq.id,
           salaireNet: w.salaireBase,
+          isQuitte: w.statut == EmployeStatut.quitte,
+          dateQuitte: w.dateQuitte,
         ));
       }
     }
@@ -2179,6 +2113,12 @@ class _PointagePageState extends State<PointagePage> {
     for (final t in teams.where((t) => t.equipeId == 'hors_equipe')) {
       for (final w in t.workers) {
         if (!seen.add(w.id)) continue;
+        // Skip employees who left before (or without a recorded date for) the period start.
+        if (w.statut == EmployeStatut.quitte) {
+          if (w.dateQuitte.isEmpty) continue;
+          final qd = parseQd(w.dateQuitte);
+          if (qd == null || qd.isBefore(periodStart)) continue;
+        }
         employees.add((
           id: w.id,
           cin: w.cin,
@@ -2187,6 +2127,8 @@ class _PointagePageState extends State<PointagePage> {
           equipeName: '${t.equipeName} — ${t.chefName}',
           equipeId: null,
           salaireNet: w.salaireBase,
+          isQuitte: w.statut == EmployeStatut.quitte,
+          dateQuitte: w.dateQuitte,
         ));
       }
     }
@@ -2213,10 +2155,12 @@ class _PointagePageState extends State<PointagePage> {
           equipeName: label,
           equipeId: groupeEquipeId,
           salaireNet: w.salaireBase,
+          isQuitte: false,
+          dateQuitte: '',
         ));
       }
     }
-    List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet})> filteredEmployees = employees;
+    List<({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet, bool isQuitte, String dateQuitte})> filteredEmployees = employees;
     switch (picked.scope) {
       case 'groupes':
         filteredEmployees = employees.where((e) => (e.equipeId ?? '').startsWith('groupe:')).toList();
@@ -2372,6 +2316,7 @@ class _PointagePageState extends State<PointagePage> {
         rows: rows,
         reasonConfigs: reasonConfigs.isEmpty ? null : reasonConfigs,
         useDessalementGrid: true,
+        isPublicHoliday: shiftsProvider.isPublicHoliday,
       );
     } catch (e) {
       if (mounted) {
@@ -2414,62 +2359,6 @@ class _PointagePageState extends State<PointagePage> {
       );
     }
   }
-
-  int _countUnconfirmedPresenceInRange({
-    required DateTime start,
-    required DateTime end,
-    required List<PointageRecord> records,
-    required Set<String> employeeIds,
-  }) {
-    final s = DateTime(start.year, start.month, start.day);
-    final e = DateTime(end.year, end.month, end.day);
-    final byKey = <String, bool>{};
-    for (final r in records) {
-      if (!employeeIds.contains(r.employeId)) continue;
-      final d = DateTime(r.date.year, r.date.month, r.date.day);
-      if (d.isBefore(s) || d.isAfter(e)) continue;
-      if (!r.isFinalPresent) continue;
-      final confirmed = r.arrivalMarkedAt != null &&
-          r.departureMarkedAt != null &&
-          r.departureStatus == DepartureStatus.finished;
-      if (!confirmed) {
-        byKey['${r.employeId}-${d.toIso8601String()}'] = true;
-      }
-    }
-    return byKey.length;
-  }
-
-  Future<bool?> _showAdminExcelValidationDialog(
-    BuildContext context, {
-    required int unconfirmedCount,
-  }) async {
-    if (!context.mounted) return null;
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Validation Admin avant Excel'),
-        content: Text(
-          'Il y a $unconfirmedCount présence(s) sans entrée/sortie confirmées.\n\n'
-          'Choisissez une option avant export :',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
-            child: const Text('Annuler'),
-          ),
-          OutlinedButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Bloquer et corriger'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Exporter + Non confirmés = Absents'),
-          ),
-        ],
-      ),
-    );
-  }
-
 
   Future<void> _showAssignHsDialog(
     BuildContext context,
@@ -2624,8 +2513,8 @@ class _PointagePageState extends State<PointagePage> {
                         if (targetShift == ShiftType.rest) {
                           disabledReason = 'En repos ce jour-là';
                         } else if (sameDay && originShiftEnd != null) {
-                          final targetStart = shiftStart(targetShift!, pickedDay);
-                          if (targetStart.isBefore(originShiftEnd!)) {
+                          final targetStart = shiftStart(targetShift, pickedDay);
+                          if (targetStart.isBefore(originShiftEnd)) {
                             disabledReason = 'Commence avant la fin du shift original';
                           }
                         }
@@ -2686,34 +2575,6 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
-  Widget _buildAdminMobileChefSelector(
-    BuildContext context,
-    List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams,
-  ) {
-    if (teams.isEmpty) {
-      return Text(tr(context, 'no_teams'), style: TextStyle(fontSize: 13, color: Colors.grey[600]));
-    }
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: teams.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final t = teams[i];
-          final isSelected = _selectedEquipeIdAdmin == t.equipeId;
-          return FilterChip(
-            label: Text('${t.equipeName} — ${t.chefName}', style: const TextStyle(fontSize: 13)),
-            selected: isSelected,
-            onSelected: (_) => setState(() => _selectedEquipeIdAdmin = t.equipeId),
-            showCheckmark: false,
-            selectedColor: Theme.of(context).primaryColor.withValues(alpha: 0.25),
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildAdminWorkersColumn(
     BuildContext context,
     ({String equipeId, String equipeName, String chefName, List<Employe> workers})? team,
@@ -2732,12 +2593,6 @@ class _PointagePageState extends State<PointagePage> {
       return Center(child: Text(tr(context, 'no_workers'), style: TextStyle(fontSize: 14, color: Colors.grey[600])));
     }
     final mobile = isMobile(context);
-    String originTeamName(String? originId) {
-      if (originId == null || originId.isEmpty) return '—';
-      final t = allTeams.where((x) => x.equipeId == originId).toList();
-      if (t.isNotEmpty) return t.first.equipeName;
-      return originId;
-    }
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -2963,284 +2818,6 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
-  static Future<({DateTime startDate, DateTime endDate})?> _showFormationDateRangeDialog(
-    BuildContext context, {
-    required String employeNom,
-    required DateTime day,
-    DateTime? initialStartDate,
-    DateTime? initialEndDate,
-  }) async {
-    DateTime startDate = DateTime(
-      (initialStartDate ?? day).year,
-      (initialStartDate ?? day).month,
-      (initialStartDate ?? day).day,
-    );
-    DateTime endDate = DateTime(
-      (initialEndDate ?? day).year,
-      (initialEndDate ?? day).month,
-      (initialEndDate ?? day).day,
-    );
-    if (!context.mounted) return null;
-    return showDialog<({DateTime startDate, DateTime endDate})>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final invalidRange = endDate.isBefore(startDate);
-            return AlertDialog(
-              title: const Text('Planifier formation (jours)'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(employeNom, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 10),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.calendar_today),
-                    title: const Text('Date début'),
-                    trailing: TextButton(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: startDate,
-                          firstDate: DateTime(day.year - 1),
-                          lastDate: DateTime(day.year + 2, 12, 31),
-                        );
-                        if (picked != null) {
-                          setDialogState(() {
-                            startDate = DateTime(picked.year, picked.month, picked.day);
-                            if (endDate.isBefore(startDate)) endDate = startDate;
-                          });
-                        }
-                      },
-                      child: Text('${startDate.day}/${startDate.month}/${startDate.year}'),
-                    ),
-                  ),
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.event_available),
-                    title: const Text('Date fin'),
-                    trailing: TextButton(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: endDate.isBefore(startDate) ? startDate : endDate,
-                          firstDate: startDate,
-                          lastDate: DateTime(day.year + 2, 12, 31),
-                        );
-                        if (picked != null) {
-                          setDialogState(() => endDate = DateTime(picked.year, picked.month, picked.day));
-                        }
-                      },
-                      child: Text('${endDate.day}/${endDate.month}/${endDate.year}'),
-                    ),
-                  ),
-                  if (invalidRange)
-                    Text(
-                      'La date de fin doit être après (ou égale à) la date de début.',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-                ),
-                FilledButton.icon(
-                  onPressed: invalidRange
-                      ? null
-                      : () => Navigator.of(context).pop((startDate: startDate, endDate: endDate)),
-                  icon: const Icon(Icons.check, size: 18),
-                  label: const Text('Appliquer'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  static Future<void> _showFormationDialog(
-    BuildContext context, {
-    required PointageProvider pointageProvider,
-    required List<({String equipeId, String equipeName, String chefName, List<Employe> workers})> teams,
-    required DateTime initialDate,
-    VoidCallback? onSuccess,
-  }) async {
-    DateTime selectedDateStart = DateTime(initialDate.year, initialDate.month, initialDate.day);
-    DateTime selectedDateEnd = DateTime(initialDate.year, initialDate.month, initialDate.day);
-    String? selectedEquipeId = teams.isNotEmpty ? teams.first.equipeId : null;
-    final Set<String> selectedEmployeIds = {};
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final matching = teams.where((t) => t.equipeId == selectedEquipeId).toList();
-            final team = matching.isEmpty ? null : matching.first;
-            final workers = team?.workers ?? <Employe>[];
-            if (selectedDateEnd.isBefore(selectedDateStart)) selectedDateEnd = selectedDateStart;
-
-            return AlertDialog(
-              title: Text(tr(context, 'pointage_formation_dialog_title')),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(tr(context, 'pointage_formation_date'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(tr(context, 'pointage_formation_date_from'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                              TextButton.icon(
-                                onPressed: () async {
-                                  final picked = await showDatePicker(
-                                    context: context,
-                                    initialDate: selectedDateStart,
-                                    firstDate: DateTime(now.year - 1),
-                                    lastDate: today.add(const Duration(days: 365)),
-                                  );
-                                  if (picked != null) {
-                                    setDialogState(() {
-                                      selectedDateStart = DateTime(picked.year, picked.month, picked.day);
-                                      if (selectedDateEnd.isBefore(selectedDateStart)) selectedDateEnd = selectedDateStart;
-                                    });
-                                  }
-                                },
-                                icon: const Icon(Icons.calendar_today, size: 18),
-                                label: Text('${selectedDateStart.day}/${selectedDateStart.month}/${selectedDateStart.year}'),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(tr(context, 'pointage_formation_date_to'), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                              TextButton.icon(
-                                onPressed: () async {
-                                  final picked = await showDatePicker(
-                                    context: context,
-                                    initialDate: selectedDateEnd.isBefore(selectedDateStart) ? selectedDateStart : selectedDateEnd,
-                                    firstDate: selectedDateStart,
-                                    lastDate: today.add(const Duration(days: 365)),
-                                  );
-                                  if (picked != null) setDialogState(() => selectedDateEnd = DateTime(picked.year, picked.month, picked.day));
-                                },
-                                icon: const Icon(Icons.calendar_today, size: 18),
-                                label: Text('${selectedDateEnd.day}/${selectedDateEnd.month}/${selectedDateEnd.year}'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(tr(context, 'pointage_formation_equipe'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    DropdownButtonFormField<String>(
-                      value: selectedEquipeId,
-                      decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                      items: teams.map((t) => DropdownMenuItem(value: t.equipeId, child: Text('${t.equipeName} — ${t.chefName}'))).toList(),
-                      onChanged: (v) => setDialogState(() { selectedEquipeId = v; selectedEmployeIds.clear(); }),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(tr(context, 'pointage_formation_person'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    FutureBuilder<Set<String>>(
-                      key: ValueKey('formation-$selectedDateStart-$selectedDateEnd-${workers.map((e) => e.id).join('-')}'),
-                      future: () async {
-                        final ids = <String>{};
-                        for (final e in workers) {
-                          final r = await pointageProvider.getRecordForEmployeeForDate(e.id, selectedDateStart);
-                          if (r?.adminFinalStatus == AttendanceStatus.training) ids.add(e.id);
-                        }
-                        return ids;
-                      }(),
-                      builder: (context, snap) {
-                        final inFormationIds = snap.data ?? <String>{};
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            ...workers.map((e) {
-                              final alreadyFormation = inFormationIds.contains(e.id);
-                              return CheckboxListTile(
-                                value: selectedEmployeIds.contains(e.id),
-                                onChanged: alreadyFormation ? null : (v) => setDialogState(() {
-                                  if (v == true) selectedEmployeIds.add(e.id); else selectedEmployeIds.remove(e.id);
-                                }),
-                                title: Text(e.nom, style: TextStyle(color: alreadyFormation ? Colors.grey : null)),
-                                subtitle: alreadyFormation ? Text(tr(context, 'pointage_formation_already'), style: TextStyle(fontSize: 11, color: Colors.grey.shade600)) : null,
-                                controlAffinity: ListTileControlAffinity.leading,
-                                dense: true,
-                              );
-                            }),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text(tr(context, 'pointage_formation_hint'), style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(MaterialLocalizations.of(context).cancelButtonLabel)),
-                FilledButton.icon(
-                  onPressed: selectedEmployeIds.isEmpty || team == null
-                      ? null
-                      : () async {
-                          for (var d = DateTime(selectedDateStart.year, selectedDateStart.month, selectedDateStart.day);
-                              !d.isAfter(DateTime(selectedDateEnd.year, selectedDateEnd.month, selectedDateEnd.day));
-                              d = d.add(const Duration(days: 1))) {
-                            final viewDay = DateTime(d.year, d.month, d.day);
-                            for (final id in selectedEmployeIds) {
-                              final e = workers.firstWhere((w) => w.id == id);
-                              await pointageProvider.setAdminOverrideForEmployee(
-                                employeId: e.id,
-                                employeNom: e.nom,
-                                employeCin: e.cin,
-                                equipeId: team.equipeId,
-                                equipeName: team.equipeName,
-                                chefName: team.chefName,
-                                status: AttendanceStatus.training,
-                                viewDate: viewDay,
-                              );
-                            }
-                          }
-                          pointageProvider.selectReportDate(selectedDateStart);
-                          onSuccess?.call();
-                          if (context.mounted) Navigator.of(context).pop();
-                        },
-                  icon: const Icon(Icons.school, size: 18),
-                  label: Text(tr(context, 'pointage_formation_mark')),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildAdminMainContent(
     BuildContext context, {
     required ({String equipeId, String equipeName, String chefName, List<Employe> workers})? team,
@@ -3462,12 +3039,7 @@ class _PointagePageState extends State<PointagePage> {
     // Bouton "Envoyer rapport" : avant envoi OU (P1/P2) après que toutes les sorties sont saisies.
     final allLocked = workersDisplay.isNotEmpty &&
         workersDisplay.every((w) => pointageProvider.isChefLockedForEmployee(w.id));
-    final hasPresentWithUnsetDeparture = workersDisplay.any((w) {
-      final rec = pointageProvider.getRecordForEmployee(w.id);
-      return rec?.chefStatus == ChefPointageStatus.present &&
-          (rec?.departureStatus ?? DepartureStatus.unset) == DepartureStatus.unset;
-    });
-    final chefReportLockedForAll = allLocked && (isNightShift || hasPresentWithUnsetDeparture);
+    final chefReportLockedForAll = allLocked;
     final overtimeWorkers = workersDisplay.where((w) => overtimeWorkerIds.contains(w.id)).toList();
     final regularWorkers = workersDisplay.where((w) => !overtimeWorkerIds.contains(w.id)).toList();
     final workersInTraining = workers.where((e) => pointageProvider.getRecordForEmployee(e.id)?.adminFinalStatus == AttendanceStatus.training).toList();
@@ -3794,8 +3366,6 @@ class _PointagePageState extends State<PointagePage> {
     final isWithinDeparture = bypassPointageHours || config.canMarkDepartureNow(now);
     final mobile = isMobile(context);
 
-    final nonWorkingIds = pointageProvider.nonWorkingEquipeIds;
-
     Widget buildWorkerCard(Employe e) {
       final isOvertimeWorker = overtimeWorkerIds.contains(e.id);
       final record = pointageProvider.getRecordForEmployee(e.id);
@@ -3900,7 +3470,7 @@ class _PointagePageState extends State<PointagePage> {
           );
       final canMarkArrival = !locked && isWithinArrival;
       // Poste 3 (nuit) : pas de saisie manuelle de sortie, elle est automatique.
-      final canMarkDeparture = !isNightShift && isWithinDeparture;
+      final canMarkDeparture = !allLocked && !isNightShift && isWithinDeparture;
       final chefChips = _wrapIfDisabled(
         disabled: !canMarkArrival,
         child: ChefStatusChips(
@@ -4218,7 +3788,7 @@ class _PointagePageState extends State<PointagePage> {
                         elevation: 0,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      onPressed: isWithinArrival ? () async {
+                      onPressed: (!allLocked && isWithinArrival) ? () async {
                         final equipeId = auth.equipeId ?? '';
                         final equipe = equipes.where((e) => e.id == equipeId).toList();
                         final equipeName = equipe.isNotEmpty ? equipe.first.nom : '';
@@ -4280,7 +3850,7 @@ class _PointagePageState extends State<PointagePage> {
                         side: BorderSide(color: Colors.blue.shade400, width: 1.5),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      onPressed: isWithinDeparture ? () async {
+                      onPressed: (!allLocked && isWithinDeparture) ? () async {
                         final equipe = equipes.where((e) => e.id == auth.equipeId).toList();
                         final today = DateTime.now();
                         final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
@@ -4886,14 +4456,11 @@ class _PointageAnalysisSection extends StatefulWidget {
   final List<String> nonWorkingIds;
   final PointageRecord? Function(String) getRecord;
   final DateTime viewDate;
-  final bool showHeader;
-
   const _PointageAnalysisSection({
     required this.teams,
     required this.nonWorkingIds,
     required this.getRecord,
     required this.viewDate,
-    this.showHeader = true,
   });
 
   @override
@@ -4961,13 +4528,6 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
       _rangeRecords = null;
     });
     if (preset != _PeriodPreset.today) _loadRange();
-  }
-
-  PointageRecord? _getRecordForPeriod(String employeId) {
-    if (_preset == _PeriodPreset.today) return widget.getRecord(employeId);
-    if (_rangeRecords == null) return null;
-    final list = _rangeRecords!.where((r) => r.employeId == employeId && !r.tempAssigned).toList();
-    return list.isEmpty ? null : list.first;
   }
 
   /// 8 heures fixes (480 min) par jour de présence confirmée.
@@ -5090,12 +4650,10 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
     final effectiveTotalDays = multiDay ? totalDays : 1;
     int totalWorkedMin = 0;
     int totalOvertimeMin = 0;
-    int totalPresentDays = 0;
     int totalAbsentDays = 0;
     for (final w in allWorkers) {
       totalWorkedMin += _workedMinutesForPeriod(w.id);
       totalOvertimeMin += _overtimeMinutesForPeriod(w.id);
-      totalPresentDays += _presentDaysForPeriod(w.id);
       totalAbsentDays += _absentDaysForPeriod(w.id, effectiveTotalDays);
     }
     final totalAbsenceMin = totalAbsentDays * _shiftMinutes;
@@ -5136,7 +4694,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.showHeader) ...[
+            if (true) ...[
               Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 2),
               Text('Par équipe — durée, arrivée, départ, heures sup.', style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600])),
@@ -5159,7 +4717,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (widget.showHeader) ...[
+                if (true) ...[
                   Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                 ],
@@ -5302,7 +4860,7 @@ class _PointageAnalysisSectionState extends State<_PointageAnalysisSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.showHeader) ...[
+          if (true) ...[
             Text('Analyse présence', style: TextStyle(fontSize: mobile ? 15 : 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 2),
             Text('Par équipe — durée, arrivée, départ, heures sup.', style: TextStyle(fontSize: mobile ? 11 : 13, color: Colors.grey[600])),
@@ -5505,7 +5063,6 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).primaryColor;
     final mobile = isMobile(context);
     final padding = pagePadding(context);
     final workers = _currentWorkers;

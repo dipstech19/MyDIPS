@@ -246,7 +246,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
           await pointageProvider.markDriverAttendance(
             employeId: w.id,
             employeNom: w.nom,
-            employeCin: w.cin ?? '',
+            employeCin: w.cin,
             equipeId: t.equipeId,
             equipeName: t.equipeName,
             chefName: t.chefName,
@@ -785,7 +785,7 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
                   id: '',
                   employeId: e.id,
                   employeNom: e.nom,
-                  employeCin: e.cin ?? '',
+                  employeCin: e.cin,
                   equipeId: team.equipeId,
                   equipeName: team.equipeName,
                   chefName: team.chefName,

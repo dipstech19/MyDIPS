@@ -1121,8 +1121,6 @@ class _EntreesPageState extends State<_EntreesPage> {
   String _cat = 'Toutes';
   List<Mouvement> get _list => widget.entrees.where((m) => _cat == 'Toutes' || m.categorie == _cat).toList();
 
-  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte.toInt());
-
   @override
   Widget build(BuildContext context) {
     final list = _list;
@@ -1200,8 +1198,6 @@ class _SortiesPageState extends State<_SortiesPage> {
     final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
     return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
   }
-
-  int get _totalUnites => _list.fold(0, (sum, m) => sum + m.totalQte.toInt());
 
   @override
   Widget build(BuildContext context) {
@@ -1990,7 +1986,6 @@ class _MouvFormState extends State<_MouvForm> {
   Map<String, String> _varStockErrors = {};
   bool _saving = false;
   String? _selFournisseurId;      // NOUVEAU
-  String? _newProdFournisseurId;  // NOUVEAU (pour nouveau produit)
 
   late DateTime _mvtDate;
   final _dateCtrl = TextEditingController(); // NOUVEAU : date manuelle
