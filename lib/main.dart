@@ -168,7 +168,6 @@ class _AppRootState extends State<_AppRoot> {
       unawaited(PushNotificationsService.instance.bindUser(auth.currentUser));
       unawaited(OpsNotificationsService.instance.bindUser(auth.currentUser));
     }
-    // إذا مدخلش → Login, إذا دخل → التطبيق
     return auth.isLoggedIn ? const MainLayout() : const LoginPage();
   }
 }

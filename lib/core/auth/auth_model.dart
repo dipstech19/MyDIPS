@@ -44,15 +44,5 @@ class AppUser {
       (siteIds == null || siteIds!.isEmpty || siteIds!.contains('all')) ? null : siteIds;
 }
 
-/// المستخدمون الثابتون (Admin و Chefs)
-final List<AppUser> appUsers = [
-  AppUser(
-    id: 'u1',
-    nom: 'Directeur DIPS',
-    username: 'dips@dips.ma',
-    password: '1234',
-    role: UserRole.directeur,
-    siteIds: ['all'],
-  ),
-
-];
+/// Aucun compte statique — authentification uniquement via Firebase.
+final List<AppUser> appUsers = [];

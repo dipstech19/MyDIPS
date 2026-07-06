@@ -1,7 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // وضع اختبار: القراءة والكتابة متاحة (قيّد لاحقاً بـ Firebase Auth)
+
+    // ── Employés & équipes ──
     match /employes/{docId} {
       allow read, write: if true;
     }
@@ -11,8 +12,108 @@ service cloud.firestore {
     match /postes/{docId} {
       allow read, write: if true;
     }
+    match /departements/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Comptes & authentification ──
     match /admins/{docId} {
       allow read, write: if true;
     }
+    match /chef_comptes/{docId} {
+      allow read, write: if true;
+    }
+    match /chauffeurs/{docId} {
+      allow read, write: if true;
+    }
+    match /groupe_comptes/{docId} {
+      allow read, write: if true;
+    }
+    match /distribution_comptes/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Pointage ──
+    match /pointage/{docId} {
+      allow read, write: if true;
+    }
+    match /daily_reports/{docId} {
+      allow read, write: if true;
+    }
+    match /daily_snapshots/{docId} {
+      allow read, write: if true;
+    }
+    match /daily_confirmations/{docId} {
+      allow read, write: if true;
+    }
+    match /non_working_equipes/{docId} {
+      allow read, write: if true;
+    }
+    match /validated_excels/{docId} {
+      allow read, write: if true;
+    }
+    match /pointage_events/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Groupes & distribution ──
+    match /groupes/{docId} {
+      allow read, write: if true;
+    }
+    match /distribution_groups/{docId} {
+      allow read, write: if true;
+    }
+    match /distribution_shifts/{docId} {
+      allow read, write: if true;
+    }
+    match /distribution_swaps/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Shifts & config ──
+    match /app_config/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Congés & demandes ──
+    match /conges/{docId} {
+      allow read, write: if true;
+    }
+    match /leave_requests/{docId} {
+      allow read, write: if true;
+    }
+    match /leave_types/{docId} {
+      allow read, write: if true;
+    }
+    match /absence_reasons/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Heures supplémentaires ──
+    match /overtime/{docId} {
+      allow read, write: if true;
+    }
+
+    // ── Magasin ──
+    match /magasin/{docId} {
+      allow read, write: if true;
+      match /{subcollection}/{subDocId} {
+        allow read, write: if true;
+      }
+    }
+
+    // ── Logistique ──
+    match /logistique/{docId} {
+      allow read, write: if true;
+      match /{subcollection}/{subDocId} {
+        allow read, write: if true;
+      }
+    }
+
+    // ── Conges employés ──
+    match /employe_conges/{docId} {
+      allow read, write: if true;
+    }
+
   }
 }

@@ -72,30 +72,10 @@ class AuthProvider extends ChangeNotifier {
     return false;
   }
 
-  /// تسجيل الدخول — ثابت ثم سائقين ثم شافات (بالايميل)
+  /// تسجيل الدخول — من Firebase فقط (أدمن، شافات، سائقين، مجموعات، distribution)
   Future<bool> login(String usernameOrEmail, String password) async {
     final input = usernameOrEmail.trim();
     final pwd = password;
-
-    // 1. المستخدمون الثابتون (Admin / Chef test) — أدمن عام بدون موقع
-    final staticUser = appUsers.where(
-          (u) => u.username == input && u.password == pwd,
-    ).toList();
-    if (staticUser.isNotEmpty) {
-      _currentUser = AppUser(
-        id: staticUser.first.id,
-        nom: staticUser.first.nom,
-        username: staticUser.first.username,
-        password: staticUser.first.password,
-        role: staticUser.first.role,
-        equipeId: staticUser.first.equipeId,
-        photoUrl: staticUser.first.photoUrl,
-        siteIds: ['all'],
-        permissions: const [AppPermissions.all],
-      );
-      notifyListeners();
-      return true;
-    }
 
     if (Firebase.apps.isEmpty) return false;
 
