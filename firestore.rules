@@ -2,118 +2,120 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Toutes les collections exigent une session Firebase Auth active.
+    // Sans token (ancienne app, compte statique) → accès refusé partout.
+
     // ── Employés & équipes ──
     match /employes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /equipes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /postes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /departements/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Comptes & authentification ──
     match /admins/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /chef_comptes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /chauffeurs/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /groupe_comptes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /distribution_comptes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Pointage ──
     match /pointage/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /daily_reports/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /daily_snapshots/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /daily_confirmations/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /non_working_equipes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /validated_excels/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /pointage_events/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Groupes & distribution ──
     match /groupes/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /distribution_groups/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /distribution_shifts/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /distribution_swaps/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Shifts & config ──
     match /app_config/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Congés & demandes ──
     match /conges/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /leave_requests/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /leave_types/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     match /absence_reasons/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Heures supplémentaires ──
     match /overtime/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // ── Magasin ──
     match /magasin/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
       match /{subcollection}/{subDocId} {
-        allow read, write: if true;
+        allow read, write: if request.auth != null;
       }
     }
 
     // ── Logistique ──
     match /logistique/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
       match /{subcollection}/{subDocId} {
-        allow read, write: if true;
+        allow read, write: if request.auth != null;
       }
     }
 
-    // ── Conges employés ──
+    // ── Congés employés ──
     match /employe_conges/{docId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
-
   }
 }

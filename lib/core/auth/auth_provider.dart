@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'app_permissions.dart';
 import 'auth_model.dart';
 
@@ -30,7 +31,6 @@ class AuthProvider extends ChangeNotifier {
   bool get isChefAtelierAdmin => isDirecteur && adminRole.contains('atelier');
   bool get isChefZoneAdmin => isDirecteur && adminRole.contains('zone');
 
-  /// Admin (directeur) ou compte chef lié à un poste « chef d’atelier » : pointage possible hors créneaux.
   bool canBypassPointageTimeWindows({String? linkedChefPoste}) {
     if (!isLoggedIn) return false;
     if (isDirecteur) return true;
@@ -44,10 +44,9 @@ class AuthProvider extends ChangeNotifier {
   bool hasPermission(String permission) {
     if (!isDirecteur) return false;
     if (permissions.contains(AppPermissions.all)) return true;
-    if (isSuperAdmin && permissions.isEmpty) return true; // legacy full admin
+    if (isSuperAdmin && permissions.isEmpty) return true;
     if (permissions.contains(permission)) return true;
 
-    // Legacy compatibility with old broad permissions.
     if (permissions.contains('Paramètres') && permission.startsWith('settings.')) return true;
     if (permissions.contains('Employés') &&
         (permission.startsWith('employees.') || permission == AppPermissions.teamsManage)) {
@@ -72,14 +71,27 @@ class AuthProvider extends ChangeNotifier {
     return false;
   }
 
-  /// تسجيل الدخول — من Firebase فقط (أدمن، شافات، سائقين، مجموعات، distribution)
+  /// Login — Firebase uniquement.
+  /// Étape 1 : session Firebase Auth anonyme (nécessaire pour lire Firestore avec request.auth != null).
+  /// Étape 2 : vérification des identifiants dans Firestore.
+  /// Si les identifiants sont invalides → on révoque la session et on retourne false.
+  /// Les anciennes versions de l'app (compte statique) n'appellent jamais signInAnonymously()
+  /// → toutes leurs lectures Firestore sont bloquées par les règles.
   Future<bool> login(String usernameOrEmail, String password) async {
     final input = usernameOrEmail.trim();
     final pwd = password;
 
     if (Firebase.apps.isEmpty) return false;
 
-    // 1b. أدمن من Firestore (email + mot de passe) — قد يكون أدمن عام أو مشرف موقع
+    // Créer une session Firebase Auth temporaire pour accéder à Firestore.
+    try {
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      debugPrint('AuthProvider: Firebase Auth session failed: $e');
+      return false;
+    }
+
+    // 1. Admins depuis Firestore (email + mot de passe)
     try {
       final email = input.contains('@') ? input.trim().toLowerCase() : null;
       if (email != null) {
@@ -128,7 +140,7 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('AuthProvider: Error admin login: $e');
     }
 
-    // 2. السائقون من Firebase (identifiant + mot de passe)
+    // 2. Chauffeurs depuis Firestore (identifiant + mot de passe)
     try {
       final chauffeurDoc = await FirebaseFirestore.instance
           .collection('chauffeurs')
@@ -157,7 +169,7 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('AuthProvider: Error chauffeur login: $e');
     }
 
-    // 3. الشافون من Firebase (email + mot de passe) — يظهر لكل شاف فريقه فقط
+    // 3. Chefs d'équipe depuis Firestore (email + mot de passe)
     try {
       final email = input.toLowerCase();
       final chefDoc = await FirebaseFirestore.instance
@@ -221,7 +233,7 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('AuthProvider: Error chef login: $e');
     }
 
-    // 4. مسؤول مجموعة (Groupe) من Firebase (email + mot de passe) — يظهر له groupe فقط
+    // 4. Responsables de groupe depuis Firestore
     try {
       final email = input.toLowerCase();
       final snap = await FirebaseFirestore.instance
@@ -250,7 +262,7 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('AuthProvider: Error groupe login: $e');
     }
 
-    // 5. مسؤول Distribution من Firebase (email + mot de passe) — يظهر له groupe distribution فقط
+    // 5. Responsables Distribution depuis Firestore
     try {
       final email = input.toLowerCase();
       final snap = await FirebaseFirestore.instance
@@ -284,11 +296,14 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('AuthProvider: Error distribution login: $e');
     }
 
+    // Identifiants invalides — révoquer la session Firebase Auth temporaire.
+    await FirebaseAuth.instance.signOut().catchError((_) {});
     return false;
   }
 
   void logout() {
     _currentUser = null;
+    FirebaseAuth.instance.signOut().catchError((_) {});
     notifyListeners();
   }
 }
