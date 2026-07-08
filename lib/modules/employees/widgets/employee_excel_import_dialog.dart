@@ -34,7 +34,7 @@ class _EmployeeExcelImportDialogState extends State<EmployeeExcelImportDialog> {
   String? _importError;
 
   Future<void> _pickAndParse() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xlsx', 'xls'],
       withData: true,

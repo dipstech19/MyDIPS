@@ -90,10 +90,6 @@ void main() async {
     firebaseBootstrapLastError = e.toString();
     debugPrint('Firebase init error: $e\n$st');
   }
-  await LocalNotificationsService.instance.initialize();
-  await PushNotificationsService.instance.initialize(
-    scaffoldMessengerKey: rootScaffoldMessengerKey,
-  );
   runApp(
     MultiProvider(
       providers: [
@@ -123,6 +119,24 @@ void main() async {
       child: MyApp(scaffoldMessengerKey: rootScaffoldMessengerKey),
     ),
   );
+
+  // Initialisées après le premier frame: sur Android, `requestPermission()`
+  // a besoin que l'Activity soit déjà attachée, sinon l'appel bloque
+  // indéfiniment si on l'attend avant `runApp()`.
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    try {
+      await LocalNotificationsService.instance.initialize();
+    } catch (e, st) {
+      debugPrint('Local notifications init error: $e\n$st');
+    }
+    try {
+      await PushNotificationsService.instance.initialize(
+        scaffoldMessengerKey: rootScaffoldMessengerKey,
+      );
+    } catch (e, st) {
+      debugPrint('Push notifications init error: $e\n$st');
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {

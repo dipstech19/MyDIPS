@@ -4,7 +4,12 @@
       "Bash(flutter run *)",
       "Bash(timeout 30 type \"C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-hp-desktop-DIPS-Managment\\\\d6a5d564-f59c-4797-846c-0fabef881264\\\\tasks\\\\b07eye691.output\")",
       "Bash(Start-Sleep -Seconds 25)",
-      "Bash(Get-Content \"C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-hp-desktop-DIPS-Managment\\\\d6a5d564-f59c-4797-846c-0fabef881264\\\\tasks\\\\bgz2os661.output\" -Raw)"
+      "Bash(Get-Content \"C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-hp-desktop-DIPS-Managment\\\\d6a5d564-f59c-4797-846c-0fabef881264\\\\tasks\\\\bgz2os661.output\" -Raw)",
+      "Bash(adb -s R83YB13LDGH shell dumpsys activity activities)",
+      "Bash(adb -s R83YB13LDGH shell pidof com.dipsmanagment.dipsmanagment)",
+      "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH shell pidof com.dipsmanagment.dipsmanagment)",
+      "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH shell dumpsys activity activities)",
+      "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH logcat -d -t 200)"
     ]
   }
 }

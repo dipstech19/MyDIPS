@@ -6412,7 +6412,7 @@ class _DatabaseSectionState extends State<_DatabaseSection> {
     try {
       // On desktop, we simulate a file picker by reading a known test path.
       // In production, replace with file_picker package:
-      // final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
+      // final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
       final dir = await _getDesktopOrDocumentsPath();
       final testFile = dart_io.File('$dir/dips_import_test.csv');
       if (await testFile.exists()) {

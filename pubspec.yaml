@@ -42,7 +42,7 @@ dependencies:
   timezone: ^0.10.0
   pdf:
   printing:
-  file_picker:
+  file_picker: 11.0.2
   excel:
   path_provider:
   intl: any

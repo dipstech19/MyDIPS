@@ -3945,7 +3945,7 @@ class _LeaveRequestCardState extends State<_LeaveRequestCard> {
         return;
       }
 
-      var savePath = await FilePicker.platform.saveFile(
+      var savePath = await FilePicker.saveFile(
         dialogTitle: 'Enregistrer le PDF du congé',
         fileName: fileName,
         type: FileType.custom,

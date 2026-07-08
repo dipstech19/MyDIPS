@@ -769,7 +769,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   }
   
   Future<void> _pickPhoto() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       allowMultiple: false,
       withData: true, // Important: ensures bytes are loaded
@@ -886,7 +886,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   }
   
   Future<void> _addDocument() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'],
       allowMultiple: false,
