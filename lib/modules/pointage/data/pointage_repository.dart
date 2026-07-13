@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/pointage_model.dart';
+import '../../shifts/models/shift_models.dart';
 
 class PointageRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -527,6 +528,7 @@ class PointageRepository {
     String? absenceReason,
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
+    ShiftType? shiftType,
   }) async {
     final ref = _firestore.collection(_pointageCollection).doc(docId);
     final snap = await ref.get();
@@ -543,15 +545,23 @@ class PointageRepository {
       if (status != AttendanceStatus.training) 'trainingEndAt': null,
     };
 
-    // For admin validation, set arrival/departure timestamps so "Statistiques" can show times.
+    // For admin validation, set the arrival timestamp so "Statistiques" can show times.
     if (status == AttendanceStatus.present ||
         status == AttendanceStatus.training ||
         status == AttendanceStatus.leave) {
       final hasArrival = (data['arrivalMarkedAt'] as String?)?.isNotEmpty == true;
       if (!hasArrival) updates['arrivalMarkedAt'] = nowIso;
-      updates['departureStatus'] = DepartureStatus.finished.name;
-      final hasDeparture = (data['departureMarkedAt'] as String?)?.isNotEmpty == true;
-      if (!hasDeparture) updates['departureMarkedAt'] = nowIso;
+
+      // Poste 1/2 : la sortie doit être confirmée par le chef lui-même, pas automatiquement.
+      // Poste 3 (nuit) : la sortie reste automatique. Congé/formation : pas de "sortie" à attendre.
+      final confirmDeparture = status == AttendanceStatus.training ||
+          status == AttendanceStatus.leave ||
+          (status == AttendanceStatus.present && shiftType == ShiftType.night);
+      if (confirmDeparture) {
+        updates['departureStatus'] = DepartureStatus.finished.name;
+        final hasDeparture = (data['departureMarkedAt'] as String?)?.isNotEmpty == true;
+        if (!hasDeparture) updates['departureMarkedAt'] = nowIso;
+      }
     }
 
     await ref.update(updates);

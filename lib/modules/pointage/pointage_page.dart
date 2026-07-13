@@ -2737,8 +2737,16 @@ class _PointagePageState extends State<PointagePage> {
                           children: [
                             InkWell(
                               onTap: () async {
+                                final overrideDay = adminOverridePersistDate ?? DateTime.now();
+                                final overrideShift = context
+                                    .read<ShiftsProvider>()
+                                    .getShiftForEquipe(team.equipeId, overrideDay);
                                 if (record != null) {
-                                  await pointageProvider.setAdminOverride(record.id, AttendanceStatus.present);
+                                  await pointageProvider.setAdminOverride(
+                                    record.id,
+                                    AttendanceStatus.present,
+                                    shiftType: overrideShift,
+                                  );
                                 } else {
                                   await pointageProvider.setAdminOverrideForEmployee(
                                     employeId: e.id,
@@ -2749,6 +2757,7 @@ class _PointagePageState extends State<PointagePage> {
                                     chefName: team.chefName,
                                     status: AttendanceStatus.present,
                                     viewDate: adminOverridePersistDate,
+                                    shiftType: overrideShift,
                                   );
                                 }
                               },

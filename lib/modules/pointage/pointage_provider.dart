@@ -16,6 +16,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'pointage_hours_config.dart';
 import 'services/pointage_export_service.dart';
 import '../../core/notifications/pointage_notifications_service.dart';
+import '../shifts/models/shift_models.dart';
 
 /// Ù†Ø§ÙØ°Ø© ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø´Ø§Ù: Ø§Ù„Ø¯Ø®ÙˆÙ„ (âˆ’30 Ø¯ â†’ Ø¨Ø¯Ø§ÙŠØ© + 2h) Ø£Ùˆ Ø§Ù„Ø®Ø±ÙˆØ¬ (âˆ’30 Ø¯ â†’ Ù†Ù‡Ø§ÙŠØ© + 2h) â€” Ù„Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„ØªÙ‚Ø±ÙŠØ± ÙŠÙÙƒÙ…Ù‘Ù„ Ø§Ù„ØºÙŠØ§Ø¨ ÙÙŠ Ù†Ø§ÙØ°Ø© Ø§Ù„Ø®Ø±ÙˆØ¬.
 bool _isChefMarkingWindow(PointageHoursConfig config, DateTime now, Duration grace) {
@@ -1292,6 +1293,7 @@ class PointageProvider extends ChangeNotifier {
     String? absenceReason,
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
+    ShiftType? shiftType,
   }) async {
     if (!_firebaseAvailable || _repo == null) return;
     await _repo!.setAdminOverride(
@@ -1300,6 +1302,7 @@ class PointageProvider extends ChangeNotifier {
       absenceReason: status == AttendanceStatus.absent ? absenceReason : null,
       trainingStartAt: status == AttendanceStatus.training ? trainingStartAt : null,
       trainingEndAt: status == AttendanceStatus.training ? trainingEndAt : null,
+      shiftType: shiftType,
     );
     final rec = await _repo!.getByDocId(pointageDocId);
     if (rec != null) {
@@ -1320,6 +1323,7 @@ class PointageProvider extends ChangeNotifier {
     DateTime? viewDate,
     DateTime? trainingStartAt,
     DateTime? trainingEndAt,
+    ShiftType? shiftType,
   }) async {
     if (!_firebaseAvailable) return;
     final date = viewDate ?? DateTime.now();
@@ -1340,9 +1344,12 @@ class PointageProvider extends ChangeNotifier {
       );
     } else {
       final now = DateTime.now();
-      final confirmDeparture = status == AttendanceStatus.present ||
-          status == AttendanceStatus.training ||
-          status == AttendanceStatus.leave;
+      // Poste 1/2 : la sortie doit être confirmée par le chef lui-même, pas automatiquement.
+      // Poste 3 (nuit) : la sortie reste automatique, comme à l'envoi du rapport chef.
+      // Congé/formation : pas de "sortie" au sens travail, on peut clôturer directement.
+      final confirmDeparture = status == AttendanceStatus.training ||
+          status == AttendanceStatus.leave ||
+          (status == AttendanceStatus.present && shiftType == ShiftType.night);
       final record = PointageRecord(
         id: '',
         employeId: employeId,
