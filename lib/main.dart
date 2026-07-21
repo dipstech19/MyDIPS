@@ -27,6 +27,7 @@ import 'modules/Paramètres/admins_provider.dart';
 import 'modules/Paramètres/chauffeurs_provider.dart';
 import 'modules/Paramètres/chef_comptes_provider.dart';
 import 'modules/pointage/pointage_provider.dart';
+import 'modules/pointage/pointage_department_provider.dart';
 import 'modules/pointage/absence_reasons_provider.dart';
 import 'modules/shifts/shifts_provider.dart';
 import 'modules/magasin/magasin_provider.dart';
@@ -109,9 +110,10 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ChauffeursProvider()),
         ChangeNotifierProvider(create: (_) => ChefComptesProvider()),
         ChangeNotifierProvider(create: (_) => PointageProvider()),
+        ChangeNotifierProvider(create: (_) => PointageDepartmentProvider()),
         ChangeNotifierProvider(create: (_) => AbsenceReasonsProvider()),
         ChangeNotifierProvider(create: (_) => ShiftsProvider()),
-        ChangeNotifierProvider(create: (_) => MagasinProvider()..init()),
+        ChangeNotifierProvider(create: (_) => MagasinProvider()),
         ChangeNotifierProvider(create: (_) => CongesProvider()),
         ChangeNotifierProvider(create: (_) => LeaveRequestsProvider()),
         ChangeNotifierProvider(create: (_) => OvertimeProvider()),

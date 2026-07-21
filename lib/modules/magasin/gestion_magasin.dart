@@ -57,20 +57,6 @@ class VarianteProduit {
   );
 }
 
-// ── Modèle Modulaire (Base de vie) ───────────────────────────────────────────
-class Modulaire {
-  final String id;
-  final String nom;
-  const Modulaire({required this.id, required this.nom});
-
-  Map<String, dynamic> toFirestore() => {'nom': nom};
-
-  factory Modulaire.fromFirestore(DocumentSnapshot doc) {
-    final d = doc.data() as Map<String, dynamic>;
-    return Modulaire(id: doc.id, nom: d['nom'] as String? ?? '');
-  }
-}
-
 // ── NOUVEAU : Modèle Fournisseur ──────────────────────────────────────────────
 class Fournisseur {
   final String id;
@@ -129,8 +115,6 @@ class Produit {
   final List<VarianteProduit> variantes;
   final String siteId;
   final String? fournisseurId; // NOUVEAU
-  final String? modulaireId;   // MODULAIRE (Base de vie)
-  final String? modulaireNom;  // dénormalisé
 
   const Produit({
     required this.id,
@@ -144,8 +128,6 @@ class Produit {
     required this.variantes,
     this.siteId = 'jadida',
     this.fournisseurId,
-    this.modulaireId,
-    this.modulaireNom,
   });
 
   int get total =>
@@ -172,8 +154,6 @@ class Produit {
     'variantes': variantes.map((v) => v.toMap()).toList(),
     'siteId': siteId,
     'fournisseurId': fournisseurId,
-    'modulaireId': modulaireId,
-    'modulaireNom': modulaireNom,
     'updatedAt': FieldValue.serverTimestamp(),
   };
 
@@ -195,8 +175,6 @@ class Produit {
           [],
       siteId: _normSite(d['siteId'] as String?),
       fournisseurId: d['fournisseurId'] as String?,
-      modulaireId: d['modulaireId'] as String?,
-      modulaireNom: d['modulaireNom'] as String?,
     );
   }
 
@@ -212,8 +190,6 @@ class Produit {
     List<VarianteProduit>? variantes,
     String? siteId,
     String? fournisseurId,
-    String? modulaireId,
-    String? modulaireNom,
   }) => Produit(
     id: id ?? this.id,
     nom: nom ?? this.nom,
@@ -226,8 +202,6 @@ class Produit {
     variantes: variantes ?? this.variantes,
     siteId: siteId ?? this.siteId,
     fournisseurId: fournisseurId ?? this.fournisseurId,
-    modulaireId: modulaireId ?? this.modulaireId,
-    modulaireNom: modulaireNom ?? this.modulaireNom,
   );
 }
 
@@ -239,11 +213,12 @@ class Mouvement {
   final List<LigneMouvement> lignes;
   final DateTime date;
   final String? preneurNom;
+  final String? preneurId;           // NOUVEAU : lien vers l'employé réel (sorties)
+  final String? preneurDepartement;  // NOUVEAU : dénormalisé depuis l'employé, pour filtrer les dossiers
+  final String? preneurSiteId;       // NOUVEAU : dénormalisé depuis l'employé, pour filtrer les dossiers
   final String siteId;
   final String? fournisseurId;   // NOUVEAU
   final String? fournisseurNom;  // NOUVEAU (dénormalisé pour affichage)
-  final String? modulaireId;     // MODULAIRE (Base de vie)
-  final String? modulaireNom;    // dénormalisé
   final double? prixUnitaire;    // P.U en MAD (optionnel, entrées uniquement)
 
   const Mouvement({
@@ -260,11 +235,12 @@ class Mouvement {
     required this.lignes,
     required this.date,
     this.preneurNom,
+    this.preneurId,
+    this.preneurDepartement,
+    this.preneurSiteId,
     this.siteId = 'jadida',
     this.fournisseurId,
     this.fournisseurNom,
-    this.modulaireId,
-    this.modulaireNom,
     this.prixUnitaire,
   });
 
@@ -284,11 +260,12 @@ class Mouvement {
     'lignes': lignes.map((l) => l.toMap()).toList(),
     'date': Timestamp.fromDate(date),
     'preneurNom': preneurNom,
+    'preneurId': preneurId,
+    'preneurDepartement': preneurDepartement,
+    'preneurSiteId': preneurSiteId,
     'siteId': siteId,
     'fournisseurId': fournisseurId,
     'fournisseurNom': fournisseurNom,
-    'modulaireId': modulaireId,
-    'modulaireNom': modulaireNom,
     'prixUnitaire': prixUnitaire,
   };
 
@@ -312,11 +289,12 @@ class Mouvement {
           [],
       date: (d['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
       preneurNom: d['preneurNom'] as String?,
+      preneurId: d['preneurId'] as String?,
+      preneurDepartement: d['preneurDepartement'] as String?,
+      preneurSiteId: d['preneurSiteId'] as String?,
       siteId: _normSite(d['siteId'] as String?),
       fournisseurId: d['fournisseurId'] as String?,
       fournisseurNom: d['fournisseurNom'] as String?,
-      modulaireId: d['modulaireId'] as String?,
-      modulaireNom: d['modulaireNom'] as String?,
       prixUnitaire: (d['prixUnitaire'] as num?)?.toDouble(),
     );
   }
@@ -337,14 +315,11 @@ class MagasinProvider extends ChangeNotifier {
       _db.collection('magasin').doc('stock').collection('categories');
   CollectionReference<Map<String, dynamic>> get _fournisseursRef =>
       _db.collection('magasin').doc('stock').collection('fournisseurs');
-  CollectionReference<Map<String, dynamic>> get _modulairesRef =>
-      _db.collection('magasin').doc('stock').collection('modulaires');
 
   List<Produit> _produits = [];
   List<Mouvement> _mouvements = [];
   List<String> _categories = [];
   List<Fournisseur> _fournisseurs = [];
-  List<Modulaire> _modulaires = [];
   bool _loading = true;
   String? _error;
   bool _firebaseAvailable = true;
@@ -356,7 +331,6 @@ class MagasinProvider extends ChangeNotifier {
       _mouvements.where((m) => m.type == 'sortie').toList();
   List<String> get categoryNames => _categories;
   List<Fournisseur> get fournisseurs => _fournisseurs;
-  List<Modulaire> get modulaires => _modulaires;
   bool get loading => _loading;
   String? get error => _error;
   bool get firebaseAvailable => _firebaseAvailable;
@@ -367,6 +341,7 @@ class MagasinProvider extends ChangeNotifier {
   Future<void> init() async {
     try {
       _loading = true;
+      _firebaseAvailable = true;
       notifyListeners();
       final cp = _produitsRef
           .orderBy('nom')
@@ -426,20 +401,7 @@ class MagasinProvider extends ChangeNotifier {
           notifyListeners();
         },
       );
-      final cm2 = _modulairesRef
-          .orderBy('nom')
-          .snapshots()
-          .listen(
-            (snap) {
-          _modulaires = snap.docs.map(Modulaire.fromFirestore).toList();
-          notifyListeners();
-        },
-        onError: (e) {
-          _error = e.toString();
-          notifyListeners();
-        },
-      );
-      _cancelListeners.addAll([cp.cancel, cm.cancel, cc.cancel, cf.cancel, cm2.cancel]);
+      _cancelListeners.addAll([cp.cancel, cm.cancel, cc.cancel, cf.cancel]);
     } catch (e) {
       _loading = false;
       _error = e.toString();
@@ -471,26 +433,6 @@ class MagasinProvider extends ChangeNotifier {
   Fournisseur? fournisseurById(String? id) {
     if (id == null) return null;
     final matches = _fournisseurs.where((f) => f.id == id);
-    return matches.isEmpty ? null : matches.first;
-  }
-
-  // ── Modulaires CRUD ───────────────────────────────────────────────────────
-  Future<String> addModulaire(String nom) async {
-    final existing = _modulaires.where(
-      (m) => m.nom.trim().toLowerCase() == nom.trim().toLowerCase(),
-    );
-    if (existing.isNotEmpty) return existing.first.id;
-    final data = {'nom': nom.trim(), 'createdAt': FieldValue.serverTimestamp()};
-    final ref = await _modulairesRef.add(data);
-    return ref.id;
-  }
-
-  Future<void> deleteModulaire(String id) async =>
-      _modulairesRef.doc(id).delete();
-
-  Modulaire? modulaireById(String? id) {
-    if (id == null) return null;
-    final matches = _modulaires.where((m) => m.id == id);
     return matches.isEmpty ? null : matches.first;
   }
 
@@ -665,11 +607,12 @@ extension _MouvX on Mouvement {
     lignes: lignes,
     date: date,
     preneurNom: preneurNom,
+    preneurId: preneurId,
+    preneurDepartement: preneurDepartement,
+    preneurSiteId: preneurSiteId,
     siteId: siteId,
     fournisseurId: fournisseurId,
     fournisseurNom: fournisseurNom,
-    modulaireId: modulaireId,
-    modulaireNom: modulaireNom,
   );
 }
 
@@ -699,8 +642,6 @@ const Color kPurple = Color(0xFF7C3AED);
 const Color kPurpleLt = Color(0xFFF5F3FF);
 const Color kTeal = Color(0xFF0D9488);      // NOUVEAU pour fournisseurs
 const Color kTealLt = Color(0xFFF0FDFA);    // NOUVEAU
-const Color kBrown = Color(0xFF92400E);     // Modulaire (Base de vie)
-const Color kBrownLt = Color(0xFFFFF7ED);   // Modulaire bg
 
 const _h2 = TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kText);
 const _muted = TextStyle(fontSize: 12, color: kMuted);
@@ -799,20 +740,20 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
       final stock = wb['Stock Actuel'];
       wb.setDefaultSheet('Stock Actuel');
       wb.delete('Sheet1');
-      writeHeader(stock, const ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'TAILLE', 'QUANTITÉ']);
+      writeHeader(stock, const ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'TAILLE', 'QUANTITÉ']);
 
       for (final p in produits) {
         if (!p.aVariantes) {
           stock.appendRow([
             TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
-            TextCellValue(p.magasin), TextCellValue(p.modulaireNom ?? '-'),
+            TextCellValue(p.magasin),
             TextCellValue('-'), IntCellValue(p.quantiteStock),
           ]);
         } else {
           for (final v in p.variantes) {
             stock.appendRow([
               TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
-              TextCellValue(p.magasin), TextCellValue(p.modulaireNom ?? '-'),
+              TextCellValue(p.magasin),
               TextCellValue(v.unite), IntCellValue(v.quantite),
             ]);
           }
@@ -821,7 +762,7 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
 
       // ── Feuille 2 : Entrées ────────────────────────────────────────────────
       final sheetEntrees = wb['Entrées'];
-      writeHeader(sheetEntrees, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'FOURNISSEUR', 'TAILLE', 'QUANTITÉ', 'PRIX UNITAIRE (MAD)']);
+      writeHeader(sheetEntrees, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'FOURNISSEUR', 'TAILLE', 'QUANTITÉ', 'PRIX UNITAIRE (MAD)']);
 
       for (final m in entrees) {
         final date = TextCellValue(fmt.format(m.date));
@@ -829,14 +770,14 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
         if (!m.aVariantes) {
           sheetEntrees.appendRow([
             date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-            TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+            TextCellValue(m.magasin),
             TextCellValue(m.fournisseurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite), prix,
           ]);
         } else {
           for (final l in m.lignes) {
             sheetEntrees.appendRow([
               date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-              TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+              TextCellValue(m.magasin),
               TextCellValue(m.fournisseurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite), prix,
             ]);
           }
@@ -845,21 +786,21 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
 
       // ── Feuille 3 : Sorties ────────────────────────────────────────────────
       final sheetSorties = wb['Sorties'];
-      writeHeader(sheetSorties, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'PRÉLEVÉ PAR', 'TAILLE', 'QUANTITÉ']);
+      writeHeader(sheetSorties, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'PRÉLEVÉ PAR', 'TAILLE', 'QUANTITÉ']);
 
       for (final m in sorties) {
         final date = TextCellValue(fmt.format(m.date));
         if (!m.aVariantes) {
           sheetSorties.appendRow([
             date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-            TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+            TextCellValue(m.magasin),
             TextCellValue(m.preneurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite),
           ]);
         } else {
           for (final l in m.lignes) {
             sheetSorties.appendRow([
               date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-              TextCellValue(m.magasin), TextCellValue(m.modulaireNom ?? '-'),
+              TextCellValue(m.magasin),
               TextCellValue(m.preneurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite),
             ]);
           }
@@ -1355,11 +1296,11 @@ Future<void> _exportAlertPdf(List<Produit> produits, String titre, {required boo
   final dataRows = <List<String>>[];
   for (final p in produits) {
     if (!p.aVariantes) {
-      dataRows.add([p.nom, p.reference, p.categorie, p.magasin, p.modulaireNom ?? '-', '-', '${p.quantiteStock}']);
+      dataRows.add([p.nom, p.reference, p.categorie, p.magasin, '-', '${p.quantiteStock}']);
     } else {
       final filtrees = p.variantes.where((v) => isRupture ? v.quantite == 0 : (v.quantite > 0 && v.quantite <= 2));
       for (final v in filtrees) {
-        dataRows.add([p.nom, p.reference, p.categorie, p.magasin, p.modulaireNom ?? '-', v.unite, '${v.quantite}']);
+        dataRows.add([p.nom, p.reference, p.categorie, p.magasin, v.unite, '${v.quantite}']);
       }
     }
   }
@@ -1372,15 +1313,14 @@ Future<void> _exportAlertPdf(List<Produit> produits, String titre, {required boo
   final dateStr     = DateFormat('dd/MM/yyyy').format(DateTime.now()); // affichage dans le PDF
   final dateFile    = DateFormat('yyyy-MM-dd').format(DateTime.now()); // nom de fichier (sans /)
 
-  const headers = ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'MODULAIRE', 'TAILLE', 'QTÉ'];
+  const headers = ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'TAILLE', 'QTÉ'];
   const colWidths = <int, pw.TableColumnWidth>{
     0: pw.FlexColumnWidth(3),
     1: pw.FlexColumnWidth(2),
     2: pw.FlexColumnWidth(2),
     3: pw.FlexColumnWidth(2),
-    4: pw.FlexColumnWidth(2),
-    5: pw.FlexColumnWidth(1.5),
-    6: pw.FlexColumnWidth(1),
+    4: pw.FlexColumnWidth(1.5),
+    5: pw.FlexColumnWidth(1),
   };
 
   // Chargement du logo depuis les assets Flutter
@@ -1510,15 +1450,15 @@ class _StockAlertDialogState extends State<_StockAlertDialog> {
   bool _exporting = false;
 
   // Explose les variantes en lignes plates — seules les tailles concernées
-  List<({String nom, String reference, String categorie, String magasin, String modulaire, String taille, int quantite})> get _rows {
-    final result = <({String nom, String reference, String categorie, String magasin, String modulaire, String taille, int quantite})>[];
+  List<({String nom, String reference, String categorie, String magasin, String taille, int quantite})> get _rows {
+    final result = <({String nom, String reference, String categorie, String magasin, String taille, int quantite})>[];
     for (final p in widget.produits) {
       if (!p.aVariantes) {
-        result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, modulaire: p.modulaireNom ?? '-', taille: '-', quantite: p.quantiteStock));
+        result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, taille: '-', quantite: p.quantiteStock));
       } else {
         final variantesFiltrees = p.variantes.where((v) => widget.isRupture ? v.quantite == 0 : (v.quantite > 0 && v.quantite <= 2));
         for (final v in variantesFiltrees) {
-          result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, modulaire: p.modulaireNom ?? '-', taille: v.unite, quantite: v.quantite));
+          result.add((nom: p.nom, reference: p.reference, categorie: p.categorie, magasin: p.magasin, taille: v.unite, quantite: v.quantite));
         }
       }
     }
@@ -1693,7 +1633,7 @@ class _StockPage extends StatefulWidget {
 }
 
 class _StockPageState extends State<_StockPage> {
-  String _q = '', _cat = 'Toutes', _mag = 'Tous', _modulaire = 'Tous';
+  String _q = '', _cat = 'Toutes', _mag = 'Tous';
   bool _asc = false;
   final _sc = TextEditingController();
 
@@ -1701,8 +1641,7 @@ class _StockPageState extends State<_StockPage> {
     final q = _q.toLowerCase();
     var l = widget.produits.where((p) {
       final mq = q.isEmpty || p.nom.toLowerCase().contains(q) || p.reference.toLowerCase().contains(q);
-      final modOk = _modulaire == 'Tous' || p.modulaireNom == _modulaire;
-      return mq && (_cat == 'Toutes' || p.categorie == _cat) && (_mag == 'Tous' || p.magasin == _mag) && modOk;
+      return mq && (_cat == 'Toutes' || p.categorie == _cat) && (_mag == 'Tous' || p.magasin == _mag);
     }).toList();
     l.sort((a, b) {
       final c = a.total.compareTo(b.total);
@@ -1718,8 +1657,6 @@ class _StockPageState extends State<_StockPage> {
     final padding = mobile ? pagePadding(context) : kP;
     final cats = ['Toutes', ...widget.magasin.categoryNames];
     final mags = ['Tous', ...kMagasins];
-    final showModulaire = _mag == 'Base de vie';
-    final modItems = ['Tous', ...widget.magasin.modulaires.map((m) => m.nom)];
 
     return Column(
       children: [
@@ -1733,11 +1670,7 @@ class _StockPageState extends State<_StockPage> {
               const SizedBox(height: 8),
               _LabeledDrop(label: 'Catégorie', value: _cat, items: cats, onChanged: (v) => setState(() => _cat = v)),
               const SizedBox(height: 8),
-              _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; })),
-              if (showModulaire) ...[
-                const SizedBox(height: 8),
-                _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v)),
-              ],
+              _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v)),
               const SizedBox(height: 8),
               Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -1755,11 +1688,7 @@ class _StockPageState extends State<_StockPage> {
               const SizedBox(width: 12),
               Expanded(flex: 2, child: _LabeledDrop(label: 'Catégorie', value: _cat, items: cats, onChanged: (v) => setState(() => _cat = v))),
               const SizedBox(width: 12),
-              Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; }))),
-              if (showModulaire) ...[
-                const SizedBox(width: 12),
-                Expanded(flex: 2, child: _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v))),
-              ],
+              Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v))),
               const SizedBox(width: 12),
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 const Text('Stock', style: _label),
@@ -1802,7 +1731,6 @@ class _StockPageState extends State<_StockPage> {
                 _Col('RÉFÉRENCE', flex: 2),
                 _Col('CATÉGORIE', flex: 2),
                 _Col('MAGASIN', flex: 2),
-                _Col('MODULAIRE', flex: 2),
                 _Col('STOCK', flex: 1),
                 _Col('', flex: 1),
               ],
@@ -1827,9 +1755,6 @@ class _StockPageState extends State<_StockPage> {
                   _PillBadge(p.categorie, kBlueLt, kBlue),
                   p.magasin.isNotEmpty
                       ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
-                      : Text('—', style: _muted.copyWith(fontSize: 11)),
-                  p.modulaireNom != null
-                      ? _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown)
                       : Text('—', style: _muted.copyWith(fontSize: 11)),
                   Center(child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1870,7 +1795,6 @@ class _StockPageState extends State<_StockPage> {
                       _Col('RÉFÉRENCE', flex: 2),
                       _Col('CATÉGORIE', flex: 2),
                       _Col('MAGASIN', flex: 2),
-                      _Col('MODULAIRE', flex: 2),
                       _Col('STOCK', flex: 1),
                       _Col('', flex: 1),
                     ],
@@ -1895,9 +1819,6 @@ class _StockPageState extends State<_StockPage> {
                         _PillBadge(p.categorie, kBlueLt, kBlue),
                         p.magasin.isNotEmpty
                             ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
-                            : Text('—', style: _muted.copyWith(fontSize: 11)),
-                        p.modulaireNom != null
-                            ? _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown)
                             : Text('—', style: _muted.copyWith(fontSize: 11)),
                         Center(child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1978,7 +1899,6 @@ class _ProduitCard extends StatelessWidget {
                 children: [
                   _PillBadge(p.categorie, kBlueLt, kBlue),
                   if (p.magasin.isNotEmpty) _PillBadge(p.magasin, kIndigoLt, kIndigo),
-                  if (p.modulaireNom != null) _PillBadge('📦 ${p.modulaireNom!}', kBrownLt, kBrown),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -2023,7 +1943,7 @@ class _EntreesPage extends StatefulWidget {
 }
 
 class _EntreesPageState extends State<_EntreesPage> {
-  String _cat = 'Toutes', _mag = 'Tous', _modulaire = 'Tous';
+  String _cat = 'Toutes', _mag = 'Tous';
   String _search = '';
   final TextEditingController _searchCtrl = TextEditingController();
 
@@ -2036,9 +1956,8 @@ class _EntreesPageState extends State<_EntreesPage> {
   List<Mouvement> get _list => widget.entrees.where((m) {
     final catOk = _cat == 'Toutes' || m.categorie == _cat;
     final magOk = _mag == 'Tous' || m.magasin == _mag;
-    final modOk = _modulaire == 'Tous' || m.modulaireNom == _modulaire;
     final searchOk = _search.isEmpty || m.nomProduit.toLowerCase().contains(_search.toLowerCase());
-    return catOk && magOk && modOk && searchOk;
+    return catOk && magOk && searchOk;
   }).toList();
 
   @override
@@ -2047,8 +1966,6 @@ class _EntreesPageState extends State<_EntreesPage> {
     final total = list.fold(0, (s, m) => s + m.totalQte);
     final cats = ['Toutes', ...widget.magasin.categoryNames];
     final mags = ['Tous', ...kMagasins];
-    final showModulaire = _mag == 'Base de vie';
-    final modItems = ['Tous', ...widget.magasin.modulaires.map((m) => m.nom)];
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
 
@@ -2065,24 +1982,16 @@ class _EntreesPageState extends State<_EntreesPage> {
           btnColor: kGreen, btnLabel: 'Nouvelle entrée',
           onBtnTap: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context)),
         ),
-        // ── Filtres Magasin + Modulaire ────────────────────────────────
+        // ── Filtre Magasin ──────────────────────────────────────────────
         Padding(
           padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
           child: mobile
               ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; })),
-            if (showModulaire) ...[
-              const SizedBox(height: 8),
-              _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v)),
-            ],
+            _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v)),
           ])
               : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; }))),
-            if (showModulaire) ...[
-              const SizedBox(width: 12),
-              Expanded(flex: 2, child: _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v))),
-            ],
-            if (!showModulaire) const Spacer(),
+            Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v))),
+            const Spacer(),
           ]),
         ),
         Padding(
@@ -2116,7 +2025,6 @@ class _EntreesPageState extends State<_EntreesPage> {
             itemBuilder: (ctx, i) => _MouvCard(
               m: list[i], color: kGreen, bgColor: kGreenLt,
               fournisseurNom: list[i].fournisseurNom,
-              modulaireNom: list[i].modulaireNom,
               onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kGreen, bgColor: kGreenLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
@@ -2126,8 +2034,8 @@ class _EntreesPageState extends State<_EntreesPage> {
             padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
             child: _DataTable(
               empty: false, accentColor: kGreen,
-              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 2)],
-              rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true, showModulaire: true,
+              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 2)],
+              rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true,
                 onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kGreen, bgColor: kGreenLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
@@ -2148,7 +2056,6 @@ class _EntreesPageState extends State<_EntreesPage> {
                   itemBuilder: (ctx, i) => _MouvCard(
                     m: list[i], color: kGreen, bgColor: kGreenLt,
                     fournisseurNom: list[i].fournisseurNom,
-                    modulaireNom: list[i].modulaireNom,
                     onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                     onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
                   ),
@@ -2157,8 +2064,8 @@ class _EntreesPageState extends State<_EntreesPage> {
                   padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
                   child: _DataTable(
                     empty: false, accentColor: kGreen,
-                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 1)],
-                    rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true, showModulaire: true,
+                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 1)],
+                    rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true,
                       onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                       onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
                     )).toList(),
@@ -2183,9 +2090,10 @@ class _SortiesPage extends StatefulWidget {
 }
 
 class _SortiesPageState extends State<_SortiesPage> {
-  String _cat = 'Toutes', _mag = 'Tous', _modulaire = 'Tous';
+  String _cat = 'Toutes', _mag = 'Tous';
   String _search = '';
   final TextEditingController _searchCtrl = TextEditingController();
+  bool _dossiersView = false;
 
   String _msgRestitution(Mouvement m) {
     if (!m.aVariantes || m.lignes.isEmpty) {
@@ -2204,9 +2112,8 @@ class _SortiesPageState extends State<_SortiesPage> {
   List<Mouvement> get _list => widget.sorties.where((m) {
     final catOk = _cat == 'Toutes' || m.categorie == _cat;
     final magOk = _mag == 'Tous' || m.magasin == _mag;
-    final modOk = _modulaire == 'Tous' || m.modulaireNom == _modulaire;
     final searchOk = _search.isEmpty || m.nomProduit.toLowerCase().contains(_search.toLowerCase());
-    return catOk && magOk && modOk && searchOk;
+    return catOk && magOk && searchOk;
   }).toList();
 
   @override
@@ -2215,8 +2122,6 @@ class _SortiesPageState extends State<_SortiesPage> {
     final total = list.fold(0, (s, m) => s + m.totalQte);
     final cats = ['Toutes', ...widget.magasin.categoryNames];
     final mags = ['Tous', ...kMagasins];
-    final showModulaire = _mag == 'Base de vie';
-    final modItems = ['Tous', ...widget.magasin.modulaires.map((m) => m.nom)];
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
 
@@ -2233,24 +2138,26 @@ class _SortiesPageState extends State<_SortiesPage> {
           btnColor: kOrange, btnLabel: 'Nouvelle sortie',
           onBtnTap: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context)),
         ),
-        // ── Filtres Magasin + Modulaire ────────────────────────────────
+        // ── Bascule Liste / Dossiers collaborateurs ────────────────────
+        Padding(
+          padding: EdgeInsets.fromLTRB(padding, 10, padding, 0),
+          child: Row(children: [
+            _ToggleBtn('Liste', !_dossiersView, kOrange, () => setState(() => _dossiersView = false)),
+            const SizedBox(width: 8),
+            _ToggleBtn('Dossiers collaborateurs', _dossiersView, kOrange, () => setState(() => _dossiersView = true)),
+          ]),
+        ),
+        if (!_dossiersView) ...[
+        // ── Filtre Magasin ──────────────────────────────────────────────
         Padding(
           padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
           child: mobile
               ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; })),
-            if (showModulaire) ...[
-              const SizedBox(height: 8),
-              _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v)),
-            ],
+            _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v)),
           ])
               : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() { _mag = v; if (v != 'Base de vie') _modulaire = 'Tous'; }))),
-            if (showModulaire) ...[
-              const SizedBox(width: 12),
-              Expanded(flex: 2, child: _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaire) ? _modulaire : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaire = v))),
-            ],
-            if (!showModulaire) const Spacer(),
+            Expanded(flex: 2, child: _LabeledDrop(label: 'Magasin', value: _mag, items: mags, onChanged: (v) => setState(() => _mag = v))),
+            const Spacer(),
           ]),
         ),
         Padding(
@@ -2271,18 +2178,6 @@ class _SortiesPageState extends State<_SortiesPage> {
             ),
           ),
         ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(padding, 6, padding, 0),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              icon: const Icon(Icons.person_search_rounded, size: 16),
-              label: const Text('Récap par personne', style: TextStyle(fontSize: 12)),
-              style: TextButton.styleFrom(foregroundColor: kOrange, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
-              onPressed: () => showDialog(context: context, builder: (_) => _RecapPreneurDialog(sorties: widget.sorties)),
-            ),
-          ),
-        ),
         const SizedBox(height: 10),
         if (widget.internalScroll)
           Expanded(
@@ -2295,7 +2190,6 @@ class _SortiesPageState extends State<_SortiesPage> {
             separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (ctx, i) => _MouvCard(
               m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
-              modulaireNom: list[i].modulaireNom,
               onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kOrange, bgColor: kOrangeLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
               onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
@@ -2305,8 +2199,8 @@ class _SortiesPageState extends State<_SortiesPage> {
             padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
             child: _DataTable(
               empty: false, accentColor: kOrange,
-              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 2)],
-              rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
+              columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 2)],
+              rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false,
                 onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kOrange, bgColor: kOrangeLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
@@ -2326,7 +2220,6 @@ class _SortiesPageState extends State<_SortiesPage> {
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (ctx, i) => _MouvCard(
                     m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
-                    modulaireNom: list[i].modulaireNom,
                     onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                     onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
                   ),
@@ -2335,190 +2228,313 @@ class _SortiesPageState extends State<_SortiesPage> {
                   padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
                   child: _DataTable(
                     empty: false, accentColor: kOrange,
-                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('MODULAIRE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
-                    rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false, showModulaire: true,
+                    columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
+                    rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false,
                       onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
                       onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
                     )).toList(),
                   ),
                 )),
+        ] else ...[
+          const SizedBox(height: 10),
+          if (widget.internalScroll)
+            Expanded(child: _SortiesDossiersView(sorties: widget.sorties, padding: padding))
+          else
+            _SortiesDossiersView(sorties: widget.sorties, padding: padding, internalScroll: false),
+        ],
       ],
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  RÉCAP PAR PERSONNE
+//  DOSSIERS PAR COLLABORATEUR (filtres avancés site / département)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _RecapPreneurDialog extends StatefulWidget {
+class _DossierPreneur {
+  final String key;
+  final String nom;
+  final String? departement;
+  final String? siteId;
   final List<Mouvement> sorties;
-  const _RecapPreneurDialog({required this.sorties});
-  @override
-  State<_RecapPreneurDialog> createState() => _RecapPreneurDialogState();
+  _DossierPreneur({required this.key, required this.nom, required this.departement, required this.siteId, required this.sorties});
+  int get totalQte => sorties.fold(0, (s, m) => s + m.totalQte);
 }
 
-class _RecapPreneurDialogState extends State<_RecapPreneurDialog> {
+class _SortiesDossiersView extends StatefulWidget {
+  final List<Mouvement> sorties;
+  final double padding;
+  final bool internalScroll;
+  const _SortiesDossiersView({required this.sorties, required this.padding, this.internalScroll = true});
+  @override
+  State<_SortiesDossiersView> createState() => _SortiesDossiersViewState();
+}
+
+class _SortiesDossiersViewState extends State<_SortiesDossiersView> {
+  static const String _sansDept = 'Sans département';
+  String _site = SiteId.all;
+  String _dept = 'Tous';
   String _search = '';
-  String? _selected;
-  final TextEditingController _ctrl = TextEditingController();
-
-  List<String> get _allNoms {
-    final noms = widget.sorties
-        .where((m) => m.preneurNom != null && m.preneurNom!.isNotEmpty)
-        .map((m) => m.preneurNom!)
-        .toSet()
-        .toList()
-      ..sort();
-    return noms;
-  }
-
-  List<String> get _filteredNoms {
-    if (_search.isEmpty) return _allNoms;
-    return _allNoms.where((n) => n.toLowerCase().contains(_search.toLowerCase())).toList();
-  }
-
-  List<Mouvement> get _selectedSorties => widget.sorties
-      .where((m) => m.preneurNom == _selected)
-      .toList()
-    ..sort((a, b) => b.date.compareTo(a.date));
+  String? _selectedKey;
+  final TextEditingController _searchCtrl = TextEditingController();
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  String _siteFromLabel(String label) {
+    if (label == SiteId.labelFr(SiteId.jadida)) return SiteId.jadida;
+    if (label == SiteId.labelFr(SiteId.safi)) return SiteId.safi;
+    return SiteId.all;
+  }
+
+  String _siteLabel(String siteId) => siteId == SiteId.all ? 'Tous' : SiteId.labelFr(siteId);
+
+  List<_DossierPreneur> get _allDossiers {
+    final map = <String, _DossierPreneur>{};
+    for (final m in widget.sorties) {
+      final nom = m.preneurNom?.trim() ?? '';
+      if (nom.isEmpty) continue;
+      final key = (m.preneurId != null && m.preneurId!.isNotEmpty) ? 'id:${m.preneurId}' : 'nom:${nom.toLowerCase()}';
+      final existing = map[key];
+      if (existing == null) {
+        map[key] = _DossierPreneur(
+          key: key,
+          nom: nom,
+          departement: (m.preneurDepartement?.trim().isNotEmpty ?? false) ? m.preneurDepartement!.trim() : null,
+          siteId: m.preneurSiteId,
+          sorties: [m],
+        );
+      } else {
+        existing.sorties.add(m);
+      }
+    }
+    final list = map.values.toList()..sort((a, b) => a.nom.compareTo(b.nom));
+    return list;
+  }
+
+  List<String> get _availableDepts {
+    final base = _allDossiers.where((d) => _site == SiteId.all || d.siteId == _site);
+    final set = base.map((d) => d.departement ?? _sansDept).toSet().toList()..sort();
+    return set;
+  }
+
+  List<_DossierPreneur> get _filteredDossiers => _allDossiers.where((d) {
+    final siteOk = _site == SiteId.all || d.siteId == _site;
+    final dept = d.departement ?? _sansDept;
+    final deptOk = _dept == 'Tous' || dept == _dept;
+    final nameOk = _search.isEmpty || d.nom.toLowerCase().contains(_search.toLowerCase());
+    return siteOk && deptOk && nameOk;
+  }).toList();
+
+  _DossierPreneur? get _selected {
+    if (_selectedKey == null) return null;
+    final matches = _allDossiers.where((d) => d.key == _selectedKey);
+    return matches.isEmpty ? null : matches.first;
   }
 
   @override
   Widget build(BuildContext context) {
-    final fmt = DateFormat('dd/MM/yyyy');
-    final selectedSorties = _selectedSorties;
-    final totalQte = selectedSorties.fold(0, (s, m) => s + m.totalQte);
+    final selected = _selected;
+    return selected != null ? _buildDetail(context, selected) : _buildList(context);
+  }
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(colors: [Color(0xFF92400E), Color(0xFFD97706)]),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+  Widget _buildList(BuildContext context) {
+    final dossiers = _filteredDossiers;
+    final deptItems = ['Tous', ..._availableDepts];
+    final mobile = isMobile(context);
+    final siteItems = ['Tous', SiteId.labelFr(SiteId.jadida), SiteId.labelFr(SiteId.safi)];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, 0),
+          child: mobile
+              ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _LabeledDrop(label: 'Site', value: _siteLabel(_site), items: siteItems, onChanged: (v) => setState(() { _site = _siteFromLabel(v); _dept = 'Tous'; })),
+                  const SizedBox(height: 8),
+                  _LabeledDrop(label: 'Département', value: deptItems.contains(_dept) ? _dept : 'Tous', items: deptItems, onChanged: (v) => setState(() => _dept = v)),
+                ])
+              : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Expanded(child: _LabeledDrop(label: 'Site', value: _siteLabel(_site), items: siteItems, onChanged: (v) => setState(() { _site = _siteFromLabel(v); _dept = 'Tous'; }))),
+                  const SizedBox(width: 12),
+                  Expanded(child: _LabeledDrop(label: 'Département', value: deptItems.contains(_dept) ? _dept : 'Tous', items: deptItems, onChanged: (v) => setState(() => _dept = v))),
+                ]),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, 0),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _search = v),
+            decoration: InputDecoration(
+              hintText: 'Rechercher un collaborateur…',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              suffixIcon: _search.isNotEmpty
+                  ? IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { _searchCtrl.clear(); setState(() => _search = ''); })
+                  : null,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kOrange, width: 1.5)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (dossiers.isEmpty)
+          _EmptyState(message: 'Aucun dossier ne correspond aux filtres', color: kOrange)
+        else if (widget.internalScroll)
+          Expanded(
+            child: ListView.separated(
+              padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, widget.padding),
+              itemCount: dossiers.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (ctx, i) {
+                final d = dossiers[i];
+                return _DossierCard(dossier: d, onTap: () => setState(() => _selectedKey = d.key));
+              },
+            ),
+          )
+        else
+          ListView.separated(
+            padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, widget.padding),
+            itemCount: dossiers.length,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (ctx, i) {
+              final d = dossiers[i];
+              return _DossierCard(dossier: d, onTap: () => setState(() => _selectedKey = d.key));
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDetail(BuildContext context, _DossierPreneur d) {
+    final fmt = DateFormat('dd/MM/yyyy');
+    final sorted = [...d.sorties]..sort((a, b) => b.date.compareTo(a.date));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, 0),
+          child: Row(
+            children: [
+              IconButton(icon: const Icon(Icons.arrow_back_rounded, size: 20), onPressed: () => setState(() => _selectedKey = null), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+              const SizedBox(width: 8),
+              Expanded(child: Text(d.nom, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(20)),
+                child: Text(
+                  '${d.totalQte} unité${d.totalQte != 1 ? "s" : ""} · ${d.sorties.length} sortie${d.sorties.length != 1 ? "s" : ""}',
+                  style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600, fontSize: 11),
+                ),
               ),
-              child: Row(
+            ],
+          ),
+        ),
+        if (d.departement != null || d.siteId != null)
+          Padding(
+            padding: EdgeInsets.fromLTRB(widget.padding, 8, widget.padding, 0),
+            child: Wrap(spacing: 6, children: [
+              if (d.departement != null) _PillBadge(d.departement!, kBlueLt, kBlue),
+              if (d.siteId != null) _PillBadge(SiteId.labelFr(d.siteId!), kTealLt, kTeal),
+            ]),
+          ),
+        const SizedBox(height: 8),
+        Builder(builder: (_) {
+          Widget listTile(int i) {
+            final m = sorted[i];
+            return ListTile(
+              dense: true,
+              leading: Text(fmt.format(m.date), style: const TextStyle(fontSize: 11, color: kMuted, fontWeight: FontWeight.w500)),
+              title: Text(m.nomProduit, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              subtitle: Text(m.categorie, style: const TextStyle(fontSize: 11, color: kMuted)),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(12)),
+                child: Text('${m.totalQte} unité${m.totalQte != 1 ? "s" : ""}', style: const TextStyle(color: kOrange, fontWeight: FontWeight.bold, fontSize: 11)),
+              ),
+            );
+          }
+
+          if (widget.internalScroll) {
+            return Expanded(
+              child: ListView.separated(
+                padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, widget.padding),
+                itemCount: sorted.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (ctx, i) => listTile(i),
+              ),
+            );
+          }
+          return ListView.separated(
+            padding: EdgeInsets.fromLTRB(widget.padding, 0, widget.padding, widget.padding),
+            itemCount: sorted.length,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (ctx, i) => listTile(i),
+          );
+        }),
+      ],
+    );
+  }
+}
+
+class _DossierCard extends StatelessWidget {
+  final _DossierPreneur dossier;
+  final VoidCallback onTap;
+  const _DossierCard({required this.dossier, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: kSurface,
+    borderRadius: BorderRadius.circular(kR2),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(kR2),
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(kR2),
+          border: Border.all(color: kOrange.withValues(alpha: 0.2)),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const CircleAvatar(backgroundColor: kOrangeLt, child: Icon(Icons.folder_shared_rounded, color: kOrange, size: 18)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.person_search_rounded, color: Colors.white, size: 22),
-                  const SizedBox(width: 10),
-                  const Expanded(child: Text('Récap par personne', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
-                  IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 20), onPressed: () => Navigator.of(context).pop(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                  Text(dossier.nom, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13), overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  Wrap(spacing: 6, runSpacing: 4, children: [
+                    _PillBadge(dossier.departement ?? 'Sans département', kBlueLt, kBlue),
+                    if (dossier.siteId != null) _PillBadge(SiteId.labelFr(dossier.siteId!), kTealLt, kTeal),
+                  ]),
                 ],
               ),
             ),
-            Flexible(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: _ctrl,
-                      onChanged: (v) => setState(() { _search = v; _selected = null; }),
-                      decoration: InputDecoration(
-                        hintText: 'Rechercher un préleveur…',
-                        prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                        suffixIcon: _search.isNotEmpty
-                            ? IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { _ctrl.clear(); setState(() { _search = ''; _selected = null; }); })
-                            : null,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kOrange, width: 1.5)),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (_selected == null) ...[
-                      if (_filteredNoms.isEmpty)
-                        const Padding(padding: EdgeInsets.all(24), child: Text('Aucun préleveur trouvé', style: TextStyle(color: kMuted)))
-                      else
-                        Flexible(
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: _filteredNoms.length,
-                            separatorBuilder: (_, _) => const Divider(height: 1),
-                            itemBuilder: (ctx, i) {
-                              final nom = _filteredNoms[i];
-                              final count = widget.sorties.where((m) => m.preneurNom == nom).length;
-                              return ListTile(
-                                dense: true,
-                                leading: const CircleAvatar(backgroundColor: kOrangeLt, child: Icon(Icons.person_outline_rounded, color: kOrange, size: 18)),
-                                title: Text(nom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                trailing: Chip(
-                                  label: Text('$count sortie${count != 1 ? "s" : ""}', style: const TextStyle(fontSize: 11)),
-                                  backgroundColor: kOrangeLt,
-                                  visualDensity: VisualDensity.compact,
-                                  padding: EdgeInsets.zero,
-                                ),
-                                onTap: () => setState(() => _selected = nom),
-                              );
-                            },
-                          ),
-                        ),
-                    ] else ...[
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_rounded, size: 20),
-                            onPressed: () => setState(() => _selected = null),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(_selected!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(20)),
-                            child: Text(
-                              '$totalQte unité${totalQte != 1 ? "s" : ""} · ${selectedSorties.length} sortie${selectedSorties.length != 1 ? "s" : ""}',
-                              style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600, fontSize: 11),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Flexible(
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: selectedSorties.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
-                          itemBuilder: (ctx, i) {
-                            final m = selectedSorties[i];
-                            return ListTile(
-                              dense: true,
-                              leading: Text(fmt.format(m.date), style: const TextStyle(fontSize: 11, color: kMuted, fontWeight: FontWeight.w500)),
-                              title: Text(m.nomProduit, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                              subtitle: Text(m.categorie, style: const TextStyle(fontSize: 11, color: kMuted)),
-                              trailing: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(12)),
-                                child: Text('${m.totalQte} unité${m.totalQte != 1 ? "s" : ""}', style: const TextStyle(color: kOrange, fontWeight: FontWeight.bold, fontSize: 11)),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: kOrangeLt, borderRadius: BorderRadius.circular(20)),
+              child: Text('${dossier.sorties.length} sortie${dossier.sorties.length != 1 ? "s" : ""}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: kOrange)),
             ),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right_rounded, color: kMuted),
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2530,11 +2546,10 @@ class _MouvCard extends StatelessWidget {
   final Color color, bgColor;
   final bool showPreneur;
   final String? fournisseurNom;
-  final String? modulaireNom;
   final VoidCallback onDelete;
   final VoidCallback? onEdit;
   final VoidCallback? onDetails;
-  const _MouvCard({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.fournisseurNom, this.modulaireNom, required this.onDelete, this.onEdit, this.onDetails});
+  const _MouvCard({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.fournisseurNom, required this.onDelete, this.onEdit, this.onDetails});
 
   String get _d => '${m.date.day.toString().padLeft(2, '0')}/${m.date.month.toString().padLeft(2, '0')}/${m.date.year}';
   String get _t => '${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}';
@@ -2564,7 +2579,6 @@ class _MouvCard extends StatelessWidget {
           Text(m.reference, style: _mono.copyWith(fontSize: 11)),
           _PillBadge(m.categorie, kBlueLt, kBlue),
           if (fournisseurNom != null) _PillBadge(fournisseurNom!, kTealLt, kTeal),
-          if (modulaireNom != null) _PillBadge('📦 $modulaireNom', kBrownLt, kBrown),
         ]),
         const SizedBox(height: 8),
         Row(children: [
@@ -2651,7 +2665,6 @@ class _MouvDetailDialog extends StatelessWidget {
                       _InfoChip(Icons.qr_code_rounded, m.reference),
                       _PillBadge(m.categorie, kBlueLt, kBlue),
                       _PillBadge(m.magasin, kBlueMd, kBlueDk),
-                      if (m.modulaireNom != null) _PillBadge(m.modulaireNom!, kBrownLt, kBrown),
                       if (isEntree && m.fournisseurNom != null) _PillBadge(m.fournisseurNom!, kTealLt, kTeal),
                       if (!isEntree && m.preneurNom != null) _InfoChip(Icons.person_outline_rounded, m.preneurNom!),
                     ]),
@@ -2854,7 +2867,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
     return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
   }
   String _fournisseurFiltre = 'Tous';
-  String _modulaireFiltre = 'Tous';
   DateTime? _dateDebut, _dateFin;
 
   List<Mouvement> get _list {
@@ -2866,16 +2878,15 @@ class _HistoriquePageState extends State<_HistoriquePage> {
       final finOk = _dateFin == null || !m.date.isAfter(DateTime(_dateFin!.year, _dateFin!.month, _dateFin!.day, 23, 59, 59));
       final magOk = _magasinFiltre == 'Tous' || m.magasin == _magasinFiltre;
       final fouOk = _fournisseurFiltre == 'Tous' || m.fournisseurNom == _fournisseurFiltre;
-      final modOk = _modulaireFiltre == 'Tous' || m.modulaireNom == _modulaireFiltre;
-      return typeOk && debutOk && finOk && magOk && fouOk && modOk;
+      return typeOk && debutOk && finOk && magOk && fouOk;
     }).toList();
   }
 
-  bool get _hasActiveFilter => _typeFiltre != 'Tout' || _magasinFiltre != 'Tous' || _fournisseurFiltre != 'Tous' || _modulaireFiltre != 'Tous' || _dateDebut != null || _dateFin != null;
+  bool get _hasActiveFilter => _typeFiltre != 'Tout' || _magasinFiltre != 'Tous' || _fournisseurFiltre != 'Tous' || _dateDebut != null || _dateFin != null;
 
   void _resetFilters() => setState(() {
     _typeFiltre = 'Tout'; _magasinFiltre = 'Tous'; _fournisseurFiltre = 'Tous';
-    _modulaireFiltre = 'Tous'; _dateDebut = null; _dateFin = null;
+    _dateDebut = null; _dateFin = null;
   });
 
   Future<void> _pickDate(BuildContext context, bool isDebut) async {
@@ -2899,8 +2910,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
     final fournisseurs = widget.magasin.fournisseurs;
     final fouNoms = ['Tous', ...fournisseurs.map((f) => f.nom)];
     final mags = ['Tous', ...kMagasins];
-    final showModulaire = _magasinFiltre == 'Base de vie';
-    final modItems = ['Tous', ...widget.magasin.modulaires.map((m) => m.nom)];
 
     return Column(
       children: [
@@ -2954,11 +2963,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
               ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _LabeledDrop(label: 'Type', value: _typeFiltre, items: const ['Tout', 'Entrées', 'Sorties'], onChanged: (v) => setState(() => _typeFiltre = v)),
             const SizedBox(height: 8),
-            _LabeledDrop(label: 'Magasin', value: _magasinFiltre, items: mags, onChanged: (v) => setState(() { _magasinFiltre = v; if (v != 'Base de vie') _modulaireFiltre = 'Tous'; })),
-            if (showModulaire) ...[
-              const SizedBox(height: 8),
-              _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaireFiltre) ? _modulaireFiltre : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaireFiltre = v)),
-            ],
+            _LabeledDrop(label: 'Magasin', value: _magasinFiltre, items: mags, onChanged: (v) => setState(() => _magasinFiltre = v)),
             if (fournisseurs.isNotEmpty) ...[
               const SizedBox(height: 8),
               _LabeledDrop(label: 'Fournisseur', value: _fournisseurFiltre, items: fouNoms, onChanged: (v) => setState(() => _fournisseurFiltre = v)),
@@ -2991,11 +2996,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
               : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Expanded(child: _LabeledDrop(label: 'Type', value: _typeFiltre, items: const ['Tout', 'Entrées', 'Sorties'], onChanged: (v) => setState(() => _typeFiltre = v))),
             const SizedBox(width: 8),
-            Expanded(child: _LabeledDrop(label: 'Magasin', value: _magasinFiltre, items: mags, onChanged: (v) => setState(() { _magasinFiltre = v; if (v != 'Base de vie') _modulaireFiltre = 'Tous'; }))),
-            if (showModulaire) ...[
-              const SizedBox(width: 8),
-              Expanded(child: _LabeledDrop(label: 'Modulaire', value: modItems.contains(_modulaireFiltre) ? _modulaireFiltre : 'Tous', items: modItems, onChanged: (v) => setState(() => _modulaireFiltre = v))),
-            ],
+            Expanded(child: _LabeledDrop(label: 'Magasin', value: _magasinFiltre, items: mags, onChanged: (v) => setState(() => _magasinFiltre = v))),
             if (fournisseurs.isNotEmpty) ...[
               const SizedBox(width: 8),
               Expanded(child: _LabeledDrop(label: 'Fournisseur', value: _fournisseurFiltre, items: fouNoms, onChanged: (v) => setState(() => _fournisseurFiltre = v))),
@@ -3041,7 +3042,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                 m: m, color: isE ? kGreen : kOrange, bgColor: isE ? kGreenLt : kOrangeLt,
                 showPreneur: false,
                 fournisseurNom: isE ? m.fournisseurNom : null,
-                modulaireNom: m.modulaireNom,
                 onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                 onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
               );
@@ -3054,7 +3054,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
               columns: const [
                 _Col('TYPE', flex: 1), _Col('DATE', flex: 2), _Col('PRODUIT', flex: 3),
                 _Col('CATÉGORIE', flex: 2), _Col('MAGASIN', flex: 2),
-                _Col('QTÉ', flex: 1), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('', flex: 1),
+                _Col('QTÉ', flex: 1), _Col('FOURNISSEUR', flex: 2), _Col('', flex: 1),
               ],
               rows: list.map((m) {
                 final isE = m.type == 'entree';
@@ -3091,9 +3091,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                   isE && m.fournisseurNom != null
                       ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal)
                       : Text('—', style: _muted.copyWith(fontSize: 11)),
-                  m.modulaireNom != null
-                      ? _PillBadge('📦 ${m.modulaireNom!}', kBrownLt, kBrown)
-                      : Text('—', style: _muted.copyWith(fontSize: 11)),
                   Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
                     _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m))),
                     const SizedBox(width: 6),
@@ -3121,7 +3118,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                       m: m, color: isE ? kGreen : kOrange, bgColor: isE ? kGreenLt : kOrangeLt,
                       showPreneur: false,
                       fournisseurNom: isE ? m.fournisseurNom : null,
-                      modulaireNom: m.modulaireNom,
                       onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
                       onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
                     );
@@ -3134,7 +3130,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                     columns: const [
                       _Col('TYPE', flex: 1), _Col('DATE', flex: 2), _Col('PRODUIT', flex: 3),
                       _Col('CATÉGORIE', flex: 2), _Col('MAGASIN', flex: 2),
-                      _Col('QTÉ', flex: 1), _Col('FOURNISSEUR', flex: 2), _Col('MODULAIRE', flex: 2), _Col('', flex: 1),
+                      _Col('QTÉ', flex: 1), _Col('FOURNISSEUR', flex: 2), _Col('', flex: 1),
                     ],
                     rows: list.map((m) {
                       final isE = m.type == 'entree';
@@ -3170,9 +3166,6 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                         ),
                         isE && m.fournisseurNom != null
                             ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal)
-                            : Text('—', style: _muted.copyWith(fontSize: 11)),
-                        m.modulaireNom != null
-                            ? _PillBadge('📦 ${m.modulaireNom!}', kBrownLt, kBrown)
                             : Text('—', style: _muted.copyWith(fontSize: 11)),
                         Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
                           _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m))),
@@ -3636,14 +3629,14 @@ class _MouvFormState extends State<_MouvForm> {
   final Map<String, TextEditingController> _varCtrl = {};
   final Set<String> _selVar = {};
   final _preneurC = TextEditingController();
+  String? _preneurId;
+  String? _preneurDept;
+  String? _preneurSiteIdSel;
   String? _stockError;
   Map<String, String> _varStockErrors = {};
   bool _saving = false;
   String _siteId = SiteId.jadida;
   String? _selFournisseurId;      // NOUVEAU
-  String? _selModulaireId;        // MODULAIRE (Base de vie)
-  bool _newModulaireMode = false;
-  final _newModulaireCtrl = TextEditingController();
 
   // EPI multi-select
   final List<_EpiItem> _epiItems = [];
@@ -3714,7 +3707,6 @@ class _MouvFormState extends State<_MouvForm> {
       _mvtRefCtrl.text = m.reference;
       _selFournisseurId = m.fournisseurId;
       _selMag = m.magasin.isNotEmpty ? m.magasin : 'Base de vie';
-      _selModulaireId = m.modulaireId;
       if (m.prixUnitaire != null) _puCtrl.text = m.prixUnitaire!.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), '');
 
       if (_isSortie) { _newCatMode = false; _newProdMode = false; }
@@ -3743,6 +3735,9 @@ class _MouvFormState extends State<_MouvForm> {
 
       if (_isSortie) {
         _preneurC.text = m.preneurNom ?? '';
+        _preneurId = m.preneurId;
+        _preneurDept = m.preneurDepartement;
+        _preneurSiteIdSel = m.preneurSiteId;
         _validateStock();
       }
       return;
@@ -3756,7 +3751,7 @@ class _MouvFormState extends State<_MouvForm> {
     _newCatCtrl.dispose(); _newNomCtrl.dispose(); _newRefCtrl.dispose();
     _mvtNomCtrl.dispose(); _mvtRefCtrl.dispose(); _qteC.dispose();
     _prodSearchC.dispose(); _preneurC.dispose(); _dateCtrl.dispose(); _puCtrl.dispose();
-    _newModulaireCtrl.dispose(); _epiSearchCtrl.dispose();
+    _epiSearchCtrl.dispose();
     for (final c in _varCtrl.values) c.dispose();
     for (final item in _epiItems) item.dispose();
     super.dispose();
@@ -3832,8 +3827,9 @@ class _MouvFormState extends State<_MouvForm> {
             aVariantes: prod.aVariantes, groupeUniteLabel: prod.aVariantes ? prod.groupeUniteLabel : null,
             quantite: qte, lignes: lignes, date: _mvtDate,
             preneurNom: _preneurC.text.trim().isNotEmpty ? _preneurC.text.trim() : null,
+            preneurId: _preneurId, preneurDepartement: _preneurDept, preneurSiteId: _preneurSiteIdSel,
             siteId: _siteId, fournisseurId: null, fournisseurNom: null,
-            modulaireId: null, modulaireNom: null, prixUnitaire: null,
+            prixUnitaire: null,
           );
           await widget.magasin.addSortie(mvt, actorUserId: auth?.currentUser?.id, actorUserName: auth?.currentUser?.nom);
         }
@@ -3851,19 +3847,6 @@ class _MouvFormState extends State<_MouvForm> {
       final fouId = (_isSortie || _selFournisseurId == '__NA__') ? null : _selFournisseurId;
       final fouNom = fouId != null ? widget.magasin.fournisseurById(fouId)?.nom : null;
 
-      // Résolution modulaire (Base de vie uniquement)
-      String? modulaireId;
-      String? modulaireNom;
-      if (!_isSortie && magasinFinal == 'Base de vie') {
-        if (_newModulaireMode && _newModulaireCtrl.text.trim().isNotEmpty) {
-          modulaireId = await widget.magasin.addModulaire(_newModulaireCtrl.text.trim());
-          modulaireNom = _newModulaireCtrl.text.trim();
-        } else if (_selModulaireId != null) {
-          modulaireId = _selModulaireId;
-          modulaireNom = widget.magasin.modulaireById(_selModulaireId)?.nom;
-        }
-      }
-
       Produit prod;
       if (_newProdMode) {
         final nom = _newNomCtrl.text.trim();
@@ -3876,8 +3859,6 @@ class _MouvFormState extends State<_MouvForm> {
           quantiteStock: 0, variantes: [],
           siteId: _siteId,
           fournisseurId: fouId,
-          modulaireId: modulaireId,
-          modulaireNom: modulaireNom,
         );
         final newId = await widget.magasin.addProduit(newProd);
         if (newId.isEmpty) throw Exception('Erreur création produit');
@@ -3889,17 +3870,14 @@ class _MouvFormState extends State<_MouvForm> {
       } else {
         if (_selProd == null) throw Exception('Aucun produit sélectionné');
         prod = _selProd!;
-        // Met à jour le fournisseurId, magasin et modulaire du produit si entrée
+        // Met à jour le fournisseurId et le magasin du produit si entrée
         if (!_isSortie) {
           final needUpdate = (fouId != null && prod.fournisseurId != fouId)
-              || prod.magasin != magasinFinal
-              || prod.modulaireId != modulaireId;
+              || prod.magasin != magasinFinal;
           if (needUpdate) {
             prod = prod.copyWith(
               fournisseurId: fouId ?? prod.fournisseurId,
               magasin: magasinFinal,
-              modulaireId: modulaireId,
-              modulaireNom: modulaireNom,
             );
             await widget.magasin.updateProduit(prod);
           }
@@ -3927,11 +3905,12 @@ class _MouvFormState extends State<_MouvForm> {
         lignes: lignes,
         date: _mvtDate,
         preneurNom: (_isSortie && _preneurC.text.trim().isNotEmpty) ? _preneurC.text.trim() : null,
+        preneurId: _isSortie ? _preneurId : null,
+        preneurDepartement: _isSortie ? _preneurDept : null,
+        preneurSiteId: _isSortie ? _preneurSiteIdSel : null,
         siteId: _siteId,
         fournisseurId: fouId,
         fournisseurNom: fouNom,
-        modulaireId: modulaireId,
-        modulaireNom: modulaireNom,
         prixUnitaire: !_isSortie && _puCtrl.text.trim().isNotEmpty ? double.tryParse(_puCtrl.text.trim().replaceAll(',', '.')) : null,
       );
 
@@ -4008,7 +3987,15 @@ class _MouvFormState extends State<_MouvForm> {
                   final selected = currentPreneur == e.nom.trim();
                   return ListTile(dense: true, title: Text(e.nom, overflow: TextOverflow.ellipsis), subtitle: Text(e.poste, overflow: TextOverflow.ellipsis),
                     trailing: selected ? const Icon(Icons.check_circle_rounded, color: kBlue, size: 18) : null,
-                    onTap: () { setState(() => _preneurC.text = e.nom.trim()); Navigator.of(dialogCtx).pop(); },
+                    onTap: () {
+                      setState(() {
+                        _preneurC.text = e.nom.trim();
+                        _preneurId = e.id;
+                        _preneurDept = e.departement;
+                        _preneurSiteIdSel = e.siteId;
+                      });
+                      Navigator.of(dialogCtx).pop();
+                    },
                   );
                 })),
               ]),
@@ -4119,88 +4106,12 @@ class _MouvFormState extends State<_MouvForm> {
                 Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
               ]),
             )).toList(),
-            onChanged: (v) => setState(() {
-              _selMag = v;
-              // Reset modulaire si on change de magasin
-              if (v != 'Base de vie') { _selModulaireId = null; _newModulaireMode = false; _newModulaireCtrl.clear(); }
-            }),
+            onChanged: (v) => setState(() => _selMag = v),
           ),
           const SizedBox(height: 20),
 
-          // ── 5. Modulaire (Base de vie uniquement, optionnel) ─────────
-          if (_selMag == 'Base de vie') ...[
-            _SectionHdr('5. Modulaire', Icons.home_work_rounded, kBrown),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: kBrownLt, borderRadius: BorderRadius.circular(kR), border: Border.all(color: kBrown.withOpacity(0.2))),
-              child: Row(children: [
-                Icon(Icons.info_outline_rounded, size: 12, color: kBrown.withOpacity(0.7)),
-                const SizedBox(width: 6),
-                Flexible(child: Text('Optionnel — associer à un modulaire de la base de vie.', style: TextStyle(fontSize: 10, color: kBrown.withOpacity(0.8)))),
-              ]),
-            ),
-            const SizedBox(height: 8),
-            if (_newModulaireMode)
-              _StyledTF(
-                ctrl: _newModulaireCtrl,
-                hint: 'Nom du nouveau modulaire…',
-                prefix: const Icon(Icons.home_work_outlined, size: 18, color: kMuted),
-                onChanged: (_) => setState(() {}),
-              )
-            else
-              _StyledDrop<String>(
-                value: _selModulaireId,
-                hint: widget.magasin.modulaires.isEmpty ? 'Aucun modulaire (créez-en un)' : 'Sélectionner un modulaire',
-                items: widget.magasin.modulaires.map((m) => DropdownMenuItem(
-                  value: m.id,
-                  child: Row(children: [
-                    const Icon(Icons.home_work_outlined, size: 14, color: kBrown),
-                    const SizedBox(width: 8),
-                    Flexible(child: Text(m.nom, overflow: TextOverflow.ellipsis)),
-                  ]),
-                )).toList(),
-                onChanged: (v) => setState(() => _selModulaireId = v),
-              ),
-            const SizedBox(height: 8),
-            if (mobile)
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                if (_selModulaireId != null && !_newModulaireMode)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () => setState(() => _selModulaireId = null),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                        decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(8), border: Border.all(color: kRed.withOpacity(0.2))),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: const [Icon(Icons.close_rounded, size: 13, color: kRed), SizedBox(width: 4), Text('Retirer le modulaire', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kRed))]),
-                      ),
-                    ),
-                  ),
-                _ModeBtn(label: _newModulaireMode ? '← Existant' : '+ Nouveau modulaire', color: kBrown, onTap: () => setState(() { _newModulaireMode = !_newModulaireMode; _selModulaireId = null; _newModulaireCtrl.clear(); })),
-              ])
-            else
-              Row(children: [
-                if (_selModulaireId != null && !_newModulaireMode) ...[
-                  InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () => setState(() => _selModulaireId = null),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                      decoration: BoxDecoration(color: kRedLt, borderRadius: BorderRadius.circular(8), border: Border.all(color: kRed.withOpacity(0.2))),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: const [Icon(Icons.close_rounded, size: 13, color: kRed), SizedBox(width: 4), Text('Retirer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kRed))]),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                _ModeBtn(label: _newModulaireMode ? '← Existant' : '+ Nouveau', color: kBrown, onTap: () => setState(() { _newModulaireMode = !_newModulaireMode; _selModulaireId = null; _newModulaireCtrl.clear(); })),
-              ]),
-            const SizedBox(height: 20),
-          ],
-
-          // ── 6/5. Catégorie ───────────────────────────────────────────
-          _SectionHdr('${_selMag == 'Base de vie' ? '6' : '5'}. Catégorie', Icons.category_outlined, _col),
+          // ── 5. Catégorie ──────────────────────────────────────────────
+          _SectionHdr('5. Catégorie', Icons.category_outlined, _col),
         ] else ...[
           // Pour sortie : site puis catégorie
           _SectionHdr('2. Site *', Icons.location_on_rounded, kBlue),
@@ -4946,7 +4857,6 @@ class _DetailsDialog extends StatelessWidget {
           _DetCard(Icons.qr_code_rounded, '🏷️ Référence', p.reference),
           _DetCard(Icons.category_outlined, '📂 Catégorie', p.categorie),
           _DetCard(Icons.warehouse_rounded, '🏪 Magasin', 'Magasin ${p.magasin}'),
-          if (p.modulaireNom != null) _DetCard(Icons.home_work_rounded, '📦 Modulaire', p.modulaireNom!),
           if (g != null) _DetCard(Icons.widgets_rounded, '${g.emoji} Mesures', g.label),
         ]),
         const SizedBox(height: 14),
@@ -5037,7 +4947,6 @@ class _DetailsOperationDialog extends StatelessWidget {
           _DetCard(Icons.calendar_today_rounded, '📅 Date', _fmtFull(m.date)),
           if (m.preneurNom != null) _DetCard(Icons.person_outline_rounded, '👤 Prélevé par', m.preneurNom!),
           if (isE && m.fournisseurNom != null) _DetCard(Icons.business_rounded, '🏭 Fournisseur', m.fournisseurNom!),
-          if (m.modulaireNom != null) _DetCard(Icons.home_work_rounded, '📦 Modulaire', m.modulaireNom!),
           if (isE && m.prixUnitaire != null) _DetCard(Icons.payments_outlined, '💰 P.U', '${m.prixUnitaire!.toStringAsFixed(2)} MAD'),
         ]),
         const SizedBox(height: 14),
@@ -5283,12 +5192,12 @@ class _RowWidgetState extends State<_RowWidget> {
 class _MouvRow extends _DataTableRow {
   final Mouvement m;
   final Color color, bgColor;
-  final bool showPreneur, showFournisseur, showModulaire;
+  final bool showPreneur, showFournisseur;
   final VoidCallback onDelete;
   final VoidCallback? onEdit;
   final VoidCallback? onDetails;
 
-  _MouvRow({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.showFournisseur = false, this.showModulaire = true, required this.onDelete, this.onEdit, this.onDetails}) : super(cells: const []);
+  _MouvRow({required this.m, required this.color, required this.bgColor, this.showPreneur = false, this.showFournisseur = false, required this.onDelete, this.onEdit, this.onDetails}) : super(cells: const []);
 
   String get _d => '${m.date.day.toString().padLeft(2, '0')}/${m.date.month.toString().padLeft(2, '0')}/${m.date.year}';
   String get _t => '${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}';
@@ -5304,8 +5213,6 @@ class _MouvRow extends _DataTableRow {
     _PillBadge(m.categorie, kBlueLt, kBlue),
     if (showFournisseur)
       m.fournisseurNom != null ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal) : Text('—', style: _muted.copyWith(fontSize: 11)),
-    if (showModulaire)
-      m.modulaireNom != null ? _PillBadge('📦 ${m.modulaireNom!}', kBrownLt, kBrown) : Text('—', style: _muted.copyWith(fontSize: 11)),
     Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),

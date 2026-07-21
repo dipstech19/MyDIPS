@@ -220,6 +220,8 @@ class Employe {
   final String poste;
   final String magasin;
   final String departement;
+  /// Sous-catégorie du département (ex: ION & SYCHEM/QT pour Dessalement et Nettoyage, PHASE 1/La DIGUE/RMC/RADEEJ pour Distribution).
+  final String entite;
   final double salaireBase;
   final String typeContrat;
   final String dateDebut;
@@ -256,6 +258,7 @@ class Employe {
     required this.poste,
     required this.magasin,
     required this.departement,
+    this.entite = '',
     required this.salaireBase,
     required this.typeContrat,
     required this.dateDebut,
@@ -291,6 +294,7 @@ class Employe {
       'poste': poste,
       'magasin': magasin,
       'departement': departement,
+      'entite': entite,
       'salaireBase': salaireBase,
       'typeContrat': typeContrat,
       'dateDebut': dateDebut,
@@ -376,6 +380,7 @@ class Employe {
       poste: map['poste'] as String? ?? '',
       magasin: map['magasin'] as String? ?? '',
       departement: map['departement'] as String? ?? '',
+      entite: map['entite'] as String? ?? '',
       salaireBase: salaireBase,
       typeContrat: map['typeContrat'] as String? ?? '',
       dateDebut: map['dateDebut'] as String? ?? '',
@@ -409,6 +414,7 @@ class Employe {
     String? poste,
     String? magasin,
     String? departement,
+    String? entite,
     double? salaireBase,
     String? typeContrat,
     String? dateDebut,
@@ -440,6 +446,7 @@ class Employe {
       poste: poste ?? this.poste,
       magasin: magasin ?? this.magasin,
       departement: departement ?? this.departement,
+      entite: entite ?? this.entite,
       salaireBase: salaireBase ?? this.salaireBase,
       typeContrat: typeContrat ?? this.typeContrat,
       dateDebut: dateDebut ?? this.dateDebut,

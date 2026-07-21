@@ -28,6 +28,17 @@ class DistributionShiftsProvider extends ChangeNotifier {
 
   RotationConfig? get config => _config;
 
+  /// Enregistre la config de rotation (même format que [ShiftsRepository.setConfig] côté Dessalement).
+  Future<void> setConfig(RotationConfig c) async {
+    _config = c;
+    notifyListeners();
+    await FirebaseFirestore.instance.collection('app_config').doc(_configDocId).set({
+      'startDate': c.startDay.toIso8601String(),
+      'equipeIds': c.equipeIds,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   void _attach() {
     final fs = FirebaseFirestore.instance;
     final docRef = fs.collection('app_config').doc(_configDocId);

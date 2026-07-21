@@ -9,7 +9,17 @@
       "Bash(adb -s R83YB13LDGH shell pidof com.dipsmanagment.dipsmanagment)",
       "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH shell pidof com.dipsmanagment.dipsmanagment)",
       "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH shell dumpsys activity activities)",
-      "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH logcat -d -t 200)"
+      "Bash(/c/Users/hp/AppData/Local/Android/sdk/platform-tools/adb.exe -s R83YB13LDGH logcat -d -t 200)",
+      "Bash(gh --version)",
+      "Bash(gh auth *)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); gh --version)",
+      "PowerShell(winget install --id JRSoftware.InnoSetup -e --accept-source-agreements --accept-package-agreements)",
+      "Bash(npx firebase-tools *)",
+      "Bash(env)",
+      "Read(//c/Users/hp/.config/**)",
+      "PowerShell(Get-Command node,npm,npx,firebase -ErrorAction SilentlyContinue)",
+      "Bash(awk '/setAdminOverrideForEmployee\\\\\\(/{start=NR} start && NR<=start+12 && NR>=start {print NR\": \"$0} NR==start+12{start=0}' lib/modules/pointage/pointage_page.dart)",
+      "Bash(flutter analyze *)"
     ]
   }
 }

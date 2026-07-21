@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
@@ -11,6 +9,7 @@ import '../../core/utils/responsive.dart';
 import '../shifts/models/shift_models.dart';
 import '../shifts/services/shifts_export_service.dart';
 import 'distribution_groups_provider.dart';
+import 'distribution_shifts_provider.dart';
 
 class DistributionShiftsPage extends StatefulWidget {
   /// Si false (ex. intégré dans la page Shifts admin), masque le titre/sous-titre du haut.
@@ -27,47 +26,6 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
   static const String _overridesCollection = 'distribution_shifts_overrides';
   static const String _doubleDaysCollection = 'double_days';
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month, 1);
-  bool _distributionConfigSavedLocally = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _restoreDistributionConfigFlag();
-  }
-
-  Future<File> _distributionConfigFlagFile() async {
-    final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}${Platform.pathSeparator}distribution_shifts_config_saved.flag');
-  }
-
-  Future<void> _restoreDistributionConfigFlag() async {
-    try {
-      final f = await _distributionConfigFlagFile();
-      if (await f.exists() && mounted) {
-        setState(() => _distributionConfigSavedLocally = true);
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _markDistributionConfigSaved() async {
-    try {
-      final f = await _distributionConfigFlagFile();
-      await f.writeAsString('1', flush: true);
-    } catch (_) {}
-    if (mounted && !_distributionConfigSavedLocally) {
-      setState(() => _distributionConfigSavedLocally = true);
-    }
-  }
-
-  Future<void> _clearDistributionConfigSavedFlag() async {
-    try {
-      final f = await _distributionConfigFlagFile();
-      if (await f.exists()) await f.delete();
-    } catch (_) {}
-    if (mounted && _distributionConfigSavedLocally) {
-      setState(() => _distributionConfigSavedLocally = false);
-    }
-  }
 
   ShiftType _shiftForPosition(int position, DateTime day, DateTime startDay) {
     final d = DateTime(day.year, day.month, day.day);
@@ -80,15 +38,9 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
     required DateTime startDate,
     required List<String> groupIds,
   }) async {
-    final auth = context.read<AuthProvider>();
-    await FirebaseFirestore.instance.collection('app_config').doc(_configDocId).set({
-      'startDate': DateTime(startDate.year, startDate.month, startDate.day).toIso8601String(),
-      'equipeIds': groupIds,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedById': auth.userId ?? '',
-      'updatedByName': auth.currentUser?.nom ?? '',
-    }, SetOptions(merge: true));
-    await _markDistributionConfigSaved();
+    await context.read<DistributionShiftsProvider>().setConfig(
+          RotationConfig(startDate: startDate, equipeIds: groupIds),
+        );
   }
 
   String _dateKey(DateTime date) =>
@@ -173,7 +125,6 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
       await d.reference.delete();
     }
     await docRef.delete();
-    await _clearDistributionConfigSavedFlag();
   }
 
   Future<void> _exportExcelForDateRange({
@@ -277,6 +228,7 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final isAdmin = auth.isDirecteur;
     final groupsProv = context.watch<DistributionGroupsProvider>();
 
     if (Firebase.apps.isEmpty) {
@@ -346,12 +298,6 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
                 }
                 final isDoubleDay = (DateTime date) => doubleDays.containsKey(_dateKey(date));
                 final doubleDayLabel = (DateTime date) => doubleDays[_dateKey(date)];
-                if (hasAnyConfigured && !_distributionConfigSavedLocally) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _markDistributionConfigSaved();
-                  });
-                }
-                final shouldShowConfig = !hasAnyConfigured && !_distributionConfigSavedLocally;
                 return SingleChildScrollView(
                   padding: EdgeInsets.fromLTRB(16, widget.showPageHeader ? 16 : 0, 16, 16),
                   child: Column(
@@ -369,62 +315,74 @@ class _DistributionShiftsPageState extends State<DistributionShiftsPage> {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  if (shouldShowConfig) ...[
-                    _DistributionConfigSection(
-                      groups: groups,
-                      startDay: startDay,
+                  if (!hasAnyConfigured) ...[
+                    Material(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(tr(context, 'shifts_no_config'), style: TextStyle(color: Colors.orange.shade900)),
+                      ),
+                    ),
+                    if (isAdmin) ...[
+                      const SizedBox(height: 20),
+                      _DistributionConfigSection(
+                        groups: groups,
+                        startDay: startDay,
+                        selectedIds: effectiveIds,
+                        onSave: _saveConfig,
+                      ),
+                    ],
+                  ] else ...[
+                    _DistributionTodaySection(
+                      groupsById: {for (final g in groups) g.id: g},
                       selectedIds: effectiveIds,
-                      onSave: _saveConfig,
+                      startDay: startDay,
+                      resolveShift: resolveShift,
+                      shiftLabel: _shiftLabel,
+                      shiftColor: _shiftColor,
                     ),
                     const SizedBox(height: 12),
-                  ],
-                  _DistributionTodaySection(
-                    groupsById: {for (final g in groups) g.id: g},
-                    selectedIds: effectiveIds,
-                    startDay: startDay,
-                    resolveShift: resolveShift,
-                    shiftLabel: _shiftLabel,
-                    shiftColor: _shiftColor,
-                  ),
-                  const SizedBox(height: 12),
-                  _DistributionPlanningSection(
-                    groupsById: {for (final g in groups) g.id: g},
-                    selectedIds: effectiveIds,
-                    month: _month,
-                    onMonthChange: (m) => setState(() => _month = m),
-                    resolveShift: resolveShift,
-                    onEditShift: (date, groupId, shift) => _setShiftOverride(date, groupId, shift),
-                    shiftLabel: _shiftLabel,
-                    shiftColor: _shiftColor,
-                    isDoubleDay: isDoubleDay,
-                    doubleDayLabel: doubleDayLabel,
-                    onExportExcel: () => _exportExcelForDateRange(
-                      selectedIds: effectiveIds,
+                    _DistributionPlanningSection(
                       groupsById: {for (final g in groups) g.id: g},
+                      selectedIds: effectiveIds,
+                      isAdmin: isAdmin,
+                      month: _month,
+                      onMonthChange: (m) => setState(() => _month = m),
                       resolveShift: resolveShift,
+                      onEditShift: (date, groupId, shift) => _setShiftOverride(date, groupId, shift),
+                      shiftLabel: _shiftLabel,
+                      shiftColor: _shiftColor,
+                      isDoubleDay: isDoubleDay,
+                      doubleDayLabel: doubleDayLabel,
+                      onExportExcel: () => _exportExcelForDateRange(
+                        selectedIds: effectiveIds,
+                        groupsById: {for (final g in groups) g.id: g},
+                        resolveShift: resolveShift,
+                      ),
+                      onResetConfig: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text(tr(ctx, 'shifts_reset_config')),
+                            content: Text(tr(ctx, 'shifts_reset_confirm')),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr(ctx, 'cancel'))),
+                              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr(ctx, 'shifts_reset_confirm_btn'))),
+                            ],
+                          ),
+                        );
+                        if (ok != true) return;
+                        await _resetConfig();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(tr(context, 'shifts_reset_done')), backgroundColor: Colors.orange),
+                        );
+                      },
+                      onAddDoubleDay: _setDoubleDay,
+                      onRemoveDoubleDay: _removeDoubleDay,
                     ),
-                    onResetConfig: () async {
-                      final ok = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: Text(tr(ctx, 'shifts_reset_config')),
-                          content: Text(tr(ctx, 'shifts_reset_confirm')),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr(ctx, 'cancel'))),
-                            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr(ctx, 'shifts_reset_confirm_btn'))),
-                          ],
-                        ),
-                      );
-                      if (ok != true) return;
-                      await _resetConfig();
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(tr(context, 'shifts_reset_done')), backgroundColor: Colors.orange),
-                      );
-                    },
-                    onAddDoubleDay: _setDoubleDay,
-                    onRemoveDoubleDay: _removeDoubleDay,
-                  ),
+                  ],
                 ],
               ),
             );
@@ -459,6 +417,16 @@ class _DistributionConfigSectionState extends State<_DistributionConfigSection> 
   late List<String?> _selectedIds;
   bool _saving = false;
 
+  String _positionHint(BuildContext context, int positionIndex) {
+    switch (positionIndex) {
+      case 0: return tr(context, 'shifts_config_position_hint_p1');
+      case 1: return tr(context, 'shifts_config_position_hint_p2');
+      case 2: return tr(context, 'shifts_config_position_hint_p3');
+      case 3: return tr(context, 'shifts_config_position_hint_rh');
+      default: return '';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -470,13 +438,15 @@ class _DistributionConfigSectionState extends State<_DistributionConfigSection> 
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(tr(context, 'shifts_config'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            Text(tr(context, 'shifts_config'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Text(tr(context, 'shifts_config_start')),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
+            TextButton.icon(
               onPressed: _saving
                   ? null
                   : () async {
@@ -492,11 +462,34 @@ class _DistributionConfigSectionState extends State<_DistributionConfigSection> 
               icon: const Icon(Icons.calendar_today),
               label: Text('${_startDate.day}/${_startDate.month}/${_startDate.year}'),
             ),
-            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(tr(context, 'shifts_config_position_legend'), style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+            ),
+            const SizedBox(height: 20),
             for (var i = 0; i < 4; i++) ...[
-              Text(
-                tr(context, 'dist_shifts_group_position').replaceAll('%s', '${i + 1}'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 360;
+                  final label = tr(context, 'dist_shifts_group_position').replaceAll('%s', '${i + 1}');
+                  final hint = _positionHint(context, i);
+                  if (compact) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text(hint, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+                      Text(hint, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 4),
               DropdownButtonFormField<String>(
@@ -677,6 +670,7 @@ class _DistributionTodaySection extends StatelessWidget {
 class _DistributionPlanningSection extends StatelessWidget {
   final Map<String, dynamic> groupsById;
   final List<String> selectedIds;
+  final bool isAdmin;
   final DateTime month;
   final ValueChanged<DateTime> onMonthChange;
   final ShiftType Function(int position, DateTime day, String groupId) resolveShift;
@@ -693,6 +687,7 @@ class _DistributionPlanningSection extends StatelessWidget {
   const _DistributionPlanningSection({
     required this.groupsById,
     required this.selectedIds,
+    required this.isAdmin,
     required this.month,
     required this.onMonthChange,
     required this.resolveShift,
@@ -749,12 +744,14 @@ class _DistributionPlanningSection extends StatelessWidget {
                         icon: const Icon(Icons.download, size: 16),
                         label: Text(tr(context, 'shifts_export_excel')),
                       ),
-                      const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: onResetConfig,
-                        icon: const Icon(Icons.restart_alt),
-                        label: Text(tr(context, 'shifts_reset_config')),
-                      ),
+                      if (isAdmin) ...[
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          onPressed: onResetConfig,
+                          icon: const Icon(Icons.restart_alt),
+                          label: Text(tr(context, 'shifts_reset_config')),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -809,12 +806,14 @@ class _DistributionPlanningSection extends StatelessWidget {
                         icon: const Icon(Icons.download, size: 16),
                         label: Text(tr(context, 'shifts_export_excel')),
                       ),
-                      const SizedBox(width: 10),
-                      TextButton.icon(
-                        onPressed: onResetConfig,
-                        icon: const Icon(Icons.restart_alt),
-                        label: Text(tr(context, 'shifts_reset_config')),
-                      ),
+                      if (isAdmin) ...[
+                        const SizedBox(width: 10),
+                        TextButton.icon(
+                          onPressed: onResetConfig,
+                          icon: const Icon(Icons.restart_alt),
+                          label: Text(tr(context, 'shifts_reset_config')),
+                        ),
+                      ],
                       const Spacer(),
                       OutlinedButton.icon(
                         onPressed: () async {

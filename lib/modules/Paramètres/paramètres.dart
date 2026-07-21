@@ -1922,7 +1922,7 @@ class _AdminDrawerState extends State<_AdminDrawer> {
             DropdownButtonFormField<String>(
               value: _siteId,
               decoration: const InputDecoration(
-                labelText: 'Zone (El Jadida / Safi / Tous)',
+                labelText: 'Zone (Jorf Lasfar / Safi / Tous)',
                 isDense: true,
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                 filled: true,
@@ -5440,7 +5440,7 @@ void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing
             ),
             items: const [
               DropdownMenuItem(value: SiteId.all, child: Text('Tous les sites')),
-              DropdownMenuItem(value: SiteId.jadida, child: Text('El Jadida')),
+              DropdownMenuItem(value: SiteId.jadida, child: Text('Jorf Lasfar')),
               DropdownMenuItem(value: SiteId.safi, child: Text('Safi')),
             ],
             onChanged: (v) => siteId = v ?? SiteId.all,

@@ -47,6 +47,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
   String _poste = '';
   String _dept = '';
+  String _entite = '';
   String _contrat = 'CDI';
   String _chefId = '';
   String _siteId = SiteId.jadida;
@@ -89,7 +90,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         .where((p) => p.siteId == _siteId || p.siteId == SiteId.all)
         .map((p) => p.nom)
         .toList();
-    const distributionPostes = ['operateur Phase 1', 'operateur Radeej', 'operateur RMC', 'operateur Digue', "Chef d'equipe"];
+    const distributionPostes = ['operateur Phase 1', 'operateur Radeej', 'operateur RMC', 'operateur Digue', 'Operateur Normal', "Chef d'equipe"];
     final effectivePosteNames = _dept.toLowerCase().contains('distribution')
         ? distributionPostes
         : posteNames;
@@ -197,8 +198,16 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                           if (!newPostes.contains(_poste)) {
                             _poste = newPostes.isNotEmpty ? newPostes.first : '';
                           }
+                          final newEntites = _entiteOptions(_dept);
+                          if (!newEntites.contains(_entite)) {
+                            _entite = newEntites.isNotEmpty ? newEntites.first : '';
+                          }
                         });
                       }),
+                      if (_entiteOptions(_dept).isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _dropdown('Entité *', _entite, _entiteOptions(_dept), (v) => setState(() => _entite = v ?? '')),
+                      ],
                       const SizedBox(height: 12),
                       // 3. Poste (filtré selon le département)
                       _dropdownPoste(effectivePosteNames),
@@ -426,6 +435,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
         poste: poste,
         magasin: '',
         departement: dept,
+        entite: _entiteOptions(dept).contains(_entite) ? _entite : '',
         salaireBase: double.tryParse(_salaireCtrl.text) ?? 0,
         typeContrat: _contrat,
         dateDebut: _dateDebutCtrl.text,
@@ -547,11 +557,18 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   }
 
   List<String> _departementOptions(DepartementsProvider prov, {String? current, String? siteId}) {
-    if (siteId == SiteId.safi) return ['Phosphorique'];
+    if (siteId == SiteId.safi) return ['Phosphorique', 'Sulfurique'];
     final set = prov.departements.map((d) => d.nom).where((n) => n.isNotEmpty).toSet();
     if (current != null && current.isNotEmpty) set.add(current);
     final list = set.toList()..sort();
     return list.isEmpty ? ['—'] : list;
+  }
+
+  List<String> _entiteOptions(String dept) {
+    final d = dept.toLowerCase();
+    if (d.contains('dessalement') || d.contains('nettoyage')) return ['ION & SYCHEM', 'QT'];
+    if (d.contains('distribution')) return ['PHASE 1', 'La DIGUE', 'RMC', 'RADEEJ', 'Distribution'];
+    return [];
   }
 
   Widget _dropdownPoste(List<String> posteNames) {

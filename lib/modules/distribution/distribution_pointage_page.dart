@@ -695,18 +695,25 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       ? '--:--'
                       : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
+                  // Poste 3 (nuit) : la sortie est automatique, pas de saisie manuelle.
+                  final isNightShift = shift == ShiftType.night;
                   final actionChips = <Widget>[
-                    if (present && !isArrangement)
+                    if (present && !isArrangement && !isNightShift)
                       FilterChip(
                         label: const Text('Terminé'),
                         selected: r?.departureStatus == DepartureStatus.finished,
                         onSelected: reportConfirmed ? null : (_) => markFinished(),
                       ),
-                    if (present && !isArrangement)
+                    if (present && !isArrangement && !isNightShift)
                       FilterChip(
                         label: const Text("N'a pas terminé"),
                         selected: r?.departureStatus == DepartureStatus.stillWorking,
                         onSelected: reportConfirmed ? null : (_) => markNotCompleted(),
+                      ),
+                    if (present && !isArrangement && isNightShift)
+                      Chip(
+                        avatar: Icon(Icons.auto_mode, size: 16, color: Colors.blueGrey[700]),
+                        label: const Text('Sortie automatique (poste 3)'),
                       ),
                     if (isReviewer && r != null)
                       FilterChip(
@@ -1195,8 +1202,12 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Text(
-                    'À la confirmation, la sortie sera enregistrée automatiquement pour : '
-                    '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')}',
+                    shift == ShiftType.night
+                        ? 'À la confirmation, la sortie sera enregistrée automatiquement (poste 3) pour : '
+                            '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')}'
+                        : 'Sortie non confirmée pour : '
+                            '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')} '
+                            '— marquez "Terminé" ou "N\'a pas terminé" avant l\'envoi.',
                     style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
                   ),
                 ),
@@ -1258,7 +1269,11 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                             }
                           }
                           rec = recordForRow(row);
-                          if (rec != null &&
+                          // Poste 3 (nuit) : sortie automatique. Postes 1/2 : la sortie doit
+                          // avoir été confirmée manuellement par le chef, elle reste en
+                          // attente sinon (pas d'auto-remplissage).
+                          if (shift == ShiftType.night &&
+                              rec != null &&
                               rec.chefStatus == ChefPointageStatus.present &&
                               rec.departureStatus == DepartureStatus.unset) {
                             await pointageProv.setDepartureStatus(
@@ -1341,7 +1356,16 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                         await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                         if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Rapport Distribution confirmé.')),
+                          SnackBar(
+                            content: Text(
+                              shift == ShiftType.night
+                                  ? 'Rapport Distribution confirmé. La sortie de l\'équipe (poste 3) a été enregistrée automatiquement.'
+                                  : 'Rapport Distribution confirmé.',
+                            ),
+                            duration: shift == ShiftType.night
+                                ? const Duration(seconds: 5)
+                                : const Duration(seconds: 4),
+                          ),
                         );
                       })(),
                       message: 'Envoi en cours...',

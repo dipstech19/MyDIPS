@@ -9,7 +9,7 @@ class SiteId {
   static String label(String siteId) {
     switch (siteId) {
       case jadida:
-        return 'الجديدة';
+        return 'الجرف الأصفر';
       case safi:
         return 'آسفي';
       case all:
@@ -22,7 +22,7 @@ class SiteId {
   static String labelFr(String siteId) {
     switch (siteId) {
       case jadida:
-        return 'El Jadida';
+        return 'Jorf Lasfar';
       case safi:
         return 'Safi';
       case all:

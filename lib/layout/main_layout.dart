@@ -15,6 +15,7 @@ import '../modules/employees/employees_provider.dart';
 import '../modules/magasin/gestion_magasin.dart';
 import '../modules/pointage/pointage_page.dart';
 import '../modules/pointage/pointage_provider.dart';
+import '../modules/pointage/pointage_section_switcher.dart';
 import '../modules/pointage/driver_pointage_page.dart';
 import '../modules/pointage/report_page.dart';
 import '../modules/Rapports_factures/rapports_factures_page.dart';
@@ -805,7 +806,7 @@ class _MainLayoutState extends State<MainLayout> {
       case 'employees':
         return const EmployeesPage();
       case 'pointage':
-        return const PointagePage();
+        return const PointageSectionSwitcher();
       case 'distribution_review':
         return const DistributionPointagePage(reviewOnly: true);
       case 'overtime':

@@ -223,7 +223,7 @@ class _EmployeesPageState extends State<EmployeesPage>
   }
 
   Widget _filterDistributionDropdown(List<Employe> employes, {bool small = false}) {
-    const distPostes = ['operateur Phase 1', 'operateur Radeej', 'operateur RMC', 'operateur Digue'];
+    const distPostes = ['operateur Phase 1', 'operateur Radeej', 'operateur RMC', 'operateur Digue', 'Operateur Normal'];
     final isSelected = _filterCategorie == 'distribution';
     final distChefs = employes
         .where((e) => e.departement.toLowerCase().contains('distribution') && e.poste == "Chef d'equipe")

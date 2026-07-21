@@ -714,6 +714,63 @@ class _PointagePageState extends State<PointagePage> {
     }
   }
 
+  void _showDepartureOverrideDialog(
+    BuildContext context,
+    PointageProvider pointageProvider,
+    PointageRecord record,
+    String employeeName,
+  ) {
+    final status = record.departureStatus;
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Sortie — $employeeName'),
+        content: Text(
+          switch (status) {
+            DepartureStatus.finished => 'La sortie de cet employé est confirmée.',
+            DepartureStatus.stillWorking => 'Le chef d\'équipe a signalé que cet employé n\'a pas terminé son poste.',
+            DepartureStatus.unset => 'La sortie de cet employé n\'est pas encore confirmée par le chef d\'équipe.',
+          },
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Annuler'),
+          ),
+          if (status != DepartureStatus.unset)
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(dialogCtx);
+                await pointageProvider.resetDepartureStatus(record);
+              },
+              child: const Text('Réinitialiser'),
+            ),
+          if (status != DepartureStatus.finished)
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogCtx);
+                final ok = await pointageProvider.setDepartureStatus(
+                  record: record,
+                  status: DepartureStatus.finished,
+                  overtimeMinutes: 0,
+                  bypassTimeWindows: true,
+                );
+                if (!ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
+                  );
+                }
+              },
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Confirmer la sortie'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAdminContent(
     BuildContext context,
     List<Equipe> equipes,
@@ -758,6 +815,16 @@ class _PointagePageState extends State<PointagePage> {
         if (eid.isEmpty) continue;
         if (shiftsProvider.getShiftForEquipe(eid, logicalDay) == ShiftType.rest) {
           effectiveNonWorkingIds.add(eid);
+        }
+      }
+    }
+    // Les équipes Management et Nettoyage ne travaillent pas le dimanche : ne pas les afficher pour le pointage.
+    final isSundayForPointage = logicalDay.weekday == DateTime.sunday;
+    if (isSundayForPointage) {
+      for (final eq in equipes) {
+        final dept = eq.magasin.trim().toLowerCase();
+        if (dept.contains('management') || dept.contains('nettoyage')) {
+          effectiveNonWorkingIds.add(eq.id);
         }
       }
     }
@@ -810,14 +877,16 @@ class _PointagePageState extends State<PointagePage> {
       ,
       for (final g in groupes) ...g.membreIds,
     };
-    var horsEquipeWorkers = employes
-        .where((e) =>
-            e.statut == EmployeStatut.enService &&
-            !usedIdsInAnyEquipe.contains(e.id) &&
-            !isChefEquipePoste(e.poste) &&
-            e.departement.toLowerCase().contains('management') &&
-            !e.departement.toLowerCase().contains('distribution'))
-        .toList();
+    var horsEquipeWorkers = isSundayForPointage
+        ? <Employe>[]
+        : employes
+            .where((e) =>
+                e.statut == EmployeStatut.enService &&
+                !usedIdsInAnyEquipe.contains(e.id) &&
+                !isChefEquipePoste(e.poste) &&
+                e.departement.toLowerCase().contains('management') &&
+                !e.departement.toLowerCase().contains('distribution'))
+            .toList();
     horsEquipeWorkers = horsEquipeWorkers
         .where((e) {
           final rec = recordByEmployeId[e.id];
@@ -2681,12 +2750,27 @@ class _PointagePageState extends State<PointagePage> {
                               ),
                             ),
                             const SizedBox(height: 2),
-                            Text(
-                              'Entrée: ${record?.arrivalMarkedAt != null ? 'OK' : '--'} | Sortie: ${record?.departureStatus == DepartureStatus.finished ? 'OK' : '--'}',
-                              style: TextStyle(
-                                fontSize: mobile ? 10 : 9,
-                                color: Colors.blueGrey.shade700,
-                                fontWeight: FontWeight.w600,
+                            InkWell(
+                              borderRadius: BorderRadius.circular(4),
+                              onTap: record == null
+                                  ? null
+                                  : () => _showDepartureOverrideDialog(context, pointageProvider, record, e.nom),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Entrée: ${record?.arrivalMarkedAt != null ? 'OK' : '--'} | Sortie: ${record?.departureStatus == DepartureStatus.finished ? 'OK' : '--'}',
+                                    style: TextStyle(
+                                      fontSize: mobile ? 10 : 9,
+                                      color: Colors.blueGrey.shade700,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (record != null) ...[
+                                    const SizedBox(width: 3),
+                                    Icon(Icons.edit_outlined, size: 10, color: Colors.blueGrey.shade400),
+                                  ],
+                                ],
                               ),
                             ),
                             if (!isGroupScope && isAlreadyFormation && formationRangeLabel != null) ...[
@@ -3043,8 +3127,19 @@ class _PointagePageState extends State<PointagePage> {
         ? shiftsProvider.getShiftForEquipe(chefEquipe.id, chefToday)
         : null;
     final isNightShift = shiftForChefEarly == ShiftType.night;
+    // Équipes Management / Nettoyage : pas de rotation postes, la sortie n'a pas besoin
+    // d'être confirmée par le chef — elle est enregistrée automatiquement comme le poste 3.
+    final chefDept = chefEquipe?.magasin.trim().toLowerCase() ?? '';
+    final chefEquipeNameLower = chefEquipe?.nom.trim().toLowerCase() ?? '';
+    final isManagementOrNettoyageTeam = chefDept.contains('management') ||
+        chefDept.contains('managment') ||
+        chefDept.contains('nettoyage') ||
+        chefEquipeNameLower.contains('management') ||
+        chefEquipeNameLower.contains('managment') ||
+        chefEquipeNameLower.contains('nettoyage');
+    final autoDeparture = isNightShift || isManagementOrNettoyageTeam;
     // Poste 1/2 : bannière si rapport envoyé mais sorties pas encore saisies.
-    // Poste 3    : bannière dès que rapport envoyé (sortie auto, pas besoin du chef).
+    // Poste 3 / Management / Nettoyage : bannière dès que rapport envoyé (sortie auto, pas besoin du chef).
     // Bouton "Envoyer rapport" : avant envoi OU (P1/P2) après que toutes les sorties sont saisies.
     final allLocked = workersDisplay.isNotEmpty &&
         workersDisplay.every((w) => pointageProvider.isChefLockedForEmployee(w.id));
@@ -3255,8 +3350,8 @@ class _PointagePageState extends State<PointagePage> {
             absentCount: absentCount,
             notInVehicleCount: 0,
           );
-          // Poste 3 (nuit) : déclarer automatiquement la sortie pour tous les présents.
-          if (isNightShift) {
+          // Poste 3 (nuit) / Management / Nettoyage : déclarer automatiquement la sortie pour tous les présents.
+          if (autoDeparture) {
             for (final w in workersDisplay) {
               final r = pointageProvider.getRecordForEmployee(w.id);
               if (r != null &&
@@ -3272,8 +3367,8 @@ class _PointagePageState extends State<PointagePage> {
             }
           }
           if (!context.mounted) return;
-          if (isNightShift) {
-            // Dialog de succès spécifique au Poste 3 : confirme l'envoi et informe sur la sortie auto.
+          if (autoDeparture) {
+            // Dialog de succès : confirme l'envoi et informe sur la sortie auto (Poste 3 ou Management/Nettoyage).
             await showDialog<void>(
               context: context,
               builder: (ctx) => AlertDialog(
@@ -3309,7 +3404,9 @@ class _PointagePageState extends State<PointagePage> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'La sortie de votre équipe sera enregistrée automatiquement à la fin du poste.\nL\'admin vérifiera et confirmera le rapport.',
+                              isNightShift
+                                  ? 'La sortie de votre équipe sera enregistrée automatiquement à la fin du poste.\nL\'admin vérifiera et confirmera le rapport.'
+                                  : 'La sortie de votre équipe sera enregistrée automatiquement.\nL\'admin vérifiera et confirmera le rapport.',
                               style: TextStyle(fontSize: 13, color: Colors.blue.shade700, height: 1.5),
                             ),
                           ),
@@ -3478,8 +3575,8 @@ class _PointagePageState extends State<PointagePage> {
             createdAt: DateTime.now(),
           );
       final canMarkArrival = !locked && isWithinArrival;
-      // Poste 3 (nuit) : pas de saisie manuelle de sortie, elle est automatique.
-      final canMarkDeparture = !allLocked && !isNightShift && isWithinDeparture;
+      // Poste 3 (nuit) / Management / Nettoyage : pas de saisie manuelle de sortie, elle est automatique.
+      final canMarkDeparture = !allLocked && !autoDeparture && isWithinDeparture;
       final chefChips = _wrapIfDisabled(
         disabled: !canMarkArrival,
         child: ChefStatusChips(
