@@ -653,6 +653,10 @@ const double kR2 = 14;
 const double kP = 22;
 
 const List<String> kMagasins = ['Base de vie', 'Siège', 'Chantier'];
+const List<String> kMagasinsSafi = ['Phosphorique', 'Sulfurique'];
+
+List<String> magasinsForSite(String? siteId) =>
+    siteId == SiteId.safi ? kMagasinsSafi : kMagasins;
 
 class GroupeUnites {
   final String label, emoji;
@@ -851,12 +855,21 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     }
   }
 
+  String? _effectiveSiteId(AuthProvider auth, SiteProvider site) {
+    final allowed = auth.currentUser?.allowedSiteIds;
+    if (allowed != null && allowed.isNotEmpty && !allowed.contains(SiteId.all)) {
+      return allowed.first;
+    }
+    return site.selectedSiteId;
+  }
+
   @override
   Widget build(BuildContext context) {
     final magasin = context.watch<MagasinProvider>();
     final auth    = context.watch<AuthProvider>();
     final site    = context.watch<SiteProvider>();
     final mobile = isMobile(context);
+    final magasinOptions = magasinsForSite(_effectiveSiteId(auth, site));
 
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
@@ -949,13 +962,13 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     if (mobile) {
       Widget activePage;
       if (_tab == 0) {
-        activePage = _StockPage(magasin: magasin, produits: filteredProduits, internalScroll: false);
+        activePage = _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions, internalScroll: false);
       } else if (_tab == 1) {
-        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, internalScroll: false);
+        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, internalScroll: false);
       } else if (_tab == 2) {
-        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, internalScroll: false);
+        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, internalScroll: false);
       } else if (_tab == 3) {
-        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], internalScroll: false);
+        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, internalScroll: false);
       } else {
         activePage = _FournisseursPage(magasin: magasin, internalScroll: false);
       }
@@ -986,10 +999,10 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
                 controller: _tabCtrl,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _StockPage(magasin: magasin, produits: filteredProduits),
-                  _EntreesPage(magasin: magasin, entrees: filteredEntrees),
-                  _SortiesPage(magasin: magasin, sorties: filteredSorties),
-                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties]),
+                  _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions),
+                  _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions),
+                  _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions),
+                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions),
                   _FournisseursPage(magasin: magasin),
                 ],
               ),
@@ -1626,8 +1639,9 @@ class _StockAlertDialogState extends State<_StockAlertDialog> {
 class _StockPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Produit> produits;
+  final List<String> magasins;
   final bool internalScroll;
-  const _StockPage({required this.magasin, required this.produits, this.internalScroll = true});
+  const _StockPage({required this.magasin, required this.produits, this.magasins = kMagasins, this.internalScroll = true});
   @override
   State<_StockPage> createState() => _StockPageState();
 }
@@ -1636,6 +1650,14 @@ class _StockPageState extends State<_StockPage> {
   String _q = '', _cat = 'Toutes', _mag = 'Tous';
   bool _asc = false;
   final _sc = TextEditingController();
+
+  @override
+  void didUpdateWidget(covariant _StockPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_mag != 'Tous' && !widget.magasins.contains(_mag)) {
+      setState(() => _mag = 'Tous');
+    }
+  }
 
   List<Produit> get _list {
     final q = _q.toLowerCase();
@@ -1656,7 +1678,7 @@ class _StockPageState extends State<_StockPage> {
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
     final cats = ['Toutes', ...widget.magasin.categoryNames];
-    final mags = ['Tous', ...kMagasins];
+    final mags = ['Tous', ...widget.magasins];
 
     return Column(
       children: [
@@ -1936,8 +1958,9 @@ class _ProduitCard extends StatelessWidget {
 class _EntreesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> entrees;
+  final List<String> magasins;
   final bool internalScroll;
-  const _EntreesPage({required this.magasin, required this.entrees, this.internalScroll = true});
+  const _EntreesPage({required this.magasin, required this.entrees, this.magasins = kMagasins, this.internalScroll = true});
   @override
   State<_EntreesPage> createState() => _EntreesPageState();
 }
@@ -1946,6 +1969,14 @@ class _EntreesPageState extends State<_EntreesPage> {
   String _cat = 'Toutes', _mag = 'Tous';
   String _search = '';
   final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void didUpdateWidget(covariant _EntreesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_mag != 'Tous' && !widget.magasins.contains(_mag)) {
+      setState(() => _mag = 'Tous');
+    }
+  }
 
   @override
   void dispose() {
@@ -1965,7 +1996,7 @@ class _EntreesPageState extends State<_EntreesPage> {
     final list = _list;
     final total = list.fold(0, (s, m) => s + m.totalQte);
     final cats = ['Toutes', ...widget.magasin.categoryNames];
-    final mags = ['Tous', ...kMagasins];
+    final mags = ['Tous', ...widget.magasins];
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
 
@@ -2083,8 +2114,9 @@ class _EntreesPageState extends State<_EntreesPage> {
 class _SortiesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> sorties;
+  final List<String> magasins;
   final bool internalScroll;
-  const _SortiesPage({required this.magasin, required this.sorties, this.internalScroll = true});
+  const _SortiesPage({required this.magasin, required this.sorties, this.magasins = kMagasins, this.internalScroll = true});
   @override
   State<_SortiesPage> createState() => _SortiesPageState();
 }
@@ -2101,6 +2133,14 @@ class _SortiesPageState extends State<_SortiesPage> {
     }
     final detail = m.lignes.where((l) => l.quantite > 0).map((l) => '${l.quantite} × ${l.unite}').join(', ');
     return 'La suppression restituera ${m.totalQte} article(s) au stock ($detail).';
+  }
+
+  @override
+  void didUpdateWidget(covariant _SortiesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_mag != 'Tous' && !widget.magasins.contains(_mag)) {
+      setState(() => _mag = 'Tous');
+    }
   }
 
   @override
@@ -2121,7 +2161,7 @@ class _SortiesPageState extends State<_SortiesPage> {
     final list = _list;
     final total = list.fold(0, (s, m) => s + m.totalQte);
     final cats = ['Toutes', ...widget.magasin.categoryNames];
-    final mags = ['Tous', ...kMagasins];
+    final mags = ['Tous', ...widget.magasins];
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
 
@@ -2848,8 +2888,9 @@ class _BanniereAction extends StatelessWidget {
 class _HistoriquePage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> mouvements;
+  final List<String> magasins;
   final bool internalScroll;
-  const _HistoriquePage({required this.magasin, required this.mouvements, this.internalScroll = true});
+  const _HistoriquePage({required this.magasin, required this.mouvements, this.magasins = kMagasins, this.internalScroll = true});
   @override
   State<_HistoriquePage> createState() => _HistoriquePageState();
 }
@@ -2857,6 +2898,14 @@ class _HistoriquePage extends StatefulWidget {
 class _HistoriquePageState extends State<_HistoriquePage> {
   String _typeFiltre = 'Tout';
   String _magasinFiltre = 'Tous';
+
+  @override
+  void didUpdateWidget(covariant _HistoriquePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_magasinFiltre != 'Tous' && !widget.magasins.contains(_magasinFiltre)) {
+      setState(() => _magasinFiltre = 'Tous');
+    }
+  }
 
   String _msgSuppression(Mouvement m) {
     if (m.type == 'entree') return 'Supprimer cette entrée du journal ?';
@@ -2909,7 +2958,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
     final padding = mobile ? pagePadding(context) : kP;
     final fournisseurs = widget.magasin.fournisseurs;
     final fouNoms = ['Tous', ...fournisseurs.map((f) => f.nom)];
-    final mags = ['Tous', ...kMagasins];
+    final mags = ['Tous', ...widget.magasins];
 
     return Column(
       children: [
@@ -4088,7 +4137,12 @@ class _MouvFormState extends State<_MouvForm> {
                 ]),
               ),
             ],
-            onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
+            onChanged: (v) => setState(() {
+              _siteId = v ?? SiteId.jadida;
+              if (_selMag != null && !magasinsForSite(_siteId).contains(_selMag)) {
+                _selMag = null;
+              }
+            }),
           ),
           const SizedBox(height: 20),
 
@@ -4098,7 +4152,7 @@ class _MouvFormState extends State<_MouvForm> {
           _StyledDrop<String>(
             value: _selMag,
             hint: 'Sélectionner un magasin',
-            items: kMagasins.map((m) => DropdownMenuItem(
+            items: magasinsForSite(_siteId).map((m) => DropdownMenuItem(
               value: m,
               child: Row(children: [
                 const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
