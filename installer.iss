@@ -6,7 +6,7 @@
 
 #define MyAppName "DIPS Management"
 #define MyAppExeName "dipsmanagment.exe"
-#define MyAppVersion "1.2.2"
+#define MyAppVersion "1.2.3"
 #define MyAppPublisher "DIPS"
 #define MyAppBuildOutput "build\windows\x64\runner\Release"
 #define MyAppIcon "windows\runner\resources\app_icon.ico"
