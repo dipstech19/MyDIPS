@@ -3295,7 +3295,7 @@ class _FournisseursPageState extends State<_FournisseursPage> {
             padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
             child: _DataTable(
               empty: false, accentColor: kTeal,
-              columns: const [_Col('FOURNISSEUR', flex: 3), _Col('TÉLÉPHONE', flex: 2), _Col('EMAIL', flex: 3), _Col('ADRESSE', flex: 3), _Col('', flex: 1)],
+              columns: const [_Col('FOURNISSEUR', flex: 3), _Col('TÉLÉPHONE', flex: 2), _Col('TÉLÉPHONE 2', flex: 3), _Col('ADRESSE', flex: 3), _Col('', flex: 1)],
               rows: list.map((f) => _DataTableRow(cells: [
                 Row(children: [
                   Container(
@@ -3344,7 +3344,7 @@ class _FournisseursPageState extends State<_FournisseursPage> {
                   padding: EdgeInsets.fromLTRB(padding, 0, padding, padding),
                   child: _DataTable(
                     empty: false, accentColor: kTeal,
-                    columns: const [_Col('FOURNISSEUR', flex: 3), _Col('TÉLÉPHONE', flex: 2), _Col('EMAIL', flex: 3), _Col('ADRESSE', flex: 3), _Col('', flex: 1)],
+                    columns: const [_Col('FOURNISSEUR', flex: 3), _Col('TÉLÉPHONE', flex: 2), _Col('TÉLÉPHONE 2', flex: 3), _Col('ADRESSE', flex: 3), _Col('', flex: 1)],
                     rows: list.map((f) => _DataTableRow(cells: [
                       Row(children: [
                         Container(
