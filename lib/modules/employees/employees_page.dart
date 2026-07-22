@@ -66,6 +66,14 @@ class _EmployeesPageState extends State<EmployeesPage>
     return base;
   }
 
+  String? _effectiveSiteId(AuthProvider auth, SiteProvider? site) {
+    final allowed = auth.currentUser?.allowedSiteIds;
+    if (allowed != null && allowed.isNotEmpty && !allowed.contains(SiteId.all)) {
+      return allowed.first;
+    }
+    return site?.selectedSiteId;
+  }
+
   List<Equipe> _equipes(EmployeesProvider prov, AuthProvider auth, SiteProvider? site) {
     if (auth.isDirecteur) {
       return SiteId.filterBySite(
@@ -381,6 +389,7 @@ class _EmployeesPageState extends State<EmployeesPage>
     final employes = _employes(prov, auth, site);
     final equipes = _equipes(prov, auth, site);
     final filtered = _filtered(employes, equipes);
+    final isSafi = _effectiveSiteId(auth, site) == SiteId.safi;
     final quittesFiltered = employes.where((e) => e.statut == EmployeStatut.quitte).toList()..sort((a, b) => a.nom.compareTo(b.nom));
     final quittesCount = quittesFiltered.length;
 
@@ -487,13 +496,19 @@ class _EmployeesPageState extends State<EmployeesPage>
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
-                      _filterCatChip('Management', 'management', small: true),
-                      const SizedBox(width: 6),
-                      _filterCatDropdown('Dessalement', 'dessalement', equipes, small: true),
-                      const SizedBox(width: 6),
-                      _filterDistributionDropdown(employes, small: true),
-                      const SizedBox(width: 6),
-                      _filterCatChip('Nettoyage', 'nettoyage', small: true),
+                      if (isSafi) ...[
+                        _filterCatChip('Phosphorique', 'phosphorique', small: true),
+                        const SizedBox(width: 6),
+                        _filterCatChip('Sulfurique', 'sulfurique', small: true),
+                      ] else ...[
+                        _filterCatChip('Management', 'management', small: true),
+                        const SizedBox(width: 6),
+                        _filterCatDropdown('Dessalement', 'dessalement', equipes, small: true),
+                        const SizedBox(width: 6),
+                        _filterDistributionDropdown(employes, small: true),
+                        const SizedBox(width: 6),
+                        _filterCatChip('Nettoyage', 'nettoyage', small: true),
+                      ],
                       if (quittesCount > 0) ...[
                         const SizedBox(width: 6),
                         GestureDetector(
@@ -566,13 +581,19 @@ class _EmployeesPageState extends State<EmployeesPage>
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
-                      _filterCatChip('Management', 'management'),
-                      const SizedBox(width: 8),
-                      _filterCatDropdown('Dessalement', 'dessalement', equipes),
-                      const SizedBox(width: 8),
-                      _filterDistributionDropdown(employes),
-                      const SizedBox(width: 8),
-                      _filterCatChip('Nettoyage', 'nettoyage'),
+                      if (isSafi) ...[
+                        _filterCatChip('Phosphorique', 'phosphorique'),
+                        const SizedBox(width: 8),
+                        _filterCatChip('Sulfurique', 'sulfurique'),
+                      ] else ...[
+                        _filterCatChip('Management', 'management'),
+                        const SizedBox(width: 8),
+                        _filterCatDropdown('Dessalement', 'dessalement', equipes),
+                        const SizedBox(width: 8),
+                        _filterDistributionDropdown(employes),
+                        const SizedBox(width: 8),
+                        _filterCatChip('Nettoyage', 'nettoyage'),
+                      ],
                       if (quittesCount > 0) ...[
                         const SizedBox(width: 8),
                         GestureDetector(
