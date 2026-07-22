@@ -869,7 +869,8 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     final auth    = context.watch<AuthProvider>();
     final site    = context.watch<SiteProvider>();
     final mobile = isMobile(context);
-    final magasinOptions = magasinsForSite(_effectiveSiteId(auth, site));
+    final effSiteId = _effectiveSiteId(auth, site) ?? SiteId.jadida;
+    final magasinOptions = magasinsForSite(effSiteId);
 
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
@@ -964,11 +965,11 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
       if (_tab == 0) {
         activePage = _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions, internalScroll: false);
       } else if (_tab == 1) {
-        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, internalScroll: false);
+        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
       } else if (_tab == 2) {
-        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, internalScroll: false);
+        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
       } else if (_tab == 3) {
-        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, internalScroll: false);
+        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
       } else {
         activePage = _FournisseursPage(magasin: magasin, internalScroll: false);
       }
@@ -1000,9 +1001,9 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions),
-                  _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions),
-                  _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions),
-                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions),
+                  _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: effSiteId),
+                  _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: effSiteId),
+                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: effSiteId),
                   _FournisseursPage(magasin: magasin),
                 ],
               ),
@@ -1959,8 +1960,9 @@ class _EntreesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> entrees;
   final List<String> magasins;
+  final String siteId;
   final bool internalScroll;
-  const _EntreesPage({required this.magasin, required this.entrees, this.magasins = kMagasins, this.internalScroll = true});
+  const _EntreesPage({required this.magasin, required this.entrees, this.magasins = kMagasins, this.siteId = SiteId.jadida, this.internalScroll = true});
   @override
   State<_EntreesPage> createState() => _EntreesPageState();
 }
@@ -2011,7 +2013,7 @@ class _EntreesPageState extends State<_EntreesPage> {
           cats: cats, catVal: _cat,
           onCatChanged: (v) => setState(() => _cat = v),
           btnColor: kGreen, btnLabel: 'Nouvelle entrée',
-          onBtnTap: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context)),
+          onBtnTap: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context)),
         ),
         // ── Filtre Magasin ──────────────────────────────────────────────
         Padding(
@@ -2058,7 +2060,7 @@ class _EntreesPageState extends State<_EntreesPage> {
               fournisseurNom: list[i].fournisseurNom,
               onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kGreen, bgColor: kGreenLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-              onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+              onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: list[i])),
             ),
           )
               : Padding(
@@ -2069,7 +2071,7 @@ class _EntreesPageState extends State<_EntreesPage> {
               rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true,
                 onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kGreen, bgColor: kGreenLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
-                onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
             ),
@@ -2088,7 +2090,7 @@ class _EntreesPageState extends State<_EntreesPage> {
                     m: list[i], color: kGreen, bgColor: kGreenLt,
                     fournisseurNom: list[i].fournisseurNom,
                     onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: list[i])),
                   ),
                 )
               : Padding(
@@ -2098,7 +2100,7 @@ class _EntreesPageState extends State<_EntreesPage> {
                     columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('FOURNISSEUR', flex: 2), _Col('QTÉ', flex: 1), _Col('', flex: 1)],
                     rows: list.map((m) => _MouvRow(m: m, color: kGreen, bgColor: kGreenLt, showPreneur: false, showFournisseur: true,
                       onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: 'Supprimer cette entrée ? Le stock sera décrémenté.', onConfirm: () { widget.magasin.deleteEntree(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
-                      onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                      onEdit: () => _showDialog(context, _MouvForm(type: 'entree', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
                     )).toList(),
                   ),
                 )),
@@ -2115,8 +2117,9 @@ class _SortiesPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> sorties;
   final List<String> magasins;
+  final String siteId;
   final bool internalScroll;
-  const _SortiesPage({required this.magasin, required this.sorties, this.magasins = kMagasins, this.internalScroll = true});
+  const _SortiesPage({required this.magasin, required this.sorties, this.magasins = kMagasins, this.siteId = SiteId.jadida, this.internalScroll = true});
   @override
   State<_SortiesPage> createState() => _SortiesPageState();
 }
@@ -2176,7 +2179,7 @@ class _SortiesPageState extends State<_SortiesPage> {
           cats: cats, catVal: _cat,
           onCatChanged: (v) => setState(() => _cat = v),
           btnColor: kOrange, btnLabel: 'Nouvelle sortie',
-          onBtnTap: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context)),
+          onBtnTap: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context)),
         ),
         // ── Bascule Liste / Dossiers collaborateurs ────────────────────
         Padding(
@@ -2232,7 +2235,7 @@ class _SortiesPageState extends State<_SortiesPage> {
               m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
               onDetails: () => showDialog(context: ctx, builder: (_) => _MouvDetailDialog(m: list[i], color: kOrange, bgColor: kOrangeLt)),
               onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-              onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+              onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: list[i])),
             ),
           )
               : Padding(
@@ -2243,7 +2246,7 @@ class _SortiesPageState extends State<_SortiesPage> {
               rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false,
                 onDetails: () => showDialog(context: context, builder: (_) => _MouvDetailDialog(m: m, color: kOrange, bgColor: kOrangeLt)),
                 onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
-                onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
               )).toList(),
             ),
             ),
@@ -2261,7 +2264,7 @@ class _SortiesPageState extends State<_SortiesPage> {
                   itemBuilder: (ctx, i) => _MouvCard(
                     m: list[i], color: kOrange, bgColor: kOrangeLt, showPreneur: true,
                     onDelete: () => _showDialog(ctx, _ConfirmDel(nom: list[i].nomProduit, msg: _msgRestitution(list[i]), onConfirm: () { widget.magasin.deleteSortie(list[i].id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: list[i])),
+                    onEdit: () => _showDialog(ctx, _MouvForm(type: 'sortie', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: list[i])),
                   ),
                 )
               : Padding(
@@ -2271,7 +2274,7 @@ class _SortiesPageState extends State<_SortiesPage> {
                     columns: const [_Col('DATE', flex: 2), _Col('PRODUIT', flex: 3), _Col('RÉFÉR.', flex: 2), _Col('CATÉGORIE', flex: 2), _Col('QTÉ', flex: 1), _Col('PRÉLEVÉ PAR', flex: 2), _Col('', flex: 1)],
                     rows: list.map((m) => _MouvRow(m: m, color: kOrange, bgColor: kOrangeLt, showPreneur: true, showFournisseur: false,
                       onDelete: () => _showDialog(context, _ConfirmDel(nom: m.nomProduit, msg: _msgRestitution(m), onConfirm: () { widget.magasin.deleteSortie(m.id); Navigator.of(context, rootNavigator: true).pop(); })),
-                      onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                      onEdit: () => _showDialog(context, _MouvForm(type: 'sortie', magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
                     )).toList(),
                   ),
                 )),
@@ -2889,8 +2892,9 @@ class _HistoriquePage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Mouvement> mouvements;
   final List<String> magasins;
+  final String siteId;
   final bool internalScroll;
-  const _HistoriquePage({required this.magasin, required this.mouvements, this.magasins = kMagasins, this.internalScroll = true});
+  const _HistoriquePage({required this.magasin, required this.mouvements, this.magasins = kMagasins, this.siteId = SiteId.jadida, this.internalScroll = true});
   @override
   State<_HistoriquePage> createState() => _HistoriquePageState();
 }
@@ -3092,7 +3096,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                 showPreneur: false,
                 fournisseurNom: isE ? m.fournisseurNom : null,
                 onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-                onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
               );
             },
           )
@@ -3141,7 +3145,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                       ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal)
                       : Text('—', style: _muted.copyWith(fontSize: 11)),
                   Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m))),
+                    _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m))),
                     const SizedBox(width: 6),
                     _IconBtn(Icons.visibility_outlined, 'Détails', kPurpleLt, kPurple, () => _showDialog(context, _DetailsOperationDialog(m: m))),
                   ])),
@@ -3168,7 +3172,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                       showPreneur: false,
                       fournisseurNom: isE ? m.fournisseurNom : null,
                       onDelete: () => _showDialog(ctx, _ConfirmDel(nom: m.nomProduit, msg: _msgSuppression(m), onConfirm: () { isE ? widget.magasin.deleteEntree(m.id) : widget.magasin.deleteSortie(m.id); Navigator.of(ctx, rootNavigator: true).pop(); })),
-                      onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m)),
+                      onEdit: () => _showDialog(ctx, _MouvForm(type: m.type, magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m)),
                     );
                   },
                 )
@@ -3217,7 +3221,7 @@ class _HistoriquePageState extends State<_HistoriquePage> {
                             ? _PillBadge(m.fournisseurNom!, kTealLt, kTeal)
                             : Text('—', style: _muted.copyWith(fontSize: 11)),
                         Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, scaffoldContext: context, mouvement: m))),
+                          _IconBtn(Icons.edit_rounded, 'Modifier', kBlueLt, kBlue, () => _showDialog(context, _MouvForm(type: m.type, magasin: widget.magasin, siteId: widget.siteId, scaffoldContext: context, mouvement: m))),
                           const SizedBox(width: 6),
                           _IconBtn(Icons.visibility_outlined, 'Détails', kPurpleLt, kPurple, () => _showDialog(context, _DetailsOperationDialog(m: m))),
                         ])),
@@ -3611,9 +3615,10 @@ class _FournisseurFormState extends State<_FournisseurForm> {
 class _MouvForm extends StatefulWidget {
   final String type;
   final MagasinProvider magasin;
+  final String siteId;
   final BuildContext? scaffoldContext;
   final Mouvement? mouvement;
-  const _MouvForm({required this.type, required this.magasin, this.scaffoldContext, this.mouvement});
+  const _MouvForm({required this.type, required this.magasin, required this.siteId, this.scaffoldContext, this.mouvement});
   @override
   State<_MouvForm> createState() => _MouvFormState();
 }
@@ -3792,6 +3797,8 @@ class _MouvFormState extends State<_MouvForm> {
       return;
     }
 
+    _siteId = widget.siteId;
+    _selMag = magasinsForSite(_siteId).first;
     if (_isSortie) { _newCatMode = false; _newProdMode = false; }
   }
 
@@ -4114,40 +4121,8 @@ class _MouvFormState extends State<_MouvForm> {
           ),
           const SizedBox(height: 20),
 
-          // ── 3. Site ──────────────────────────────────────────────────
-          _SectionHdr('3. Site *', Icons.location_on_rounded, kBlue),
-          const SizedBox(height: 10),
-          _StyledDrop<String>(
-            value: _siteId,
-            items: [
-              DropdownMenuItem(
-                value: SiteId.jadida,
-                child: Row(children: [
-                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
-                  const SizedBox(width: 8),
-                  Text(SiteId.labelFr(SiteId.jadida)),
-                ]),
-              ),
-              DropdownMenuItem(
-                value: SiteId.safi,
-                child: Row(children: [
-                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
-                  const SizedBox(width: 8),
-                  Text(SiteId.labelFr(SiteId.safi)),
-                ]),
-              ),
-            ],
-            onChanged: (v) => setState(() {
-              _siteId = v ?? SiteId.jadida;
-              if (_selMag != null && !magasinsForSite(_siteId).contains(_selMag)) {
-                _selMag = null;
-              }
-            }),
-          ),
-          const SizedBox(height: 20),
-
-          // ── 4. Magasin de stock ──────────────────────────────────────
-          _SectionHdr('4. Magasin de stock *', Icons.warehouse_rounded, _col),
+          // ── 3. Magasin de stock ──────────────────────────────────────
+          _SectionHdr('3. Magasin de stock *', Icons.warehouse_rounded, _col),
           const SizedBox(height: 10),
           _StyledDrop<String>(
             value: _selMag,
@@ -4164,36 +4139,11 @@ class _MouvFormState extends State<_MouvForm> {
           ),
           const SizedBox(height: 20),
 
-          // ── 5. Catégorie ──────────────────────────────────────────────
-          _SectionHdr('5. Catégorie', Icons.category_outlined, _col),
+          // ── 4. Catégorie ──────────────────────────────────────────────
+          _SectionHdr('4. Catégorie', Icons.category_outlined, _col),
         ] else ...[
-          // Pour sortie : site puis catégorie
-          _SectionHdr('2. Site *', Icons.location_on_rounded, kBlue),
-          const SizedBox(height: 10),
-          _StyledDrop<String>(
-            value: _siteId,
-            items: [
-              DropdownMenuItem(
-                value: SiteId.jadida,
-                child: Row(children: [
-                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
-                  const SizedBox(width: 8),
-                  Text(SiteId.labelFr(SiteId.jadida)),
-                ]),
-              ),
-              DropdownMenuItem(
-                value: SiteId.safi,
-                child: Row(children: [
-                  const Icon(Icons.location_city_outlined, size: 14, color: kBlue),
-                  const SizedBox(width: 8),
-                  Text(SiteId.labelFr(SiteId.safi)),
-                ]),
-              ),
-            ],
-            onChanged: (v) => setState(() => _siteId = v ?? SiteId.jadida),
-          ),
-          const SizedBox(height: 20),
-          _SectionHdr('3. Catégorie', Icons.category_outlined, _col),
+          // Pour sortie : catégorie (le site suit le filtre de la barre latérale)
+          _SectionHdr('2. Catégorie', Icons.category_outlined, _col),
         ],
         const SizedBox(height: 10),
 
@@ -4233,7 +4183,7 @@ class _MouvFormState extends State<_MouvForm> {
         if (_selCat != null || _newCatMode) ...[
           if (_isEpiMode) ...[
             // ── Mode EPI : liste multi-sélection ─────────────────────
-            _SectionHdr('4. Articles EPI', Icons.verified_user_rounded, _col),
+            _SectionHdr('3. Articles EPI', Icons.verified_user_rounded, _col),
             const SizedBox(height: 10),
             SizedBox(
               height: 42,
@@ -4393,13 +4343,13 @@ class _MouvFormState extends State<_MouvForm> {
               );
             }),
             const SizedBox(height: 20),
-            _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
+            _SectionHdr('4. Prélevé par', Icons.person_outline_rounded, _col),
             const SizedBox(height: 10),
             _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
           ] else ...[
             // ── Mode standard : sélection d'un seul produit ───────────
             Builder(builder: (ctx) {
-              final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
+              final secNum = _isSortie ? '3' : (_selMag == 'Base de vie' ? '6' : '5');
               return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
             }),
             const SizedBox(height: 10),
@@ -4500,7 +4450,7 @@ class _MouvFormState extends State<_MouvForm> {
 
             if (_selProd != null || _newProdMode) ...[
               Builder(builder: (ctx) {
-                final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '7' : '6');
+                final secNum = _isSortie ? '3' : (_selMag == 'Base de vie' ? '6' : '5');
                 return _SectionHdr('$secNum. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col);
               }),
               const SizedBox(height: 10),
@@ -4554,7 +4504,7 @@ class _MouvFormState extends State<_MouvForm> {
 
             if (!_isSortie && (_selProd != null || _newProdMode)) ...[
               Builder(builder: (ctx) {
-                final secNum = _selMag == 'Base de vie' ? '8' : '7';
+                final secNum = _selMag == 'Base de vie' ? '7' : '6';
                 return _SectionHdr('$secNum. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
               }),
               const SizedBox(height: 6),
@@ -4594,7 +4544,7 @@ class _MouvFormState extends State<_MouvForm> {
             ],
 
             if (_isSortie && (_selProd != null || _newProdMode)) ...[
-              _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
+              _SectionHdr('4. Prélevé par', Icons.person_outline_rounded, _col),
               const SizedBox(height: 10),
               _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
             ],
