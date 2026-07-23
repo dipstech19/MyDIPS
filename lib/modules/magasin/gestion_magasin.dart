@@ -3712,7 +3712,10 @@ class _MouvFormState extends State<_MouvForm> {
 
   bool get _isEpiMode => _isSortie && !_isEditing && _selCat == 'EPI';
 
-  List<Produit> get _filteredProduits => widget.magasin.produits.where((p) => _selCat == null || p.categorie == _selCat).toList();
+  List<Produit> get _filteredProduits => widget.magasin.produits.where((p) =>
+      p.siteId == _siteId &&
+      (_selMag == null || p.magasin == _selMag) &&
+      (_selCat == null || p.categorie == _selCat)).toList();
 
   List<String> get _availableCatsForSelection {
     final base = widget.magasin.categoryNames;
@@ -4135,15 +4138,49 @@ class _MouvFormState extends State<_MouvForm> {
                 Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
               ]),
             )).toList(),
-            onChanged: (v) => setState(() => _selMag = v),
+            onChanged: (v) => setState(() {
+              _selMag = v;
+              if (!_newProdMode && _selProd != null && _selProd!.magasin != v) {
+                _selProd = null; _prodSearchC.clear(); _selVar.clear(); _varCtrl.clear();
+              }
+            }),
           ),
           const SizedBox(height: 20),
 
           // ── 4. Catégorie ──────────────────────────────────────────────
           _SectionHdr('4. Catégorie', Icons.category_outlined, _col),
         ] else ...[
-          // Pour sortie : catégorie (le site suit le filtre de la barre latérale)
-          _SectionHdr('2. Catégorie', Icons.category_outlined, _col),
+          // Pour sortie : magasin puis catégorie (le site suit le filtre de la barre latérale)
+          _SectionHdr('2. Magasin de stock *', Icons.warehouse_rounded, _col),
+          const SizedBox(height: 10),
+          _StyledDrop<String>(
+            value: _selMag,
+            hint: 'Sélectionner un magasin',
+            items: magasinsForSite(_siteId).map((m) => DropdownMenuItem(
+              value: m,
+              child: Row(children: [
+                const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
+                const SizedBox(width: 8),
+                Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
+              ]),
+            )).toList(),
+            onChanged: (v) => setState(() {
+              _selMag = v;
+              if (_selProd != null && _selProd!.magasin != v) {
+                _selProd = null; _prodSearchC.clear(); _selVar.clear(); _varCtrl.clear();
+              }
+              for (final item in _epiItems) item.dispose();
+              _epiItems.clear(); _epiSearchCtrl.clear();
+              if (_selCat == 'EPI') {
+                final epiProds = widget.magasin.produits.where((p) =>
+                    p.categorie == 'EPI' && p.siteId == _siteId && (_selMag == null || p.magasin == _selMag)
+                ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
+                _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
+              }
+            }),
+          ),
+          const SizedBox(height: 20),
+          _SectionHdr('3. Catégorie', Icons.category_outlined, _col),
         ],
         const SizedBox(height: 10),
 
@@ -4160,7 +4197,9 @@ class _MouvFormState extends State<_MouvForm> {
               for (final item in _epiItems) item.dispose();
               _epiItems.clear(); _epiSearchCtrl.clear();
               if (v == 'EPI' && _isSortie && !_isEditing) {
-                final epiProds = widget.magasin.produits.where((p) => p.categorie == 'EPI').toList()..sort((a, b) => a.nom.compareTo(b.nom));
+                final epiProds = widget.magasin.produits.where((p) =>
+                    p.categorie == 'EPI' && p.siteId == _siteId && (_selMag == null || p.magasin == _selMag)
+                ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
                 _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
               }
             }),
@@ -4183,7 +4222,7 @@ class _MouvFormState extends State<_MouvForm> {
         if (_selCat != null || _newCatMode) ...[
           if (_isEpiMode) ...[
             // ── Mode EPI : liste multi-sélection ─────────────────────
-            _SectionHdr('3. Articles EPI', Icons.verified_user_rounded, _col),
+            _SectionHdr('4. Articles EPI', Icons.verified_user_rounded, _col),
             const SizedBox(height: 10),
             SizedBox(
               height: 42,
@@ -4343,13 +4382,13 @@ class _MouvFormState extends State<_MouvForm> {
               );
             }),
             const SizedBox(height: 20),
-            _SectionHdr('4. Prélevé par', Icons.person_outline_rounded, _col),
+            _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
             const SizedBox(height: 10),
             _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
           ] else ...[
             // ── Mode standard : sélection d'un seul produit ───────────
             Builder(builder: (ctx) {
-              final secNum = _isSortie ? '3' : (_selMag == 'Base de vie' ? '6' : '5');
+              final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '6' : '5');
               return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
             }),
             const SizedBox(height: 10),
@@ -4450,7 +4489,7 @@ class _MouvFormState extends State<_MouvForm> {
 
             if (_selProd != null || _newProdMode) ...[
               Builder(builder: (ctx) {
-                final secNum = _isSortie ? '3' : (_selMag == 'Base de vie' ? '6' : '5');
+                final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '6' : '5');
                 return _SectionHdr('$secNum. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col);
               }),
               const SizedBox(height: 10),
@@ -4544,7 +4583,7 @@ class _MouvFormState extends State<_MouvForm> {
             ],
 
             if (_isSortie && (_selProd != null || _newProdMode)) ...[
-              _SectionHdr('4. Prélevé par', Icons.person_outline_rounded, _col),
+              _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
               const SizedBox(height: 10),
               _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
             ],
