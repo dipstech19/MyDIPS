@@ -33,7 +33,7 @@ import '../employees/models/employe_model.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Normalise les anciens siteId ('default' ou null) vers 'jadida'.
-String _normSite(String? v) => (v == null || v == 'default') ? SiteId.jadida : v;
+String _normSite(String? v) => (v == null || v == 'default' || v == SiteId.all) ? SiteId.jadida : v;
 
 class LigneMouvement {
   final String unite;
@@ -869,7 +869,8 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     final auth    = context.watch<AuthProvider>();
     final site    = context.watch<SiteProvider>();
     final mobile = isMobile(context);
-    final effSiteId = _effectiveSiteId(auth, site) ?? SiteId.jadida;
+    final rawSiteId = _effectiveSiteId(auth, site);
+    final effSiteId = (rawSiteId == null || rawSiteId == SiteId.all) ? SiteId.jadida : rawSiteId;
     final magasinOptions = magasinsForSite(effSiteId);
 
     final filteredProduits = SiteId.filterBySite(
