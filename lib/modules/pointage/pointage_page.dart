@@ -823,7 +823,11 @@ class _PointagePageState extends State<PointagePage> {
     if (isSundayForPointage) {
       for (final eq in equipes) {
         final dept = eq.magasin.trim().toLowerCase();
-        if (dept.contains('management') || dept.contains('nettoyage')) {
+        final name = eq.nom.trim().toLowerCase();
+        if (dept.contains('management') || dept.contains('managment') ||
+            dept.contains('nettoyage') ||
+            name.contains('management') || name.contains('managment') ||
+            name.contains('nettoyage')) {
           effectiveNonWorkingIds.add(eq.id);
         }
       }
@@ -851,6 +855,8 @@ class _PointagePageState extends State<PointagePage> {
     final groupes = groupesProv.groupes;
     final groupeTeams = <_TeamWorkers>[];
     for (final g in groupes) {
+      // Jour de repos hebdomadaire du groupe (ex: Nettoyage = dimanche) : ne pas l'afficher ce jour-là.
+      if (g.weeklyRestWeekday == logicalDay.weekday) continue;
       final workers = getWorkersForGroupeConsideringTemp(
         g, employes, recordByEmployeId,
         renfortByEmployeId: renfortByEmployeId,
@@ -2132,6 +2138,7 @@ class _PointagePageState extends State<PointagePage> {
       end = t;
     }
 
+    try {
     // بناء قائمة الموظفين أولاً حتى نتمكن من تمرير معرفاتهم عند جلب السجلات،
     // مما يضمن جلب سجلاتهم حتى لو لم يُسجَّل لهم أي بوانتاج في الفترة.
     final employees = <({String id, String cin, String nom, String poste, String equipeName, String? equipeId, double salaireNet, bool isQuitte, String dateQuitte})>[];
@@ -2426,6 +2433,18 @@ class _PointagePageState extends State<PointagePage> {
           duration: const Duration(seconds: 5),
         ),
       );
+    }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur lors de l\'export du pointage : $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.fixed,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
     }
   }
 
@@ -3182,6 +3201,61 @@ class _PointagePageState extends State<PointagePage> {
         final s = getState(w.id);
         if (s == AttendanceState.present) presentCount++;
         else if (s == AttendanceState.absent) absentCount++;
+      }
+
+      // Poste 1/2 : la sortie n'est jamais automatique. Bloquer l'envoi du rapport
+      // tant qu'un employé présent n'a pas encore sa sortie ("Fin de poste") marquée,
+      // car une fois le rapport verrouillé le chef ne peut plus la saisir.
+      if (!autoDeparture) {
+        final missingDeparture = workersDisplay.where((w) {
+          if (getState(w.id) != AttendanceState.present) return false;
+          final r = pointageProvider.getRecordForEmployee(w.id);
+          return r == null || r.departureStatus == DepartureStatus.unset;
+        }).toList();
+        if (missingDeparture.isNotEmpty) {
+          if (context.mounted) {
+            await showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 22),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Sorties non marquées')),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Marquez d\'abord "Fin de poste" pour chaque employé présent avant d\'envoyer le rapport. '
+                      'Une fois le rapport envoyé, la sortie ne pourra plus être saisie pour :',
+                    ),
+                    const SizedBox(height: 12),
+                    ...missingDeparture.map((w) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              Icon(Icons.person_outline, size: 16, color: Colors.grey.shade700),
+                              const SizedBox(width: 6),
+                              Expanded(child: Text(w.nom)),
+                            ],
+                          ),
+                        )),
+                  ],
+                ),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return;
+        }
       }
 
       final equipe = equipes.where((e) => e.id == equipeId).toList();

@@ -3715,7 +3715,7 @@ class _MouvFormState extends State<_MouvForm> {
 
   List<Produit> get _filteredProduits => widget.magasin.produits.where((p) =>
       p.siteId == _siteId &&
-      (_selMag == null || p.magasin == _selMag) &&
+      (_isSortie || _selMag == null || p.magasin == _selMag) &&
       (_selCat == null || p.categorie == _selCat)).toList();
 
   List<String> get _availableCatsForSelection {
@@ -3883,7 +3883,7 @@ class _MouvFormState extends State<_MouvForm> {
           final qte = prod.aVariantes ? 0 : (int.tryParse(item.qteCtrl.text) ?? 0);
           final mvt = Mouvement(
             id: '', type: 'sortie', produitId: prod.id, nomProduit: prod.nom,
-            reference: prod.reference, categorie: catFinal, magasin: magasinFinal,
+            reference: prod.reference, categorie: catFinal, magasin: prod.magasin.isNotEmpty ? prod.magasin : magasinFinal,
             aVariantes: prod.aVariantes, groupeUniteLabel: prod.aVariantes ? prod.groupeUniteLabel : null,
             quantite: qte, lignes: lignes, date: _mvtDate,
             preneurNom: _preneurC.text.trim().isNotEmpty ? _preneurC.text.trim() : null,
@@ -3958,7 +3958,7 @@ class _MouvFormState extends State<_MouvForm> {
         nomProduit: (_isEditing && !_newProdMode) ? (_mvtNomCtrl.text.trim().isNotEmpty ? _mvtNomCtrl.text.trim() : prod.nom) : prod.nom,
         reference: (_isEditing && !_newProdMode) ? (_mvtRefCtrl.text.trim().isNotEmpty ? _mvtRefCtrl.text.trim() : prod.reference) : prod.reference,
         categorie: catFinal,
-        magasin: magasinFinal,
+        magasin: (_isSortie && prod.magasin.isNotEmpty) ? prod.magasin : magasinFinal,
         aVariantes: _hasVar,
         groupeUniteLabel: _hasVar ? (prod.groupeUniteLabel ?? _newGroupeLabel) : null,
         quantite: quantite,
@@ -4174,7 +4174,7 @@ class _MouvFormState extends State<_MouvForm> {
               _epiItems.clear(); _epiSearchCtrl.clear();
               if (_selCat == 'EPI') {
                 final epiProds = widget.magasin.produits.where((p) =>
-                    p.categorie == 'EPI' && p.siteId == _siteId && (_selMag == null || p.magasin == _selMag)
+                    p.categorie == 'EPI' && p.siteId == _siteId
                 ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
                 _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
               }
@@ -4199,7 +4199,7 @@ class _MouvFormState extends State<_MouvForm> {
               _epiItems.clear(); _epiSearchCtrl.clear();
               if (v == 'EPI' && _isSortie && !_isEditing) {
                 final epiProds = widget.magasin.produits.where((p) =>
-                    p.categorie == 'EPI' && p.siteId == _siteId && (_selMag == null || p.magasin == _selMag)
+                    p.categorie == 'EPI' && p.siteId == _siteId
                 ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
                 _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
               }
@@ -4440,6 +4440,7 @@ class _MouvFormState extends State<_MouvForm> {
                           onTap: () => setState(() {
                             _selProd = p; _prodSearchC.text = p.nom;
                             _mvtNomCtrl.text = p.nom; _mvtRefCtrl.text = p.reference;
+                            if (_isSortie && p.magasin.isNotEmpty) _selMag = p.magasin;
                             _selVar.clear(); _varCtrl.clear(); _stockError = null; _varStockErrors = {};
                             if (!_isSortie && p.fournisseurId != null) _selFournisseurId = p.fournisseurId;
                             _validateStock();
