@@ -5,13 +5,19 @@ import '../../core/locale/app_locale.dart';
 import '../../core/utils/responsive.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
+import '../pointage/absence_reasons_provider.dart';
 import '../pointage/models/pointage_model.dart';
 import '../pointage/pointage_hours_config.dart';
 import '../pointage/pointage_provider.dart';
+import '../pointage/services/pointage_export_service.dart';
+import '../pointage/widgets/feuille_pointage_share.dart';
 import 'groupes_provider.dart';
 
 /// Pointage pour un "Groupe" مستقل (خارج نظام équipes / shifts).
 /// يُخزّن السجلات باستعمال equipeId = "groupe:<groupeId>".
+///
+/// Le responsable pointe présent/absent puis confirme ; la sortie est
+/// enregistrée automatiquement à la confirmation (pas de saisie manuelle).
 class GroupePointagePage extends StatelessWidget {
   const GroupePointagePage({super.key});
 
@@ -22,6 +28,7 @@ class GroupePointagePage extends StatelessWidget {
     final groupesProv = context.watch<GroupesProvider>();
     final empsProv = context.watch<EmployeesProvider>();
     final pointageProv = context.watch<PointageProvider>();
+    final reasonConfigs = context.watch<AbsenceReasonsProvider>().reasons;
     final now = DateTime.now();
 
     if (gid == null || gid.isEmpty) {
@@ -40,12 +47,109 @@ class GroupePointagePage extends StatelessWidget {
     );
     final ignoreTime = pointageProv.ignoreTimeWindowsForTest;
     final canArrival = ignoreTime || config.canMarkArrivalNow(now);
-    final canDeparture = ignoreTime || config.canMarkDepartureNow(now);
 
     final members = empsProv.employes.where((e) => g.membreIds.contains(e.id) && e.statut == EmployeStatut.enService).toList()
       ..sort((a, b) => a.nom.compareTo(b.nom));
 
     PointageRecord? recordFor(String employeId) => pointageProv.getRecordForEmployee(employeId);
+
+    final equipeId = 'groupe:${g.id}';
+    final equipeName = 'Groupe: ${g.nom}';
+    final chefName = auth.currentUser?.nom ?? 'Responsable';
+    final pointageDate = getPointageDateForConfig(config, now);
+
+    // Confirmé dès que tous les membres portent la marque d'envoi du responsable.
+    final reportConfirmed = members.isNotEmpty &&
+        members.every((e) => recordFor(e.id)?.submittedByChefAt != null);
+
+    /// Lignes de la feuille de pointage PDF (les non-saisis deviennent absents
+    /// à la confirmation, la feuille les affiche donc ainsi).
+    List<FeuillePointageLine> buildLines() => [
+          for (final e in members)
+            () {
+              final r = recordFor(e.id);
+              final present = r?.chefStatus == ChefPointageStatus.present;
+              return feuillePointageLine(
+                nomComplet: e.nom,
+                statut: present ? feuilleStatutPresent : feuilleStatutAbsent,
+                commentaire: present
+                    ? ''
+                    : getAbsenceReasonLabel(r?.absenceReason, reasonConfigs),
+              );
+            }(),
+        ];
+
+    Future<void> confirmerPointage() async {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr(ctx, 'pointage_confirm_title')),
+          content: Text(tr(ctx, 'pointage_confirm_send_message')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr(ctx, 'pointage_confirm_short')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      try {
+        for (final e in members) {
+          final r = recordFor(e.id);
+          // Non saisi → absent, comme pour le pointage d'équipe.
+          if (r == null || r.chefStatus == ChefPointageStatus.unset) {
+            await pointageProv.markChefAttendance(
+              employeId: e.id,
+              employeNom: e.nom,
+              employeCin: e.cin,
+              equipeId: equipeId,
+              equipeName: equipeName,
+              chefName: chefName,
+              chefStatus: ChefPointageStatus.absent,
+              chefId: auth.currentUser?.id,
+              configOverride: config,
+              bypassTimeWindows: true,
+            );
+            continue;
+          }
+          // Sortie enregistrée automatiquement pour les présents.
+          if (r.chefStatus == ChefPointageStatus.present &&
+              r.departureStatus == DepartureStatus.unset) {
+            await pointageProv.setDepartureStatus(
+              record: r,
+              status: DepartureStatus.finished,
+              overtimeMinutes: 0,
+              configOverride: config,
+              bypassTimeWindows: true,
+            );
+          }
+        }
+        await pointageProv.submitChefReportForDateManual(
+          equipeId,
+          pointageDate,
+          equipeName: equipeName,
+          chefName: chefName,
+        );
+        if (!context.mounted) return;
+        await showPointageConfirmedDialog(
+          context,
+          date: pointageDate,
+          equipeLabel: g.nom,
+          posteLabel: '',
+          lines: buildLines(),
+        );
+      } catch (err) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Erreur : $err'), backgroundColor: Colors.red),
+        );
+      }
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -76,23 +180,7 @@ class GroupePointagePage extends StatelessWidget {
               final locked = pointageProv.isChefLockedForEmployee(e.id);
               final present = r?.chefStatus == ChefPointageStatus.present;
               final absent = r?.chefStatus == ChefPointageStatus.absent;
-              final canMark = !locked && canArrival;
-              final equipeId = 'groupe:${g.id}';
-              final equipeName = 'Groupe: ${g.nom}';
-              final chefName = auth.currentUser?.nom ?? 'Responsable';
-              final recordOrPlaceholder = r ??
-                  PointageRecord(
-                    id: '',
-                    employeId: e.id,
-                    employeNom: e.nom,
-                    employeCin: e.cin,
-                    equipeId: equipeId,
-                    equipeName: equipeName,
-                    chefName: chefName,
-                    status: AttendanceStatus.unmarked,
-                    date: getPointageDateForConfig(config, now),
-                    createdAt: now,
-                  );
+              final canMark = !locked && !reportConfirmed && canArrival;
 
               final chips = <Widget>[
                 FilterChip(
@@ -143,19 +231,6 @@ class GroupePointagePage extends StatelessWidget {
                         }
                       : null,
                 ),
-                if (canDeparture && present)
-                  FilterChip(
-                    label: Text(tr(context, 'departure_finished')),
-                    selected: recordOrPlaceholder.departureStatus == DepartureStatus.finished,
-                    onSelected: (_) async {
-                      await pointageProv.setDepartureStatus(
-                        record: recordOrPlaceholder,
-                        status: DepartureStatus.finished,
-                        overtimeMinutes: 0,
-                        configOverride: config,
-                      );
-                    },
-                  ),
               ];
 
               return Card(
@@ -217,6 +292,45 @@ class GroupePointagePage extends StatelessWidget {
                 ),
               );
             }),
+          if (members.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            if (reportConfirmed)
+              Container(
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.green.shade600,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${tr(context, 'pointage_confirmed')} ✓',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+              )
+            else
+              SizedBox(
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: confirmerPointage,
+                  icon: const Icon(Icons.check_rounded),
+                  label: Text(tr(context, 'pointage_confirm_btn')),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            // Partage / téléchargement du PDF : uniquement après confirmation.
+            if (reportConfirmed) ...[
+              const SizedBox(height: 12),
+              FeuillePointageShareSection(
+                date: pointageDate,
+                equipeLabel: g.nom,
+                posteLabel: '',
+                linesBuilder: buildLines,
+              ),
+            ],
+            const SizedBox(height: 16),
+          ],
         ],
       ),
     );

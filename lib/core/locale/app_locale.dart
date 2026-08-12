@@ -69,6 +69,14 @@ class AppTranslations {
     'pointage_confirm_send_title': 'Confirmer l\'envoi',
     'pointage_confirm_send_message':
         'Après confirmation, le pointage sera verrouillé sur cet appareil immédiatement (même si la connexion est lente). Vous ne pourrez plus modifier ni renvoyer.',
+    'pointage_confirm_title': 'Valider le pointage',
+    'pointage_confirm_btn': 'Valider',
+    'pointage_confirm_short': 'Valider',
+    'pointage_confirmed': 'Pointage validé',
+    'pointage_share_title': 'Partager la feuille de pointage',
+    'pointage_share_whatsapp': 'Partager le rapport',
+    'pointage_share_hint':
+        'Partagez la feuille de pointage en PDF sur WhatsApp.',
     'pointage_chef_card_shift_complete': 'Shift terminé',
     'pointage_chef_card_shift_early': 'Avant fin de shift',
     'pointage_chef_absents_note': 'Absents : %s',
@@ -295,6 +303,14 @@ class AppTranslations {
     'pointage_confirm_send_title': 'تأكيد الإرسال',
     'pointage_confirm_send_message':
         'بعد التأكيد، يُقفل التسجيل على هذا الجهاز فوراً حتى مع ضعف الإنترنت. لن يمكنك التعديل أو الإرسال مرة أخرى.',
+    'pointage_confirm_title': 'تأكيد البوانتاج',
+    'pointage_confirm_btn': 'تأكيد',
+    'pointage_confirm_short': 'تأكيد',
+    'pointage_confirmed': 'تم تأكيد البوانتاج',
+    'pointage_share_title': 'مشاركة ورقة البوانتاج',
+    'pointage_share_whatsapp': 'مشاركة التقرير',
+    'pointage_share_hint':
+        'شارك ورقة البوانتاج بصيغة PDF على واتساب.',
     'pointage_chef_card_shift_complete': 'انتهى الشفت',
     'pointage_chef_card_shift_early': 'قبل نهاية الشفت',
     'pointage_chef_absents_note': 'غائبون : %s',

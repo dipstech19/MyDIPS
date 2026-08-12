@@ -15,6 +15,16 @@ import '../../overtime/models/overtime_model.dart';
 import '../data/daily_snapshot_repository.dart';
 import '../pointage_data.dart';
 
+/// Une ligne de la feuille de pointage papier partagée par le chef d'équipe.
+typedef FeuillePointageLine = ({
+  String nom,
+  String prenom,
+  /// « Présent » / « Absent » (colonne qui remplace « Signature » du modèle papier).
+  String statut,
+  /// Motif d'absence ou remarque.
+  String commentaire,
+});
+
 class PointageExportRow {
   final String employeId;
   final String employeCin;
@@ -653,6 +663,319 @@ class PointageExportService {
         'rapport_${safeName}_${_dateFormat.format(date).replaceAll('/', '-')}.pdf';
 
     return _saveAndOpen(bytes, fileName);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Feuille de pointage (modèle papier DIPS) — partage chef d'équipe
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Titre imprimé sur la feuille de pointage (identique au modèle papier).
+  static const String feuillePointageTitle =
+      'FEUILLE DE POINTAGE / Dessalement W2E';
+
+  /// NB imprimé sous le tableau (identique au modèle papier).
+  static const String feuillePointageNb =
+      'NB : En cas d\'absence ou autre, renseigner le motif dans la case « Commentaire »';
+
+  /// Reproduit la feuille de pointage papier : logo + en-tête DIPS, DATE / EQUIPE /
+  /// POSTE, puis le tableau NOM | PRENOM | STATUT | COMMENTAIRE.
+  /// [minRows] complète le tableau avec des lignes vides comme sur le modèle.
+  static Future<Uint8List> buildFeuillePointagePdf({
+    required DateTime date,
+    required String equipeLabel,
+    String posteLabel = '',
+    String journeeLabel = '',
+    required List<FeuillePointageLine> lines,
+    int minRows = 14,
+  }) async {
+    final logo = await _loadLogo();
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(38, 30, 38, 30),
+        build: (context) => [
+          _buildFeuilleHeader(logo),
+          pw.SizedBox(height: 24),
+          pw.Center(
+            child: pw.Text(
+              feuillePointageTitle,
+              style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold),
+            ),
+          ),
+          pw.SizedBox(height: 20),
+          _feuilleField('DATE', _dateFormat.format(date)),
+          pw.SizedBox(height: 9),
+          _feuilleField('EQUIPE', equipeLabel),
+          pw.SizedBox(height: 9),
+          _feuillePosteField(posteLabel, journeeLabel),
+          pw.SizedBox(height: 18),
+          pw.Text(
+            'Liste des présents',
+            style: pw.TextStyle(fontSize: 11.5, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 8),
+          _buildFeuilleTable(lines: lines, minRows: minRows),
+          pw.SizedBox(height: 10),
+          pw.Text(
+            feuillePointageNb,
+            style: pw.TextStyle(fontSize: 8.5, fontStyle: pw.FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  /// Titre du rapport partagé par le chef : « date équipe poste »
+  /// (ex. « 07-08-2026 Equipe 2 Poste 2 »). Sert de nom de fichier PDF, c'est
+  /// donc ce que voient les destinataires sur WhatsApp.
+  static String feuillePointageTitleFor({
+    required DateTime date,
+    required String equipeLabel,
+    String posteLabel = '',
+  }) {
+    final parts = [
+      _dateFormat.format(date).replaceAll('/', '-'),
+      _sanitizeFileNamePart(equipeLabel),
+      _sanitizeFileNamePart(feuillePosteTitle(posteLabel)),
+    ].where((p) => p.isNotEmpty);
+    return parts.join(' ');
+  }
+
+  /// Nom de fichier de la feuille de pointage (date + équipe + poste).
+  static String feuillePointageFileName({
+    required DateTime date,
+    required String equipeLabel,
+    String posteLabel = '',
+  }) {
+    return '${feuillePointageTitleFor(
+      date: date,
+      equipeLabel: equipeLabel,
+      posteLabel: posteLabel,
+    )}.pdf';
+  }
+
+  /// « P2 » → « Poste 2 » pour le titre du rapport. Un libellé déjà lisible
+  /// (ou vide) est laissé tel quel.
+  static String feuillePosteTitle(String posteLabel) {
+    final clean = posteLabel.trim();
+    if (clean.isEmpty) return '';
+    final match = RegExp(r'^P\s*(\d+)$', caseSensitive: false).firstMatch(clean);
+    return match != null ? 'Poste ${match.group(1)}' : clean;
+  }
+
+  /// Retire les accents et les caractères interdits dans un nom de fichier,
+  /// pour que « Équipe 2 » reste « Equipe 2 » sur tous les appareils.
+  static String _sanitizeFileNamePart(String value) {
+    const accented = 'àáâãäåçèéêëìíîïñòóôõöùúûüýÿÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ';
+    const plain = 'aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY';
+    final buffer = StringBuffer();
+    for (final rune in value.trim().runes) {
+      final char = String.fromCharCode(rune);
+      final index = accented.indexOf(char);
+      buffer.write(index >= 0 ? plain[index] : char);
+    }
+    return buffer
+        .toString()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// En-tête : logo DIPS + raison sociale, comme sur le modèle papier.
+  static pw.Widget _buildFeuilleHeader(pw.ImageProvider? logo) {
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.center,
+      children: [
+        if (logo != null) ...[
+          pw.Container(
+            width: 52,
+            height: 46,
+            child: pw.Image(logo, fit: pw.BoxFit.contain),
+          ),
+          pw.SizedBox(width: 14),
+        ],
+        pw.Expanded(
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'DIGITALIZATION, INNOVATION',
+                style: pw.TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.grey800,
+                ),
+              ),
+              pw.Text(
+                '& PROCESS SIMULATION',
+                style: pw.TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.grey800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// « LABEL : valeur ........................ » (ligne pointillée du modèle).
+  static pw.Widget _feuilleField(String label, String value) {
+    final clean = value.trim();
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.end,
+      children: [
+        pw.Text(
+          '$label : ',
+          style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+        ),
+        if (clean.isNotEmpty) ...[
+          pw.Text(clean, style: const pw.TextStyle(fontSize: 10)),
+          pw.SizedBox(width: 6),
+        ],
+        pw.Expanded(child: _dottedFiller()),
+      ],
+    );
+  }
+
+  /// « POSTE : ....... / Journée : ....... » (les deux champs sur la même ligne).
+  static pw.Widget _feuillePosteField(String posteLabel, String journeeLabel) {
+    final poste = posteLabel.trim();
+    final journee = journeeLabel.trim();
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.end,
+      children: [
+        pw.Text(
+          'POSTE : ',
+          style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+        ),
+        if (poste.isNotEmpty) ...[
+          pw.Text(poste, style: const pw.TextStyle(fontSize: 10)),
+          pw.SizedBox(width: 6),
+        ],
+        pw.Expanded(flex: 2, child: _dottedFiller()),
+        pw.Text(
+          ' / Journée : ',
+          style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+        ),
+        if (journee.isNotEmpty) ...[
+          pw.Text(journee, style: const pw.TextStyle(fontSize: 10)),
+          pw.SizedBox(width: 6),
+        ],
+        pw.Expanded(flex: 2, child: _dottedFiller()),
+      ],
+    );
+  }
+
+  /// Ligne de pointillés qui remplit l'espace restant (rognée à la largeur dispo).
+  static pw.Widget _dottedFiller() {
+    return pw.Container(
+      height: 10,
+      margin: const pw.EdgeInsets.only(bottom: 1),
+      child: pw.ClipRect(
+        child: pw.Text(
+          '.' * 220,
+          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+          maxLines: 1,
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _buildFeuilleTable({
+    required List<FeuillePointageLine> lines,
+    required int minRows,
+  }) {
+    final rows = <pw.TableRow>[
+      pw.TableRow(
+        children: [
+          _feuilleHeadCell('NOM'),
+          _feuilleHeadCell('PRENOM'),
+          _feuilleHeadCell('STATUT'),
+          _feuilleHeadCell('COMMENTAIRE'),
+        ],
+      ),
+    ];
+
+    for (final l in lines) {
+      rows.add(
+        pw.TableRow(
+          children: [
+            _feuilleBodyCell(l.nom),
+            _feuilleBodyCell(l.prenom),
+            _feuilleBodyCell(l.statut, align: pw.TextAlign.center),
+            _feuilleBodyCell(l.commentaire),
+          ],
+        ),
+      );
+    }
+    // Lignes vides de fin, comme sur le modèle papier.
+    for (var i = lines.length; i < minRows; i++) {
+      rows.add(
+        pw.TableRow(
+          children: [
+            _feuilleBodyCell(''),
+            _feuilleBodyCell(''),
+            _feuilleBodyCell(''),
+            _feuilleBodyCell(''),
+          ],
+        ),
+      );
+    }
+
+    return pw.Table(
+      border: pw.TableBorder.all(width: 0.8, color: PdfColors.black),
+      columnWidths: const {
+        0: pw.FlexColumnWidth(2.5),
+        1: pw.FlexColumnWidth(2.2),
+        2: pw.FlexColumnWidth(2.0),
+        3: pw.FlexColumnWidth(2.6),
+      },
+      defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
+      children: rows,
+    );
+  }
+
+  static pw.Widget _feuilleHeadCell(String text) {
+    return pw.Container(
+      alignment: pw.Alignment.center,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+      child: pw.Text(
+        text,
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(
+          fontSize: 9.5,
+          fontWeight: pw.FontWeight.bold,
+          fontStyle: pw.FontStyle.italic,
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _feuilleBodyCell(
+    String text, {
+    pw.TextAlign align = pw.TextAlign.left,
+  }) {
+    return pw.Container(
+      height: 26,
+      alignment: align == pw.TextAlign.center
+          ? pw.Alignment.center
+          : pw.Alignment.centerLeft,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: pw.Text(
+        text,
+        textAlign: align,
+        maxLines: 1,
+        overflow: pw.TextOverflow.clip,
+        style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+      ),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════

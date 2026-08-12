@@ -27,8 +27,10 @@ import '../shifts/shifts_provider.dart';
 import '../overtime/overtime_provider.dart';
 import '../overtime/models/overtime_model.dart';
 import '../shifts/models/shift_models.dart';
+import 'models/absence_reason_config.dart';
 import 'models/pointage_model.dart';
 import 'services/pointage_export_service.dart';
+import 'widgets/feuille_pointage_share.dart';
 import '../groupes/groupes_provider.dart';
 import '../groupes/models/groupe_model.dart';
 
@@ -1376,6 +1378,11 @@ class _PointagePageState extends State<PointagePage> {
                                           record?.adminFinalStatus == AttendanceStatus.training ||
                                           record?.adminFinalStatus == AttendanceStatus.leave)
                                       : (record?.isFinalPresent ?? false);
+                                  // Comme sur desktop : formation / congé approuvé
+                                  // verrouillent la correction manuelle.
+                                  final canEditStatus = isGroupScope ||
+                                      (record?.adminFinalStatus != AttendanceStatus.training &&
+                                          record?.adminFinalStatus != AttendanceStatus.leave);
                                   return Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                     decoration: BoxDecoration(
@@ -1395,18 +1402,51 @@ class _PointagePageState extends State<PointagePage> {
                                           _DriverChefBadge(label: 'P', value: record?.chefStatus, isDriver: false),
                                           const SizedBox(width: 8),
                                         ],
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                                          decoration: BoxDecoration(
-                                            color: isPresent ? Colors.green.shade50 : Colors.red.shade50,
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            isPresent ? 'Présent' : 'Absent',
-                                            style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w600,
-                                                color: isPresent ? Colors.green.shade700 : Colors.red.shade700),
+                                        // Admin / directeur : le badge est
+                                        // cliquable pour corriger la présence
+                                        // (équivalent mobile des boutons desktop).
+                                        InkWell(
+                                          borderRadius: BorderRadius.circular(8),
+                                          onTap: canEditStatus
+                                              ? () => _showAdminStatusSheet(
+                                                    context,
+                                                    pointageProvider: pointageProvider,
+                                                    employe: e,
+                                                    record: record,
+                                                    equipeId: t.equipeId,
+                                                    equipeName: t.equipeName,
+                                                    chefName: t.chefName,
+                                                    isPresent: isPresent,
+                                                    adminOverridePersistDate:
+                                                        isViewingToday ? null : logicalDay,
+                                                  )
+                                              : null,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                                            decoration: BoxDecoration(
+                                              color: isPresent ? Colors.green.shade50 : Colors.red.shade50,
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  isPresent ? 'Présent' : 'Absent',
+                                                  style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: isPresent ? Colors.green.shade700 : Colors.red.shade700),
+                                                ),
+                                                if (canEditStatus) ...[
+                                                  const SizedBox(width: 3),
+                                                  Icon(
+                                                    Icons.edit_outlined,
+                                                    size: 11,
+                                                    color: isPresent ? Colors.green.shade700 : Colors.red.shade700,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       ],
@@ -3098,6 +3138,152 @@ class _PointagePageState extends State<PointagePage> {
     );
   }
 
+  /// Édition du pointage par l'admin / le directeur depuis mobile.
+  /// Le layout desktop expose deux boutons Présent / Absent par employé ; sur
+  /// mobile la place manque, on ouvre donc la même action dans une bottom sheet
+  /// déclenchée par le badge de statut.
+  Future<void> _showAdminStatusSheet(
+    BuildContext context, {
+    required PointageProvider pointageProvider,
+    required Employe employe,
+    required PointageRecord? record,
+    required String equipeId,
+    required String equipeName,
+    required String chefName,
+    required bool isPresent,
+    /// `null` = journée courante ; sinon l'override est écrit sur ce jour-là.
+    required DateTime? adminOverridePersistDate,
+  }) async {
+    Future<void> apply(AttendanceStatus status, {String? absenceReason}) async {
+      final overrideDay = adminOverridePersistDate ?? DateTime.now();
+      final overrideShift =
+          context.read<ShiftsProvider>().getShiftForEquipe(equipeId, overrideDay);
+      if (record != null) {
+        await pointageProvider.setAdminOverride(
+          record.id,
+          status,
+          absenceReason: absenceReason,
+          shiftType: overrideShift,
+        );
+      } else {
+        await pointageProvider.setAdminOverrideForEmployee(
+          employeId: employe.id,
+          employeNom: employe.nom,
+          employeCin: employe.cin,
+          equipeId: equipeId,
+          equipeName: equipeName,
+          chefName: chefName,
+          status: status,
+          absenceReason: absenceReason,
+          viewDate: adminOverridePersistDate,
+          shiftType: overrideShift,
+        );
+      }
+    }
+
+    final choice = await showModalBottomSheet<AttendanceStatus>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Text(
+              employe.nom,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              equipeName,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 10),
+            const Divider(height: 1),
+            ListTile(
+              leading: Icon(Icons.check_circle, color: Colors.green.shade600),
+              title: Text(tr(ctx, 'present')),
+              trailing: isPresent
+                  ? Icon(Icons.done, size: 18, color: Colors.green.shade700)
+                  : null,
+              onTap: () => Navigator.pop(ctx, AttendanceStatus.present),
+            ),
+            ListTile(
+              leading: Icon(Icons.cancel, color: Colors.red.shade600),
+              title: Text(tr(ctx, 'absent')),
+              trailing: !isPresent
+                  ? Icon(Icons.done, size: 18, color: Colors.red.shade700)
+                  : null,
+              onTap: () => Navigator.pop(ctx, AttendanceStatus.absent),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    if (choice == AttendanceStatus.absent) {
+      final reasonId = await _showAbsenceReasonDialog(context);
+      if (reasonId == null || !mounted) return;
+      await apply(AttendanceStatus.absent, absenceReason: reasonId);
+    } else {
+      await apply(AttendanceStatus.present);
+    }
+    if (mounted) setState(() {});
+  }
+
+  // ── Feuille de pointage (PDF) : partage WhatsApp / téléchargement ───────
+
+  /// Lignes de la feuille de pointage à partir de ce que le chef voit à l'écran.
+  /// [treatUnmarkedAsAbsent] : après confirmation les non-saisis sont enregistrés
+  /// comme absents, la feuille doit donc les afficher ainsi.
+  List<FeuillePointageLine> _buildFeuillePointageLines({
+    required List<Employe> workers,
+    required PointageProvider pointageProvider,
+    required List<AbsenceReasonConfig> reasonConfigs,
+    required AttendanceState Function(String employeId) getState,
+    bool treatUnmarkedAsAbsent = false,
+  }) {
+    final lines = <FeuillePointageLine>[];
+    for (final w in workers) {
+      final record = pointageProvider.getRecordForEmployee(w.id);
+      String statut = '';
+      String commentaire = '';
+      if (record?.adminFinalStatus == AttendanceStatus.training) {
+        statut = feuilleStatutPresent;
+        commentaire = 'Formation';
+      } else if (record?.adminFinalStatus == AttendanceStatus.leave) {
+        statut = feuilleStatutPresent;
+        commentaire = 'Congé approuvé';
+      } else {
+        switch (getState(w.id)) {
+          case AttendanceState.present:
+          case AttendanceState.notInVehicle:
+            statut = feuilleStatutPresent;
+            break;
+          case AttendanceState.absent:
+            statut = feuilleStatutAbsent;
+            commentaire =
+                getAbsenceReasonLabel(record?.absenceReason, reasonConfigs);
+            break;
+          case AttendanceState.unmarked:
+            if (treatUnmarkedAsAbsent) statut = feuilleStatutAbsent;
+            break;
+        }
+      }
+      lines.add(feuillePointageLine(
+        nomComplet: w.nom,
+        statut: statut,
+        commentaire: commentaire,
+      ));
+    }
+    return lines;
+  }
+
   Widget _buildChefContent(
     BuildContext context,
     AuthProvider auth,
@@ -3140,26 +3326,18 @@ class _PointagePageState extends State<PointagePage> {
     }
     final bypassPointageHours = pointageProvider.ignoreTimeWindowsForTest ||
         auth.canBypassPointageTimeWindows(linkedChefPoste: chefPosteFromLink?.poste);
-    // Détection poste 3 (nuit) — la sortie est automatique, pas manuelle.
+    // Le chef ne saisit plus la sortie : il pointe présent/absent puis confirme.
+    // La sortie est enregistrée automatiquement pour tous les présents à la confirmation.
     final chefToday = DateTime(now.year, now.month, now.day);
     final shiftForChefEarly = chefEquipe != null
         ? shiftsProvider.getShiftForEquipe(chefEquipe.id, chefToday)
         : null;
-    final isNightShift = shiftForChefEarly == ShiftType.night;
-    // Équipes Management / Nettoyage : pas de rotation postes, la sortie n'a pas besoin
-    // d'être confirmée par le chef — elle est enregistrée automatiquement comme le poste 3.
-    final chefDept = chefEquipe?.magasin.trim().toLowerCase() ?? '';
-    final chefEquipeNameLower = chefEquipe?.nom.trim().toLowerCase() ?? '';
-    final isManagementOrNettoyageTeam = chefDept.contains('management') ||
-        chefDept.contains('managment') ||
-        chefDept.contains('nettoyage') ||
-        chefEquipeNameLower.contains('management') ||
-        chefEquipeNameLower.contains('managment') ||
-        chefEquipeNameLower.contains('nettoyage');
-    final autoDeparture = isNightShift || isManagementOrNettoyageTeam;
-    // Poste 1/2 : bannière si rapport envoyé mais sorties pas encore saisies.
-    // Poste 3 / Management / Nettoyage : bannière dès que rapport envoyé (sortie auto, pas besoin du chef).
-    // Bouton "Envoyer rapport" : avant envoi OU (P1/P2) après que toutes les sorties sont saisies.
+    // Poste imprimé sur la feuille de pointage (P1/P2/P3), vide si repos/inconnu.
+    final posteLabelForExport =
+        (shiftForChefEarly == null || shiftForChefEarly == ShiftType.rest)
+            ? ''
+            : shiftForChefEarly.shortLabel;
+    // Bannière « pointage confirmé » à la place du bouton une fois le pointage envoyé.
     final allLocked = workersDisplay.isNotEmpty &&
         workersDisplay.every((w) => pointageProvider.isChefLockedForEmployee(w.id));
     final chefReportLockedForAll = allLocked;
@@ -3176,7 +3354,7 @@ class _PointagePageState extends State<PointagePage> {
       }
       return _chefStatusToState(pointageProvider.getChefStatusForEmployee(id));
     }
-    final reportSentMsgChef = tr(context, 'report_sent');
+    final absenceReasonConfigs = context.watch<AbsenceReasonsProvider>().reasons;
     final equipeForTitle = equipes.where((e) => e.id == auth.equipeId).toList();
     final equipeNameForTitle = equipeForTitle.isNotEmpty ? equipeForTitle.first.nom : '';
 
@@ -3203,61 +3381,6 @@ class _PointagePageState extends State<PointagePage> {
         else if (s == AttendanceState.absent) absentCount++;
       }
 
-      // Poste 1/2 : la sortie n'est jamais automatique. Bloquer l'envoi du rapport
-      // tant qu'un employé présent n'a pas encore sa sortie ("Fin de poste") marquée,
-      // car une fois le rapport verrouillé le chef ne peut plus la saisir.
-      if (!autoDeparture) {
-        final missingDeparture = workersDisplay.where((w) {
-          if (getState(w.id) != AttendanceState.present) return false;
-          final r = pointageProvider.getRecordForEmployee(w.id);
-          return r == null || r.departureStatus == DepartureStatus.unset;
-        }).toList();
-        if (missingDeparture.isNotEmpty) {
-          if (context.mounted) {
-            await showDialog<void>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 22),
-                    const SizedBox(width: 10),
-                    const Expanded(child: Text('Sorties non marquées')),
-                  ],
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Marquez d\'abord "Fin de poste" pour chaque employé présent avant d\'envoyer le rapport. '
-                      'Une fois le rapport envoyé, la sortie ne pourra plus être saisie pour :',
-                    ),
-                    const SizedBox(height: 12),
-                    ...missingDeparture.map((w) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Row(
-                            children: [
-                              Icon(Icons.person_outline, size: 16, color: Colors.grey.shade700),
-                              const SizedBox(width: 6),
-                              Expanded(child: Text(w.nom)),
-                            ],
-                          ),
-                        )),
-                  ],
-                ),
-                actions: [
-                  FilledButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-            );
-          }
-          return;
-        }
-      }
-
       final equipe = equipes.where((e) => e.id == equipeId).toList();
       final equipeName = equipe.isNotEmpty ? equipe.first.nom : '';
       final reportNow = DateTime.now();
@@ -3273,9 +3396,9 @@ class _PointagePageState extends State<PointagePage> {
         builder: (ctx) => AlertDialog(
           title: Row(
             children: [
-              Icon(Icons.send_rounded, color: Colors.blue.shade700, size: 22),
+              Icon(Icons.how_to_reg_rounded, color: Colors.blue.shade700, size: 22),
               const SizedBox(width: 10),
-              Expanded(child: Text(tr(ctx, 'pointage_confirm_send_title'))),
+              Expanded(child: Text(tr(ctx, 'pointage_confirm_title'))),
             ],
           ),
           content: Column(
@@ -3364,8 +3487,8 @@ class _PointagePageState extends State<PointagePage> {
             ),
             FilledButton.icon(
               onPressed: () => Navigator.pop(ctx, true),
-              icon: const Icon(Icons.send_rounded, size: 16),
-              label: Text(tr(ctx, 'report_send')),
+              icon: const Icon(Icons.check_rounded, size: 16),
+              label: Text(tr(ctx, 'pointage_confirm_short')),
             ),
           ],
         ),
@@ -3424,102 +3547,36 @@ class _PointagePageState extends State<PointagePage> {
             absentCount: absentCount,
             notInVehicleCount: 0,
           );
-          // Poste 3 (nuit) / Management / Nettoyage : déclarer automatiquement la sortie pour tous les présents.
-          if (autoDeparture) {
-            for (final w in workersDisplay) {
-              final r = pointageProvider.getRecordForEmployee(w.id);
-              if (r != null &&
-                  r.chefStatus == ChefPointageStatus.present &&
-                  r.departureStatus == DepartureStatus.unset) {
-                await pointageProvider.setDepartureStatus(
-                  record: r,
-                  status: DepartureStatus.finished,
-                  configOverride: pointageConfig,
-                  bypassTimeWindows: true,
-                );
-              }
+          // Le chef ne saisit plus la sortie : elle est enregistrée automatiquement
+          // pour tous les présents dès que le pointage est confirmé.
+          for (final w in workersDisplay) {
+            final r = pointageProvider.getRecordForEmployee(w.id);
+            if (r != null &&
+                r.chefStatus == ChefPointageStatus.present &&
+                r.departureStatus == DepartureStatus.unset) {
+              await pointageProvider.setDepartureStatus(
+                record: r,
+                status: DepartureStatus.finished,
+                configOverride: pointageConfig,
+                bypassTimeWindows: true,
+              );
             }
           }
           if (!context.mounted) return;
-          if (autoDeparture) {
-            // Dialog de succès : confirme l'envoi et informe sur la sortie auto (Poste 3 ou Management/Nettoyage).
-            await showDialog<void>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade50,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(Icons.check_circle_rounded, color: Colors.green.shade600, size: 52),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Rapport envoyé avec succès !',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.blue.shade100),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.blue.shade600, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              isNightShift
-                                  ? 'La sortie de votre équipe sera enregistrée automatiquement à la fin du poste.\nL\'admin vérifiera et confirmera le rapport.'
-                                  : 'La sortie de votre équipe sera enregistrée automatiquement.\nL\'admin vérifiera et confirmera le rapport.',
-                              style: TextStyle(fontSize: 13, color: Colors.blue.shade700, height: 1.5),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actionsAlignment: MainAxisAlignment.center,
-                actions: [
-                  FilledButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green.shade600,
-                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('OK', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                  ),
-                ],
-              ),
-            );
-          } else {
-            final sortieOk = workersDisplay.where((w) {
-              final r = pointageProvider.getRecordForEmployee(w.id);
-              return (r?.isFinalPresent ?? false) && r?.departureStatus == DepartureStatus.finished;
-            }).length;
-            final sortieNotConfirmed = workersDisplay.where((w) {
-              final r = pointageProvider.getRecordForEmployee(w.id);
-              return (r?.isFinalPresent ?? false) && r?.departureStatus != DepartureStatus.finished;
-            }).length;
-            messenger.showSnackBar(
-              SnackBar(
-                content: Text('$reportSentMsgChef — Sortie OK: $sortieOk | Non confirmée: $sortieNotConfirmed'),
-                backgroundColor: Colors.green,
-                behavior: SnackBarBehavior.fixed,
-              ),
-            );
-          }
+          // Pointage confirmé : proposer le partage (WhatsApp) / téléchargement du PDF.
+          await showPointageConfirmedDialog(
+            context,
+            date: reportToday,
+            equipeLabel: equipeName,
+            posteLabel: posteLabelForExport,
+            lines: _buildFeuillePointageLines(
+              workers: workersDisplay,
+              pointageProvider: pointageProvider,
+              reasonConfigs: absenceReasonConfigs,
+              getState: getState,
+              treatUnmarkedAsAbsent: true,
+            ),
+          );
         } catch (e) {
           pointageProvider.rollbackOptimisticChefReportLock();
           if (!context.mounted) return;
@@ -3543,7 +3600,6 @@ class _PointagePageState extends State<PointagePage> {
     final hoursStatus =
         bypassPointageHours ? PointageHoursStatus.open : getPointageHoursStatus(now, config);
     final isWithinArrival = bypassPointageHours || config.canMarkArrivalNow(now);
-    final isWithinDeparture = bypassPointageHours || config.canMarkDepartureNow(now);
     final mobile = isMobile(context);
 
     Widget buildWorkerCard(Employe e) {
@@ -3649,8 +3705,6 @@ class _PointagePageState extends State<PointagePage> {
             createdAt: DateTime.now(),
           );
       final canMarkArrival = !locked && isWithinArrival;
-      // Poste 3 (nuit) / Management / Nettoyage : pas de saisie manuelle de sortie, elle est automatique.
-      final canMarkDeparture = !allLocked && !autoDeparture && isWithinDeparture;
       final chefChips = _wrapIfDisabled(
         disabled: !canMarkArrival,
         child: ChefStatusChips(
@@ -3696,47 +3750,6 @@ class _PointagePageState extends State<PointagePage> {
           absentLabel: tr(context, 'absent'),
         ),
       );
-      final departureChips = canMarkDeparture && getState(e.id) == AttendanceState.present
-          ? _DepartureChips(
-              record: recordOrPlaceholder,
-              config: config,
-              onStillWorking: (int? workedMinutesBeforeStop, String? incompleteShiftReason) async {
-                final ok = await pointageProvider.setDepartureStatus(
-                  record: recordOrPlaceholder,
-                  status: DepartureStatus.stillWorking,
-                  workedMinutesBeforeStop: workedMinutesBeforeStop,
-                  incompleteShiftReason: incompleteShiftReason,
-                  configOverride: config,
-                  bypassTimeWindows: bypassPointageHours,
-                );
-                if (!ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                  );
-                }
-              },
-              onFinished: (int? overtimeMinutes) async {
-                final ok = await pointageProvider.setDepartureStatus(
-                  record: recordOrPlaceholder,
-                  status: DepartureStatus.finished,
-                  overtimeMinutes: overtimeMinutes,
-                  configOverride: config,
-                  bypassTimeWindows: bypassPointageHours,
-                );
-                if (!ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(trOf(context, 'pointage_hours_cannot_mark')), backgroundColor: Colors.orange, behavior: SnackBarBehavior.fixed),
-                  );
-                }
-              },
-              stillLabel: 'N\'a pas terminé',
-              finishedLabel: tr(context, 'departure_finished'),
-              overtimeLabel: tr(context, 'overtime_minutes'),
-              overtimeHint: tr(context, 'overtime_minutes_hint'),
-              finishWithoutOvertimeDialog: true,
-            )
-          : null;
-
       final nameBlock = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -3789,24 +3802,7 @@ class _PointagePageState extends State<PointagePage> {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Text('Entrée :', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-                          const SizedBox(width: 8),
-                          chefChips,
-                        ]),
-                        if (departureChips != null) ...[
-                          const SizedBox(height: 7),
-                          Row(children: [
-                            Text('Sortie :', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-                            const SizedBox(width: 8),
-                            departureChips,
-                          ]),
-                        ],
-                      ],
-                    ),
+                    Align(alignment: Alignment.centerLeft, child: chefChips),
                   ],
                 )
               : Row(
@@ -3820,30 +3816,27 @@ class _PointagePageState extends State<PointagePage> {
                     Expanded(child: nameBlock),
                     if (locked) Icon(Icons.lock, size: 18, color: Colors.grey[600]),
                     const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          Text('Entrée :', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-                          const SizedBox(width: 6),
-                          chefChips,
-                        ]),
-                        if (departureChips != null) ...[
-                          const SizedBox(height: 5),
-                          Row(mainAxisSize: MainAxisSize.min, children: [
-                            Text('Sortie :', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-                            const SizedBox(width: 6),
-                            departureChips,
-                          ]),
-                        ],
-                      ],
-                    ),
+                    chefChips,
                   ],
                 ),
         ),
       );
     }
+
+    // Disponible une fois le pointage confirmé : feuille de pointage PDF à
+    // partager (WhatsApp…) ou à télécharger sur le téléphone du chef.
+    Widget buildFeuilleShareSection() => FeuillePointageShareSection(
+          date: today,
+          equipeLabel: equipeNameForTitle,
+          posteLabel: posteLabelForExport,
+          linesBuilder: () => _buildFeuillePointageLines(
+            workers: workersDisplay,
+            pointageProvider: pointageProvider,
+            reasonConfigs: absenceReasonConfigs,
+            getState: getState,
+            treatUnmarkedAsAbsent: true,
+          ),
+        );
 
     final presentCount = workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length;
     final absentCount = workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length;
@@ -4018,48 +4011,6 @@ class _PointagePageState extends State<PointagePage> {
                       } : null,
                     ),
                   ),
-                  // Bouton Sortie — tous les postes
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.logout_rounded, size: 20),
-                      label: const Text('Confirmer sortie de tous', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.blue.shade700,
-                        side: BorderSide(color: Colors.blue.shade400, width: 1.5),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: (!allLocked && isWithinDeparture) ? () async {
-                        final equipe = equipes.where((e) => e.id == auth.equipeId).toList();
-                        final today = DateTime.now();
-                        final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
-                        final cfg = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, today, shiftForEquipe);
-                        for (final w in workersDisplay) {
-                          final r = pointageProvider.getRecordForEmployee(w.id);
-                          if (r == null) continue;
-                          if (!(r.isFinalPresent)) continue;
-                          if (r.departureStatus == DepartureStatus.finished) continue;
-                          await pointageProvider.setDepartureStatus(
-                            record: r,
-                            status: DepartureStatus.finished,
-                            overtimeMinutes: 0,
-                            configOverride: cfg,
-                            bypassTimeWindows: bypassPointageHours,
-                          );
-                        }
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Sortie de tous les membres présents confirmée'),
-                              backgroundColor: Colors.blue,
-                              behavior: SnackBarBehavior.fixed,
-                            ),
-                          );
-                        }
-                      } : null,
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -4089,52 +4040,8 @@ class _PointagePageState extends State<PointagePage> {
                 ],
               ],
             ),
-            SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final presentNames = <String>[];
-                final presentNoDepartureNames = <String>[];
-                final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
-                for (final w in workersDisplay) {
-                  if (getState(w.id) != AttendanceState.present) continue;
-                  final r = pointageProvider.getRecordForEmployee(w.id);
-                  if (r?.departureStatus == DepartureStatus.finished) {
-                    presentNames.add(w.nom);
-                  } else {
-                    presentNoDepartureNames.add(w.nom);
-                  }
-                }
-                final absentNames = absentWorkers.map((e) => e.nom).toList();
-                final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
-                final chefExportName = chefEquipe != null ? _chefNameForEquipe(chefEquipe, employes) : '';
-                final filePath = await PointageExportService.shareDailyReportPdf(
-                  date: DateTime.now(),
-                  title: trOf(context, 'report_presence_title'),
-                  presentNames: presentNames,
-                  presentNoDepartureNames: presentNoDepartureNames,
-                  absentNames: absentNames,
-                  absentReasons: absentReasons,
-                  signatureLabel: trOf(context, 'pointage_signature_chef'),
-                  personName: auth.currentUser?.nom ?? '',
-                  equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
-                  chefName: chefExportName.isNotEmpty ? chefExportName : null,
-                );
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
-                      backgroundColor: Colors.green,
-                      behavior: SnackBarBehavior.fixed,
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
-                }
-              },
-              icon: const Icon(Icons.download, size: 20),
-              label: Text(tr(context, 'pointage_download_report')),
-            ),
             const SizedBox(height: 16),
-            // ── Résumé avant envoi ───────────────────────────────────
+            // ── Résumé avant confirmation ────────────────────────────
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
@@ -4160,10 +4067,15 @@ class _PointagePageState extends State<PointagePage> {
               child: chefReportLockedForAll
                   ? _ReportSentBanner(presentCount: presentCount, absentCount: absentCount)
                   : PrimaryButton(
-                      label: tr(context, 'send_report_btn'),
+                      label: tr(context, 'pointage_confirm_btn'),
                       onTap: sendReport,
                     ),
             ),
+            // Partage / téléchargement du PDF : uniquement après confirmation.
+            if (chefReportLockedForAll) ...[
+              const SizedBox(height: 12),
+              buildFeuilleShareSection(),
+            ],
             const SizedBox(height: 16),
           ],
         ),
@@ -4273,60 +4185,22 @@ class _PointagePageState extends State<PointagePage> {
               ...overtimeWorkers.map((e) => buildWorkerCard(e)),
             ],
           ],
-          OutlinedButton.icon(
-            onPressed: () async {
-              final presentNames = <String>[];
-              final presentNoDepartureNames = <String>[];
-              final absentWorkers = workersDisplay.where((w) => getState(w.id) != AttendanceState.present).toList();
-              for (final w in workersDisplay) {
-                if (getState(w.id) != AttendanceState.present) continue;
-                final r = pointageProvider.getRecordForEmployee(w.id);
-                if (r?.departureStatus == DepartureStatus.finished) {
-                  presentNames.add(w.nom);
-                } else {
-                  presentNoDepartureNames.add(w.nom);
-                }
-              }
-              final absentNames = absentWorkers.map((e) => e.nom).toList();
-              final absentReasons = absentWorkers.map((e) => pointageProvider.getRecordForEmployee(e.id)?.absenceReason).toList();
-              final chefExportName = chefEquipe != null ? _chefNameForEquipe(chefEquipe, employes) : '';
-              final filePath = await PointageExportService.shareDailyReportPdf(
-                date: DateTime.now(),
-                title: trOf(context, 'report_presence_title'),
-                presentNames: presentNames,
-                presentNoDepartureNames: presentNoDepartureNames,
-                absentNames: absentNames,
-                absentReasons: absentReasons,
-                signatureLabel: trOf(context, 'pointage_signature_chef'),
-                personName: auth.currentUser?.nom ?? '',
-                equipeName: equipeNameForTitle.isNotEmpty ? equipeNameForTitle : null,
-                chefName: chefExportName.isNotEmpty ? chefExportName : null,
-              );
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${trOf(context, 'pointage_export_ok')}: $filePath'),
-                    backgroundColor: Colors.green,
-                    behavior: SnackBarBehavior.fixed,
-                    duration: const Duration(seconds: 5),
-                  ),
-                );
-              }
-            },
-            icon: const Icon(Icons.download, size: 20),
-            label: Text(tr(context, 'pointage_download_report')),
-          ),
           SizedBox(height: mobile ? 16 : 24),
           SizedBox(
             height: mobile ? 48 : 52,
             width: double.infinity,
             child: chefReportLockedForAll
-                ? _ReportSentBanner(presentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.present).length, absentCount: workersDisplay.where((w) => getState(w.id) == AttendanceState.absent).length)
+                ? _ReportSentBanner(presentCount: presentCount, absentCount: absentCount)
                 : PrimaryButton(
-                    label: tr(context, 'send_report_btn'),
+                    label: tr(context, 'pointage_confirm_btn'),
                     onTap: sendReport,
                   ),
           ),
+          // Partage / téléchargement du PDF : uniquement après confirmation.
+          if (chefReportLockedForAll) ...[
+            const SizedBox(height: 12),
+            buildFeuilleShareSection(),
+          ],
           SizedBox(height: mobile ? 16 : 24),
         ],
       ),
@@ -4339,7 +4213,7 @@ class _PointagePageState extends State<PointagePage> {
   }
 }
 
-/// Bannière affichée à la place du bouton "Envoyer rapport" une fois le rapport verrouillé/envoyé.
+/// Bannière affichée à la place du bouton "Confirmer" une fois le pointage verrouillé.
 class _ReportSentBanner extends StatelessWidget {
   final int presentCount;
   final int absentCount;
@@ -4359,7 +4233,7 @@ class _ReportSentBanner extends StatelessWidget {
           const Icon(Icons.check_circle, color: Colors.white, size: 20),
           const SizedBox(width: 8),
           Text(
-            'Rapport envoyé ✓',
+            '${tr(context, 'pointage_confirmed')} ✓',
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
           ),
           const SizedBox(width: 14),
@@ -4384,138 +4258,6 @@ class _ReportSentBanner extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _DepartureChips extends StatelessWidget {
-  final PointageRecord record;
-  final PointageHoursConfig config;
-  final void Function(int? workedMinutesBeforeStop, String? incompleteShiftReason) onStillWorking;
-  final void Function(int? overtimeMinutes) onFinished;
-  final String stillLabel;
-  final String finishedLabel;
-  final String overtimeLabel;
-  final String overtimeHint;
-  /// Si true, "Fin du travail" enregistre directement la fin de shift sans demander les heures sup. (0 = 8h normales)
-  final bool finishWithoutOvertimeDialog;
-
-  const _DepartureChips({
-    required this.record,
-    required this.config,
-    required this.onStillWorking,
-    required this.onFinished,
-    required this.stillLabel,
-    required this.finishedLabel,
-    required this.overtimeLabel,
-    required this.overtimeHint,
-    this.finishWithoutOvertimeDialog = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isStill = record.departureStatus == DepartureStatus.stillWorking;
-    final isFinished = record.departureStatus == DepartureStatus.finished;
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      children: [
-        FilterChip(
-          label: Text(stillLabel, style: const TextStyle(fontSize: 12)),
-          selected: isStill,
-          onSelected: (_) async {
-            final workedHoursCtrl = TextEditingController();
-            final reasonCtrl = TextEditingController();
-            final data = await showDialog<({int? workedMinutes, String? reason})>(
-              context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(stillLabel),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: workedHoursCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Heures travaillées',
-                          hintText: 'Ex: 5.5',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: reasonCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Raison (optionnel)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        final hours = double.tryParse(workedHoursCtrl.text.trim().replaceAll(',', '.'));
-                        final workedMinutes = (hours != null && hours >= 0) ? (hours * 60).round() : null;
-                        final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
-                        Navigator.pop(ctx, (workedMinutes: workedMinutes, reason: reason));
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                    ),
-                  ],
-                );
-              },
-            );
-            onStillWorking(data?.workedMinutes, data?.reason);
-          },
-        ),
-        FilterChip(
-          label: Text(finishedLabel, style: const TextStyle(fontSize: 12)),
-          selected: isFinished,
-          onSelected: (_) async {
-            if (finishWithoutOvertimeDialog) {
-              onFinished(0);
-              return;
-            }
-            final controller = TextEditingController();
-            final minutes = await showDialog<int?>(
-              context: context,
-              builder: (ctx) {
-                return AlertDialog(
-                  title: Text(overtimeLabel),
-                  content: TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: overtimeHint,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, null),
-                      child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        final v = int.tryParse(controller.text.trim());
-                        Navigator.pop(ctx, v != null && v > 0 ? v : null);
-                      },
-                      child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                    ),
-                  ],
-                );
-              },
-            );
-            onFinished(minutes);
-          },
-        ),
-      ],
     );
   }
 }

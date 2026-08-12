@@ -10,6 +10,7 @@ import '../pointage/models/pointage_model.dart';
 import '../pointage/pointage_provider.dart';
 import '../pointage/data/daily_snapshot_repository.dart';
 import '../pointage/services/pointage_export_service.dart';
+import '../pointage/widgets/feuille_pointage_share.dart';
 import '../pointage/absence_reasons_provider.dart';
 import '../pointage/models/absence_reason_config.dart';
 import '../../core/auth/auth_provider.dart';
@@ -165,28 +166,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
     }
   }
 
-  List<int> _allowedHoursInShift(DateTime shiftStartAt, DateTime shiftEndAt) {
-    final hours = <int>[];
-    var cursor = DateTime(
-      shiftStartAt.year,
-      shiftStartAt.month,
-      shiftStartAt.day,
-      shiftStartAt.hour,
-    );
-    final endHour = DateTime(
-      shiftEndAt.year,
-      shiftEndAt.month,
-      shiftEndAt.day,
-      shiftEndAt.hour,
-    );
-    while (!cursor.isAfter(endHour)) {
-      final h = cursor.hour;
-      if (!hours.contains(h)) hours.add(h);
-      cursor = cursor.add(const Duration(hours: 1));
-    }
-    return hours;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -274,6 +253,7 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
           }
         }
 
+        // Le responsable ne saisit plus la sortie : seul le présent/absent compte.
         String? incompleteReason(
           ({Employe employe, PointageRecord? record, bool isGuest, bool isArrangement, bool arrangementPending, bool isAwayOnRenfort}) row,
         ) {
@@ -281,10 +261,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
           final r = recordForRow(row);
           if (r == null) return 'non marqué';
           if (r.chefStatus == ChefPointageStatus.unset) return 'non marqué';
-          if (r.chefStatus == ChefPointageStatus.present &&
-              r.departureStatus == DepartureStatus.unset) {
-            return 'sortie non confirmée';
-          }
           return null;
         }
 
@@ -297,10 +273,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
           return r.chefStatus != ChefPointageStatus.unset;
         }
 
-        final incompleteForConfirm = pointageMembers
-            .map((row) => (row: row, reason: incompleteReason(row)))
-            .where((e) => e.reason != null)
-            .toList();
         final unmarkedNames = pointageMembers
             .where((row) => incompleteReason(row) == 'non marqué')
             .map((r) => r.employe.nom)
@@ -315,6 +287,43 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
             });
         final canConfirmAll =
             pointageMembers.isNotEmpty && pointageMembers.every(isMemberPointageComplete);
+
+        /// Lignes de la feuille de pointage PDF partagée après confirmation
+        /// (les non-saisis sont enregistrés absents, la feuille les affiche ainsi).
+        List<FeuillePointageLine> buildFeuilleLines() {
+          final lines = <FeuillePointageLine>[];
+          for (final row in pointageMembers) {
+            String statut;
+            String commentaire;
+            if (row.isAwayOnRenfort) {
+              statut = feuilleStatutAbsent;
+              commentaire = 'Échange Distribution';
+            } else if (row.isArrangement) {
+              statut = feuilleStatutPresent;
+              commentaire = row.arrangementPending
+                  ? 'Arrangement — en attente'
+                  : 'Arrangement — 8h';
+            } else {
+              final rec = recordForRow(row);
+              if (rec?.chefStatus == ChefPointageStatus.present) {
+                statut = feuilleStatutPresent;
+                commentaire = '';
+              } else {
+                statut = feuilleStatutAbsent;
+                commentaire = getAbsenceReasonLabel(
+                  rec?.absenceReason,
+                  absenceReasonsProv.reasons,
+                );
+              }
+            }
+            lines.add(feuillePointageLine(
+              nomComplet: row.employe.nom,
+              statut: statut,
+              commentaire: commentaire,
+            ));
+          }
+          return lines;
+        }
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -406,8 +415,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   final absent = chefStatus == ChefPointageStatus.absent;
                   final arrival = r?.arrivalMarkedAt;
                   final departure = r?.departureMarkedAt;
-                  final equipeId = r?.equipeId ?? currentEquipeId;
-                  final equipeName = r?.equipeName ?? 'Distribution: ${g.nom}';
                   final chefName = auth.currentUser?.nom ?? 'Responsable Distribution';
 
                   Future<void> setPresent() async {
@@ -488,233 +495,13 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                     await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
                   }
 
-                  Future<void> markFinished() async {
-                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
-                    final shiftEndAt = _shiftEndFor(shift, day);
-                    final record = r ??
-                        PointageRecord(
-                          id: '',
-                          employeId: e.id,
-                          employeNom: e.nom,
-                          employeCin: e.cin,
-                          equipeId: equipeId,
-                          equipeName: equipeName,
-                          chefName: chefName,
-                          status: AttendanceStatus.unmarked,
-                          date: day,
-                          createdAt: DateTime.now(),
-                          chefStatus: ChefPointageStatus.present,
-                          tempAssigned: isGuest,
-                          originalEquipeId: isGuest ? (r?.originalEquipeId ?? '') : null,
-                        );
-                    await pointageProv.setDepartureStatus(
-                      record: record,
-                      status: DepartureStatus.finished,
-                      overtimeMinutes: 0,
-                      departureAt: shiftEndAt,
-                      bypassTimeWindows: true,
-                    );
-                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
-                  }
-
-                  Future<void> markNotCompleted() async {
-                    if (isReviewer || isArrangement || isAwayOnRenfort) return;
-                    final record = r ??
-                        PointageRecord(
-                          id: '',
-                          employeId: e.id,
-                          employeNom: e.nom,
-                          employeCin: e.cin,
-                          equipeId: equipeId,
-                          equipeName: equipeName,
-                          chefName: chefName,
-                          status: AttendanceStatus.unmarked,
-                          date: day,
-                          createdAt: DateTime.now(),
-                          chefStatus: ChefPointageStatus.present,
-                        );
-                    final reasonCtrl = TextEditingController();
-                    final formKey = GlobalKey<FormState>();
-                    int? selectedHour;
-                    int? selectedMinute;
-                    final shiftStartAt = _shiftStartFor(shift, day);
-                    final shiftEndAt = _shiftEndFor(shift, day);
-                    final allowedHours = _allowedHoursInShift(shiftStartAt, shiftEndAt);
-                    final payload = await showDialog<({String? reason, int workedMinutes, DateTime departureAt})>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text("N'a pas terminé"),
-                        content: Form(
-                          key: formKey,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              StatefulBuilder(
-                                builder: (ctx, setInnerState) => FormField<bool>(
-                                  validator: (_) {
-                                    if (selectedHour == null || selectedMinute == null) {
-                                      return 'Heure de sortie obligatoire';
-                                    }
-                                    DateTime exitAt = DateTime(
-                                      day.year,
-                                      day.month,
-                                      day.day,
-                                      selectedHour!,
-                                      selectedMinute!,
-                                    );
-                                    if (shift == ShiftType.night && exitAt.isBefore(shiftStartAt)) {
-                                      exitAt = exitAt.add(const Duration(days: 1));
-                                    }
-                                    if (exitAt.isBefore(shiftStartAt) || exitAt.isAfter(shiftEndAt)) {
-                                      final from =
-                                          '${shiftStartAt.hour.toString().padLeft(2, '0')}:${shiftStartAt.minute.toString().padLeft(2, '0')}';
-                                      final to =
-                                          '${shiftEndAt.hour.toString().padLeft(2, '0')}:${shiftEndAt.minute.toString().padLeft(2, '0')}';
-                                      return 'Heure hors plage du shift ($from - $to)';
-                                    }
-                                    return null;
-                                  },
-                                  builder: (state) => Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: DropdownButtonFormField<int>(
-                                              value: selectedHour,
-                                              decoration: const InputDecoration(
-                                                labelText: 'Heure',
-                                                border: OutlineInputBorder(),
-                                              ),
-                                              items: allowedHours
-                                                  .map(
-                                                    (h) => DropdownMenuItem<int>(
-                                                      value: h,
-                                                      child: Text(h.toString().padLeft(2, '0')),
-                                                    ),
-                                                  )
-                                                  .toList(),
-                                              onChanged: (v) {
-                                                setInnerState(() => selectedHour = v);
-                                                state.didChange(true);
-                                              },
-                                            ),
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: DropdownButtonFormField<int>(
-                                              value: selectedMinute,
-                                              decoration: const InputDecoration(
-                                                labelText: 'Minute',
-                                                border: OutlineInputBorder(),
-                                              ),
-                                              items: List.generate(
-                                                60,
-                                                (i) => DropdownMenuItem<int>(
-                                                  value: i,
-                                                  child: Text(i.toString().padLeft(2, '0')),
-                                                ),
-                                              ),
-                                              onChanged: (v) {
-                                                setInnerState(() => selectedMinute = v);
-                                                state.didChange(true);
-                                              },
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        'Plage autorisée: '
-                                        '${shiftStartAt.hour.toString().padLeft(2, '0')}:${shiftStartAt.minute.toString().padLeft(2, '0')}'
-                                        ' - '
-                                        '${shiftEndAt.hour.toString().padLeft(2, '0')}:${shiftEndAt.minute.toString().padLeft(2, '0')}',
-                                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                                      ),
-                                      if (state.errorText != null)
-                                        Padding(
-                                          padding: const EdgeInsets.only(top: 6, left: 2),
-                                          child: Text(
-                                            state.errorText!,
-                                            style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              TextField(
-                                controller: reasonCtrl,
-                                decoration: const InputDecoration(
-                                  labelText: 'Raison (optionnel)',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              if (!(formKey.currentState?.validate() ?? false)) return;
-                              DateTime exitAt =
-                                  DateTime(day.year, day.month, day.day, selectedHour!, selectedMinute!);
-                              if (shift == ShiftType.night && exitAt.isBefore(shiftStartAt)) {
-                                exitAt = exitAt.add(const Duration(days: 1));
-                              }
-                              final mins = exitAt.difference(shiftStartAt).inMinutes;
-                              final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
-                              Navigator.pop(
-                                ctx,
-                                (reason: reason, workedMinutes: mins, departureAt: exitAt),
-                              );
-                            },
-                            child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (payload == null) return;
-                    await pointageProv.setDepartureStatus(
-                      record: record,
-                      status: DepartureStatus.stillWorking,
-                      workedMinutesBeforeStop: payload.workedMinutes,
-                      incompleteShiftReason: payload.reason,
-                      departureAt: payload.departureAt,
-                      bypassTimeWindows: true,
-                    );
-                    await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
-                  }
-
                   String fmt(DateTime? d) => d == null
                       ? '--:--'
                       : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
-                  // Poste 3 (nuit) : la sortie est automatique, pas de saisie manuelle.
-                  final isNightShift = shift == ShiftType.night;
+                  // La sortie n'est plus saisie ici : elle est enregistrée
+                  // automatiquement pour les présents à la confirmation.
                   final actionChips = <Widget>[
-                    if (present && !isArrangement && !isNightShift)
-                      FilterChip(
-                        label: const Text('Terminé'),
-                        selected: r?.departureStatus == DepartureStatus.finished,
-                        onSelected: reportConfirmed ? null : (_) => markFinished(),
-                      ),
-                    if (present && !isArrangement && !isNightShift)
-                      FilterChip(
-                        label: const Text("N'a pas terminé"),
-                        selected: r?.departureStatus == DepartureStatus.stillWorking,
-                        onSelected: reportConfirmed ? null : (_) => markNotCompleted(),
-                      ),
-                    if (present && !isArrangement && isNightShift)
-                      Chip(
-                        avatar: Icon(Icons.auto_mode, size: 16, color: Colors.blueGrey[700]),
-                        label: const Text('Sortie automatique (poste 3)'),
-                      ),
                     if (isReviewer && r != null)
                       FilterChip(
                         label: Text(r.adminFinalStatus == null ? 'Consultation' : 'Confirmé'),
@@ -1198,19 +985,6 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                     style: TextStyle(fontSize: 12, color: Colors.orange[800]),
                   ),
                 ),
-              if (!isReviewer && canConfirmAll && incompleteForConfirm.isNotEmpty && !reportConfirmed)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    shift == ShiftType.night
-                        ? 'À la confirmation, la sortie sera enregistrée automatiquement (poste 3) pour : '
-                            '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')}'
-                        : 'Sortie non confirmée pour : '
-                            '${incompleteForConfirm.map((e) => e.row.employe.nom).join(', ')} '
-                            '— marquez "Terminé" ou "N\'a pas terminé" avant l\'envoi.',
-                    style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
-                  ),
-                ),
               if (!isReviewer) const SizedBox(height: 8),
               if (!isReviewer)
                 ElevatedButton.icon(
@@ -1269,11 +1043,10 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                             }
                           }
                           rec = recordForRow(row);
-                          // Poste 3 (nuit) : sortie automatique. Postes 1/2 : la sortie doit
-                          // avoir été confirmée manuellement par le chef, elle reste en
-                          // attente sinon (pas d'auto-remplissage).
-                          if (shift == ShiftType.night &&
-                              rec != null &&
+                          // La sortie n'est plus saisie par le responsable : elle est
+                          // enregistrée automatiquement à la fin du poste pour tous
+                          // les présents, quel que soit le poste.
+                          if (rec != null &&
                               rec.chefStatus == ChefPointageStatus.present &&
                               rec.departureStatus == DepartureStatus.unset) {
                             await pointageProv.setDepartureStatus(
@@ -1354,21 +1127,17 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                         }
                         if (!context.mounted) return;
                         await _reloadPointageDataAfterAction(pointageProv, overtimeProv, day);
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              shift == ShiftType.night
-                                  ? 'Rapport Distribution confirmé. La sortie de l\'équipe (poste 3) a été enregistrée automatiquement.'
-                                  : 'Rapport Distribution confirmé.',
-                            ),
-                            duration: shift == ShiftType.night
-                                ? const Duration(seconds: 5)
-                                : const Duration(seconds: 4),
-                          ),
-                        );
                       })(),
                       message: 'Envoi en cours...',
+                    );
+                    if (!context.mounted) return;
+                    // Pointage confirmé : partage WhatsApp / téléchargement du PDF.
+                    await showPointageConfirmedDialog(
+                      context,
+                      date: day,
+                      equipeLabel: g.nom,
+                      posteLabel: shift == ShiftType.rest ? '' : shift.shortLabel,
+                      lines: buildFeuilleLines(),
                     );
                   } catch (e) {
                     if (context.mounted) {
@@ -1379,8 +1148,18 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   }
                 },
                   icon: const Icon(Icons.check_circle),
-                  label: Text('Confirmer pointage (${day.day}/${day.month})'),
+                  label: Text('Valider le pointage (${day.day}/${day.month})'),
                 ),
+              // Partage / téléchargement du PDF : uniquement après confirmation.
+              if (!isReviewer && reportConfirmed) ...[
+                const SizedBox(height: 12),
+                FeuillePointageShareSection(
+                  date: day,
+                  equipeLabel: g.nom,
+                  posteLabel: shift == ShiftType.rest ? '' : shift.shortLabel,
+                  linesBuilder: buildFeuilleLines,
+                ),
+              ],
             ],
           ),
         );
