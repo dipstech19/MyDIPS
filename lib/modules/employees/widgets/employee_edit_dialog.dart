@@ -1,6 +1,7 @@
 ﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -722,11 +723,18 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
           if (_photoBytes != null || _existingPhotoUrl.isNotEmpty) ...[
             const SizedBox(height: 8),
             TextButton.icon(
-              onPressed: () => setState(() {
-                _photoBytes = null;
-                _photoPath = null;
-                _existingPhotoUrl = '';
-              }),
+              onPressed: () async {
+                if (!await confirmDelete(context,
+                    message: 'Supprimer la photo de ce collaborateur ?',
+                    details: null)) {
+                  return;
+                }
+                setState(() {
+                  _photoBytes = null;
+                  _photoPath = null;
+                  _existingPhotoUrl = '';
+                });
+              },
               icon: const Icon(Icons.delete, size: 16, color: Colors.red),
               label: const Text('Supprimer', style: TextStyle(color: Colors.red, fontSize: 12)),
             ),
@@ -845,7 +853,11 @@ class _EmployeeEditDialogState extends State<EmployeeEditDialog> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                      onPressed: () {
+                      onPressed: () async {
+                        if (!await confirmDelete(context,
+                            message: 'Supprimer ce document ?')) {
+                          return;
+                        }
                         setState(() {
                           if (isExisting) {
                             _documents.remove(item.doc);

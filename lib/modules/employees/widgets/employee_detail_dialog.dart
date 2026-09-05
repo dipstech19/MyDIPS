@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../../core/locale/app_locale.dart';
 import '../../../shared/widgets/smart_avatar.dart';
@@ -38,10 +39,13 @@ class EmployeeDetailDialog extends StatelessWidget {
     final mobile = sw < 600;
     final magasin = context.watch<MagasinProvider>();
     final nomKey = e.nom.trim().toLowerCase();
+    // Strictement les sorties du site du collaborateur.
     final equipementsSortis = magasin.loading
         ? <Mouvement>[]
         : magasin.sorties
-            .where((m) => (m.preneurNom ?? '').trim().toLowerCase() == nomKey)
+            .where((m) =>
+                (m.preneurNom ?? '').trim().toLowerCase() == nomKey &&
+                m.siteId == e.siteId)
             .toList()
           ..sort((a, b) => b.date.compareTo(a.date));
 
@@ -593,6 +597,12 @@ class _PresenceLeaveCardState extends State<_PresenceLeaveCard> {
 
     if (value == null || value <= 0) return;
     final next = (currentExtra + value).clamp(0.0, double.infinity).toDouble();
+    if (!context.mounted) return;
+    if (!await confirmUpdate(context,
+        message:
+            "Ajouter ${_formatLeave(value)} jour(s) au solde reporté de « ${employe.nom} » ?")) {
+      return;
+    }
     await prov.updateEmploye(employe.copyWith(leaveDaysExtra: next));
     if (!mounted) return;
     setState(() => _leaveExtraOverride = next);

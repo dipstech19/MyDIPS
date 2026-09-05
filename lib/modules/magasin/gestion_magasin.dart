@@ -10,6 +10,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
@@ -34,6 +35,17 @@ import '../employees/models/employe_model.dart';
 
 /// Normalise les anciens siteId ('default' ou null) vers 'jadida'.
 String _normSite(String? v) => (v == null || v == 'default' || v == SiteId.all) ? SiteId.jadida : v;
+
+/// Normalise le magasin enregistré vers un magasin réel du site.
+/// Quand le site n'a qu'un seul magasin (Jorf Lasfar → « Base de vie »), les
+/// anciennes valeurs (« Siège », « Chantier », vide) y sont rattachées.
+/// Sinon la valeur est conservée telle quelle.
+String _normMagasin(String? v, String siteId) {
+  final mag = v ?? '';
+  final mags = magasinsForSite(siteId);
+  if (mags.contains(mag)) return mag;
+  return mags.length == 1 ? mags.first : mag;
+}
 
 class LigneMouvement {
   final String unite;
@@ -159,12 +171,13 @@ class Produit {
 
   factory Produit.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
+    final site = _normSite(d['siteId'] as String?);
     return Produit(
       id: doc.id,
       nom: d['nom'] as String? ?? '',
       reference: d['reference'] as String? ?? '',
       categorie: d['categorie'] as String? ?? '',
-      magasin: d['magasin'] as String? ?? '',
+      magasin: _normMagasin(d['magasin'] as String?, site),
       aVariantes: d['aVariantes'] as bool? ?? false,
       groupeUniteLabel: d['groupeUniteLabel'] as String?,
       quantiteStock: (d['quantiteStock'] as num?)?.toInt() ?? 0,
@@ -173,7 +186,7 @@ class Produit {
           ?.map((v) => VarianteProduit.fromMap(v as Map<String, dynamic>))
           .toList() ??
           [],
-      siteId: _normSite(d['siteId'] as String?),
+      siteId: site,
       fournisseurId: d['fournisseurId'] as String?,
     );
   }
@@ -271,6 +284,7 @@ class Mouvement {
 
   factory Mouvement.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
+    final site = _normSite(d['siteId'] as String?);
     return Mouvement(
       id: doc.id,
       type: d['type'] as String? ?? 'entree',
@@ -278,7 +292,7 @@ class Mouvement {
       nomProduit: d['nomProduit'] as String? ?? '',
       reference: d['reference'] as String? ?? '',
       categorie: d['categorie'] as String? ?? '',
-      magasin: d['magasin'] as String? ?? '',
+      magasin: _normMagasin(d['magasin'] as String?, site),
       aVariantes: d['aVariantes'] as bool? ?? false,
       groupeUniteLabel: d['groupeUniteLabel'] as String?,
       quantite: (d['quantite'] as num?)?.toInt() ?? 0,
@@ -292,7 +306,7 @@ class Mouvement {
       preneurId: d['preneurId'] as String?,
       preneurDepartement: d['preneurDepartement'] as String?,
       preneurSiteId: d['preneurSiteId'] as String?,
-      siteId: _normSite(d['siteId'] as String?),
+      siteId: site,
       fournisseurId: d['fournisseurId'] as String?,
       fournisseurNom: d['fournisseurNom'] as String?,
       prixUnitaire: (d['prixUnitaire'] as num?)?.toDouble(),
@@ -464,6 +478,11 @@ class MagasinProvider extends ChangeNotifier {
     final snap = await prodDoc.get();
     if (!snap.exists) return;
     final produit = Produit.fromFirestore(snap);
+    // Barrière : jamais le stock d'un autre site.
+    if (produit.siteId != m.siteId) {
+      debugPrint('Mouvement ${m.id} ignoré : produit du site ${produit.siteId}, mouvement sur ${m.siteId}');
+      return;
+    }
     final signe = annuler
         ? (m.type == 'entree' ? -1 : 1)
         : (m.type == 'entree' ? 1 : -1);
@@ -498,17 +517,62 @@ class MagasinProvider extends ChangeNotifier {
     }
   }
 
+  /// Un mouvement ne peut toucher que le stock d'un produit du même site ET du
+  /// même magasin — c'est ce qui empêche tout mélange entre sites/magasins.
+  Future<Produit> _verifierCoherence(Mouvement m) async {
+    final produit = await _produitById(m.produitId);
+    if (produit == null) throw Exception('Produit introuvable');
+    if (produit.siteId != m.siteId) {
+      throw Exception(
+          'Produit du site ${SiteId.labelFr(produit.siteId)} — mouvement sur ${SiteId.labelFr(m.siteId)}');
+    }
+    if (produit.magasin != m.magasin) {
+      throw Exception(
+          'Produit du magasin « ${produit.magasin} » — mouvement sur « ${m.magasin} »');
+    }
+    if (produit.aVariantes != m.aVariantes) {
+      throw Exception('Structure du produit incompatible (variantes)');
+    }
+    return produit;
+  }
+
+  /// Refuse une sortie supérieure au stock réellement disponible.
+  void _verifierDisponibilite(Mouvement m, Produit produit) {
+    if (!m.aVariantes) {
+      if (m.quantite > produit.quantiteStock) {
+        throw Exception('Stock insuffisant : ${produit.quantiteStock} disponible(s)');
+      }
+      return;
+    }
+    for (final l in m.lignes) {
+      final match = produit.variantes.where((v) => v.unite == l.unite);
+      final dispo = match.isEmpty ? 0 : match.first.quantite;
+      if (l.quantite > dispo) {
+        throw Exception('Stock insuffisant pour « ${l.unite} » : $dispo disponible(s)');
+      }
+    }
+  }
+
   Future<void> _updateMouvement(String id, Mouvement mouvement) async {
     final snap = await _mouvementsRef.doc(id).get();
     if (!snap.exists) return;
     final old = Mouvement.fromFirestore(snap);
-    await _appliquerMouvement(old, annuler: true);
     final newM = mouvement.copyWithId(id);
+    await _appliquerMouvement(old, annuler: true);
+    try {
+      final produit = await _verifierCoherence(newM);
+      if (newM.type == 'sortie') _verifierDisponibilite(newM, produit);
+    } catch (e) {
+      // Le stock est remis dans son état d'origine avant de remonter l'erreur.
+      await _appliquerMouvement(old, annuler: false);
+      rethrow;
+    }
     await _mouvementsRef.doc(id).set(newM.toFirestore());
     await _appliquerMouvement(newM, annuler: false);
   }
 
   Future<void> addEntree(Mouvement mouvement) async {
+    await _verifierCoherence(mouvement);
     final ref = _mouvementsRef.doc();
     await ref.set(mouvement.toFirestore());
     await _appliquerMouvement(mouvement.copyWithId(ref.id), annuler: false);
@@ -540,7 +604,8 @@ class MagasinProvider extends ChangeNotifier {
     String? actorUserId,
     String? actorUserName,
   }) async {
-    final before = await _produitById(mouvement.produitId);
+    final before = await _verifierCoherence(mouvement);
+    _verifierDisponibilite(mouvement, before);
     final ref = _mouvementsRef.doc();
     await ref.set(mouvement.toFirestore());
     await _appliquerMouvement(mouvement.copyWithId(ref.id), annuler: false);
@@ -554,11 +619,9 @@ class MagasinProvider extends ChangeNotifier {
           actorUserName: actorUserName,
         ),
       );
-      if (before != null) {
-        unawaited(
-          OpsNotificationsService.instance.emitStockLevelIfNeeded(before: before, after: after),
-        );
-      }
+      unawaited(
+        OpsNotificationsService.instance.emitStockLevelIfNeeded(before: before, after: after),
+      );
     }
   }
 
@@ -613,6 +676,7 @@ extension _MouvX on Mouvement {
     siteId: siteId,
     fournisseurId: fournisseurId,
     fournisseurNom: fournisseurNom,
+    prixUnitaire: prixUnitaire,
   );
 }
 
@@ -652,11 +716,23 @@ const double kR = 10;
 const double kR2 = 14;
 const double kP = 22;
 
-const List<String> kMagasins = ['Base de vie', 'Siège', 'Chantier'];
+/// Jorf Lasfar : un seul magasin.
+const List<String> kMagasins = ['Base de vie'];
 const List<String> kMagasinsSafi = ['Phosphorique', 'Sulfurique'];
 
+/// Filtre pour les anciens produits enregistrés sans magasin.
+const String kSansMagasin = 'Sans magasin';
+
+/// Magasins d'un site précis (jadida / safi) — utilisé pour la saisie.
 List<String> magasinsForSite(String? siteId) =>
     siteId == SiteId.safi ? kMagasinsSafi : kMagasins;
+
+/// Magasins visibles pour un périmètre d'affichage.
+/// Périmètre « Tous » = union des magasins des deux sites.
+List<String> magasinsForScope(String? siteId) =>
+    (siteId == null || siteId == SiteId.all)
+        ? const [...kMagasins, ...kMagasinsSafi]
+        : magasinsForSite(siteId);
 
 class GroupeUnites {
   final String label, emoji;
@@ -744,20 +820,20 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
       final stock = wb['Stock Actuel'];
       wb.setDefaultSheet('Stock Actuel');
       wb.delete('Sheet1');
-      writeHeader(stock, const ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'TAILLE', 'QUANTITÉ']);
+      writeHeader(stock, const ['PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'SITE', 'MAGASIN', 'TAILLE', 'QUANTITÉ']);
 
       for (final p in produits) {
         if (!p.aVariantes) {
           stock.appendRow([
             TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
-            TextCellValue(p.magasin),
+            TextCellValue(SiteId.labelFr(p.siteId)), TextCellValue(p.magasin),
             TextCellValue('-'), IntCellValue(p.quantiteStock),
           ]);
         } else {
           for (final v in p.variantes) {
             stock.appendRow([
               TextCellValue(p.nom), TextCellValue(p.reference), TextCellValue(p.categorie),
-              TextCellValue(p.magasin),
+              TextCellValue(SiteId.labelFr(p.siteId)), TextCellValue(p.magasin),
               TextCellValue(v.unite), IntCellValue(v.quantite),
             ]);
           }
@@ -766,7 +842,7 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
 
       // ── Feuille 2 : Entrées ────────────────────────────────────────────────
       final sheetEntrees = wb['Entrées'];
-      writeHeader(sheetEntrees, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'FOURNISSEUR', 'TAILLE', 'QUANTITÉ', 'PRIX UNITAIRE (MAD)']);
+      writeHeader(sheetEntrees, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'SITE', 'MAGASIN', 'FOURNISSEUR', 'TAILLE', 'QUANTITÉ', 'PRIX UNITAIRE (MAD)']);
 
       for (final m in entrees) {
         final date = TextCellValue(fmt.format(m.date));
@@ -774,14 +850,14 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
         if (!m.aVariantes) {
           sheetEntrees.appendRow([
             date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-            TextCellValue(m.magasin),
+            TextCellValue(SiteId.labelFr(m.siteId)), TextCellValue(m.magasin),
             TextCellValue(m.fournisseurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite), prix,
           ]);
         } else {
           for (final l in m.lignes) {
             sheetEntrees.appendRow([
               date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-              TextCellValue(m.magasin),
+              TextCellValue(SiteId.labelFr(m.siteId)), TextCellValue(m.magasin),
               TextCellValue(m.fournisseurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite), prix,
             ]);
           }
@@ -790,21 +866,21 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
 
       // ── Feuille 3 : Sorties ────────────────────────────────────────────────
       final sheetSorties = wb['Sorties'];
-      writeHeader(sheetSorties, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'MAGASIN', 'PRÉLEVÉ PAR', 'TAILLE', 'QUANTITÉ']);
+      writeHeader(sheetSorties, const ['DATE', 'PRODUIT', 'RÉFÉRENCE', 'CATÉGORIE', 'SITE', 'MAGASIN', 'PRÉLEVÉ PAR', 'TAILLE', 'QUANTITÉ']);
 
       for (final m in sorties) {
         final date = TextCellValue(fmt.format(m.date));
         if (!m.aVariantes) {
           sheetSorties.appendRow([
             date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-            TextCellValue(m.magasin),
+            TextCellValue(SiteId.labelFr(m.siteId)), TextCellValue(m.magasin),
             TextCellValue(m.preneurNom ?? '-'), TextCellValue('-'), IntCellValue(m.quantite),
           ]);
         } else {
           for (final l in m.lignes) {
             sheetSorties.appendRow([
               date, TextCellValue(m.nomProduit), TextCellValue(m.reference), TextCellValue(m.categorie),
-              TextCellValue(m.magasin),
+              TextCellValue(SiteId.labelFr(m.siteId)), TextCellValue(m.magasin),
               TextCellValue(m.preneurNom ?? '-'), TextCellValue(l.unite), IntCellValue(l.quantite),
             ]);
           }
@@ -870,8 +946,10 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     final site    = context.watch<SiteProvider>();
     final mobile = isMobile(context);
     final rawSiteId = _effectiveSiteId(auth, site);
-    final effSiteId = (rawSiteId == null || rawSiteId == SiteId.all) ? SiteId.jadida : rawSiteId;
-    final magasinOptions = magasinsForSite(effSiteId);
+    // Périmètre courant : un site précis, ou 'all' (admin général « Tous »).
+    final scopeSiteId = (rawSiteId == null || rawSiteId == SiteId.all) ? SiteId.all : rawSiteId;
+    final multiSite = scopeSiteId == SiteId.all;
+    final magasinOptions = magasinsForScope(scopeSiteId);
 
     final filteredProduits = SiteId.filterBySite(
       magasin.produits,
@@ -964,13 +1042,13 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
     if (mobile) {
       Widget activePage;
       if (_tab == 0) {
-        activePage = _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions, internalScroll: false);
+        activePage = _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions, showSite: multiSite, internalScroll: false);
       } else if (_tab == 1) {
-        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
+        activePage = _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: scopeSiteId, internalScroll: false);
       } else if (_tab == 2) {
-        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
+        activePage = _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: scopeSiteId, internalScroll: false);
       } else if (_tab == 3) {
-        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: effSiteId, internalScroll: false);
+        activePage = _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: scopeSiteId, internalScroll: false);
       } else {
         activePage = _FournisseursPage(magasin: magasin, internalScroll: false);
       }
@@ -1001,10 +1079,10 @@ class _GestionMagasinPageState extends State<GestionMagasinPage>
                 controller: _tabCtrl,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions),
-                  _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: effSiteId),
-                  _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: effSiteId),
-                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: effSiteId),
+                  _StockPage(magasin: magasin, produits: filteredProduits, magasins: magasinOptions, showSite: multiSite),
+                  _EntreesPage(magasin: magasin, entrees: filteredEntrees, magasins: magasinOptions, siteId: scopeSiteId),
+                  _SortiesPage(magasin: magasin, sorties: filteredSorties, magasins: magasinOptions, siteId: scopeSiteId),
+                  _HistoriquePage(magasin: magasin, mouvements: [...filteredEntrees, ...filteredSorties], magasins: magasinOptions, siteId: scopeSiteId),
                   _FournisseursPage(magasin: magasin),
                 ],
               ),
@@ -1642,8 +1720,10 @@ class _StockPage extends StatefulWidget {
   final MagasinProvider magasin;
   final List<Produit> produits;
   final List<String> magasins;
+  /// Affiche le site de chaque produit (périmètre « Tous »).
+  final bool showSite;
   final bool internalScroll;
-  const _StockPage({required this.magasin, required this.produits, this.magasins = kMagasins, this.internalScroll = true});
+  const _StockPage({required this.magasin, required this.produits, this.magasins = kMagasins, this.showSite = false, this.internalScroll = true});
   @override
   State<_StockPage> createState() => _StockPageState();
 }
@@ -1656,16 +1736,22 @@ class _StockPageState extends State<_StockPage> {
   @override
   void didUpdateWidget(covariant _StockPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_mag != 'Tous' && !widget.magasins.contains(_mag)) {
-      setState(() => _mag = 'Tous');
-    }
+    // Le magasin sélectionné doit rester présent dans le périmètre courant.
+    final encoreValide = _mag == 'Tous' ||
+        _mag == kSansMagasin ||
+        widget.magasins.contains(_mag) ||
+        widget.produits.any((p) => p.magasin == _mag);
+    if (!encoreValide) setState(() => _mag = 'Tous');
   }
 
   List<Produit> get _list {
     final q = _q.toLowerCase();
     var l = widget.produits.where((p) {
       final mq = q.isEmpty || p.nom.toLowerCase().contains(q) || p.reference.toLowerCase().contains(q);
-      return mq && (_cat == 'Toutes' || p.categorie == _cat) && (_mag == 'Tous' || p.magasin == _mag);
+      final magOk = _mag == 'Tous'
+          ? true
+          : (_mag == kSansMagasin ? p.magasin.isEmpty : p.magasin == _mag);
+      return mq && (_cat == 'Toutes' || p.categorie == _cat) && magOk;
     }).toList();
     l.sort((a, b) {
       final c = a.total.compareTo(b.total);
@@ -1674,13 +1760,40 @@ class _StockPageState extends State<_StockPage> {
     return l;
   }
 
+  /// Cellule « MAGASIN » : le magasin, précédé du site quand le périmètre
+  /// couvre plusieurs sites.
+  Widget _magasinCell(Produit p) {
+    final magPill = p.magasin.isNotEmpty
+        ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
+        : Text('—', style: _muted.copyWith(fontSize: 11));
+    if (!widget.showSite) return magPill;
+    return Wrap(spacing: 4, runSpacing: 4, children: [
+      _PillBadge(SiteId.labelFr(p.siteId), kTealLt, kTeal),
+      magPill,
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final list = _list;
     final mobile = isMobile(context);
     final padding = mobile ? pagePadding(context) : kP;
     final cats = ['Toutes', ...widget.magasin.categoryNames];
-    final mags = ['Tous', ...widget.magasins];
+    final hasSansMagasin = widget.produits.any((p) => p.magasin.isEmpty);
+    // Un magasin présent dans les données mais absent de la liste du site reste
+    // filtrable : aucun stock existant ne doit devenir invisible.
+    final horsListe = widget.produits
+        .map((p) => p.magasin)
+        .where((m) => m.isNotEmpty && !widget.magasins.contains(m))
+        .toSet()
+        .toList()
+      ..sort();
+    final mags = [
+      'Tous',
+      ...widget.magasins,
+      ...horsListe,
+      if (hasSansMagasin || _mag == kSansMagasin) kSansMagasin,
+    ];
 
     return Column(
       children: [
@@ -1726,7 +1839,7 @@ class _StockPageState extends State<_StockPage> {
         Padding(
           padding: EdgeInsets.symmetric(horizontal: padding),
           child: Row(children: [
-            Text('${list.length} / ${widget.magasin.totalProduits} produits', style: _muted.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
+            Text('${list.length} / ${widget.produits.length} produits', style: _muted.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
           ]),
         ),
         const SizedBox(height: 8),
@@ -1742,6 +1855,7 @@ class _StockPageState extends State<_StockPage> {
             itemBuilder: (ctx, i) => _ProduitCard(
               produit: list[i],
               fournisseur: widget.magasin.fournisseurById(list[i].fournisseurId),
+              showSite: widget.showSite,
               onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel), magasin: widget.magasin)),
             ),
           )
@@ -1777,9 +1891,7 @@ class _StockPageState extends State<_StockPage> {
                   ]),
                   Text(p.reference, style: _mono, overflow: TextOverflow.ellipsis, maxLines: 1),
                   _PillBadge(p.categorie, kBlueLt, kBlue),
-                  p.magasin.isNotEmpty
-                      ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
-                      : Text('—', style: _muted.copyWith(fontSize: 11)),
+                  _magasinCell(p),
                   Center(child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(color: stockBg, borderRadius: BorderRadius.circular(20)),
@@ -1806,6 +1918,7 @@ class _StockPageState extends State<_StockPage> {
                   itemBuilder: (ctx, i) => _ProduitCard(
                     produit: list[i],
                     fournisseur: widget.magasin.fournisseurById(list[i].fournisseurId),
+                    showSite: widget.showSite,
                     onTap: () => _showDialog(ctx, _DetailsDialog(produit: list[i], groupe: groupeByLabel(list[i].groupeUniteLabel), magasin: widget.magasin)),
                   ),
                 )
@@ -1841,9 +1954,7 @@ class _StockPageState extends State<_StockPage> {
                         ]),
                         Text(p.reference, style: _mono, overflow: TextOverflow.ellipsis, maxLines: 1),
                         _PillBadge(p.categorie, kBlueLt, kBlue),
-                        p.magasin.isNotEmpty
-                            ? _PillBadge(p.magasin, kIndigoLt, kIndigo)
-                            : Text('—', style: _muted.copyWith(fontSize: 11)),
+                        _magasinCell(p),
                         Center(child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(color: stockBg, borderRadius: BorderRadius.circular(20)),
@@ -1864,8 +1975,10 @@ class _StockPageState extends State<_StockPage> {
 class _ProduitCard extends StatelessWidget {
   final Produit produit;
   final Fournisseur? fournisseur;
+  /// Affiche le site du produit (périmètre « Tous »).
+  final bool showSite;
   final VoidCallback onTap;
-  const _ProduitCard({required this.produit, this.fournisseur, required this.onTap});
+  const _ProduitCard({required this.produit, this.fournisseur, this.showSite = false, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1922,6 +2035,7 @@ class _ProduitCard extends StatelessWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   _PillBadge(p.categorie, kBlueLt, kBlue),
+                  if (showSite) _PillBadge(SiteId.labelFr(p.siteId), kTealLt, kTeal),
                   if (p.magasin.isNotEmpty) _PillBadge(p.magasin, kIndigoLt, kIndigo),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -2281,10 +2395,11 @@ class _SortiesPageState extends State<_SortiesPage> {
                 )),
         ] else ...[
           const SizedBox(height: 10),
+          // Les dossiers suivent le même périmètre (site + magasin) que la liste.
           if (widget.internalScroll)
-            Expanded(child: _SortiesDossiersView(sorties: widget.sorties, padding: padding))
+            Expanded(child: _SortiesDossiersView(sorties: list, padding: padding))
           else
-            _SortiesDossiersView(sorties: widget.sorties, padding: padding, internalScroll: false),
+            _SortiesDossiersView(sorties: list, padding: padding, internalScroll: false),
         ],
       ],
     );
@@ -3527,6 +3642,11 @@ class _FournisseurFormState extends State<_FournisseurForm> {
 
   Future<void> _save() async {
     if (!mounted) return;
+    if (_isEditing &&
+        !await confirmUpdate(context, itemLabel: _nomCtrl.text.trim())) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     final dialogCtx = context;
     final scaffoldCtx = widget.scaffoldContext;
@@ -3713,10 +3833,109 @@ class _MouvFormState extends State<_MouvForm> {
 
   bool get _isEpiMode => _isSortie && !_isEditing && _selCat == 'EPI';
 
+  /// Le périmètre du formulaire est « Tous » : l'utilisateur doit choisir le site.
+  bool get _siteChoisissable => widget.siteId == SiteId.all && !_isEditing;
+
+  /// Rattachement strict au magasin sélectionné.
+  /// Seule exception : en entrée, les anciens produits sans magasin restent
+  /// sélectionnables afin de pouvoir les rattacher à un magasin.
+  bool _matchMagasin(Produit p) {
+    final mag = _selMag;
+    if (mag == null) return false;
+    if (p.magasin == mag) return true;
+    return !_isSortie && p.magasin.isEmpty;
+  }
+
   List<Produit> get _filteredProduits => widget.magasin.produits.where((p) =>
       p.siteId == _siteId &&
-      (_isSortie || _selMag == null || p.magasin == _selMag) &&
+      _matchMagasin(p) &&
       (_selCat == null || p.categorie == _selCat)).toList();
+
+  /// Articles EPI du site ET du magasin sélectionnés.
+  void _rebuildEpiItems() {
+    for (final item in _epiItems) {
+      item.dispose();
+    }
+    _epiItems.clear();
+    _epiSearchCtrl.clear();
+    if (_selCat != 'EPI' || !_isSortie || _isEditing) return;
+    final epiProds = widget.magasin.produits
+        .where((p) => p.categorie == 'EPI' && p.siteId == _siteId && _matchMagasin(p))
+        .toList()
+      ..sort((a, b) => a.nom.compareTo(b.nom));
+    _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
+  }
+
+  /// Champ magasin : liste déroulante, ou simple mention quand le site n'a
+  /// qu'un seul magasin (rien à choisir → saisie plus rapide).
+  Widget _magasinField() {
+    final mags = magasinsForSite(_siteId);
+    if (mags.length == 1) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        decoration: BoxDecoration(
+          color: kBg,
+          borderRadius: BorderRadius.circular(kR),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(children: [
+          const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
+          const SizedBox(width: 8),
+          Expanded(child: Text(mags.first,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kText),
+              overflow: TextOverflow.ellipsis)),
+          Text('seul magasin du site', style: _muted.copyWith(fontSize: 10)),
+        ]),
+      );
+    }
+    return _StyledDrop<String>(
+      value: _selMag,
+      hint: 'Sélectionner un magasin',
+      items: mags.map((m) => DropdownMenuItem(
+        value: m,
+        child: Row(children: [
+          const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
+          const SizedBox(width: 8),
+          Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
+        ]),
+      )).toList(),
+      onChanged: _onMagasinChanged,
+    );
+  }
+
+  /// Changement de magasin : le produit sélectionné et la liste EPI ne sont
+  /// plus valides — on repart du magasin choisi.
+  void _onMagasinChanged(String? v) {
+    if (v == null || v == _selMag) return;
+    setState(() {
+      _selMag = v;
+      if (_selProd != null && _selProd!.magasin != v) {
+        _selProd = null;
+        _prodSearchC.clear();
+        _selVar.clear();
+        _varCtrl.clear();
+        _stockError = null;
+        _varStockErrors = {};
+      }
+      _rebuildEpiItems();
+    });
+  }
+
+  /// Changement de site : tout le contexte magasin/produit est réinitialisé.
+  void _onSiteChanged(String? v) {
+    if (v == null || v == _siteId) return;
+    setState(() {
+      _siteId = v;
+      _selMag = magasinsForSite(_siteId).first;
+      _selProd = null;
+      _prodSearchC.clear();
+      _selVar.clear();
+      _varCtrl.clear();
+      _stockError = null;
+      _varStockErrors = {};
+      _rebuildEpiItems();
+    });
+  }
 
   List<String> get _availableCatsForSelection {
     final base = widget.magasin.categoryNames;
@@ -3764,7 +3983,9 @@ class _MouvFormState extends State<_MouvForm> {
       _mvtNomCtrl.text = m.nomProduit;
       _mvtRefCtrl.text = m.reference;
       _selFournisseurId = m.fournisseurId;
-      _selMag = m.magasin.isNotEmpty ? m.magasin : 'Base de vie';
+      // Le magasin doit appartenir au site du mouvement (données anciennes incluses).
+      final magsSite = magasinsForSite(_siteId);
+      _selMag = magsSite.contains(m.magasin) ? m.magasin : magsSite.first;
       if (m.prixUnitaire != null) _puCtrl.text = m.prixUnitaire!.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), '');
 
       if (_isSortie) { _newCatMode = false; _newProdMode = false; }
@@ -3773,6 +3994,8 @@ class _MouvFormState extends State<_MouvForm> {
       if (foundProd.isNotEmpty) {
         _selProd = foundProd.first;
         _newProdMode = false;
+        // Le produit fait foi : le mouvement reste sur le magasin où le stock vit.
+        if (magsSite.contains(_selProd!.magasin)) _selMag = _selProd!.magasin;
       } else if (!_isSortie) {
         _newProdMode = true;
         _newHasVar = m.aVariantes;
@@ -3801,7 +4024,9 @@ class _MouvFormState extends State<_MouvForm> {
       return;
     }
 
-    _siteId = widget.siteId;
+    // Le mouvement est toujours rattaché à un site précis : quand le périmètre
+    // affiché est « Tous », le site est choisi explicitement dans le formulaire.
+    _siteId = widget.siteId == SiteId.all ? SiteId.jadida : widget.siteId;
     _selMag = magasinsForSite(_siteId).first;
     if (_isSortie) { _newCatMode = false; _newProdMode = false; }
   }
@@ -3847,6 +4072,8 @@ class _MouvFormState extends State<_MouvForm> {
 
   bool get _canSave {
     if (_saving) return false;
+    // Aucun mouvement sans site ni magasin.
+    if (_selMag == null || !magasinsForSite(_siteId).contains(_selMag)) return false;
     if (_isEpiMode) {
       final checked = _epiItems.where((e) => e.checked).toList();
       return checked.isNotEmpty && checked.every((e) => e.isValid);
@@ -3861,11 +4088,25 @@ class _MouvFormState extends State<_MouvForm> {
 
   Future<void> _save() async {
     if (!mounted) return;
+    if (_isEditing) {
+      final ok = await confirmUpdate(
+        context,
+        message: _isSortie
+            ? 'Enregistrer les modifications de cette sortie ?'
+            : "Enregistrer les modifications de cette entrée ?",
+        details: 'Le stock du produit sera recalculé en conséquence.',
+      );
+      if (!ok) return;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     final dialogCtx = context;
     final scaffoldCtx = widget.scaffoldContext;
     try {
-      final magasinFinal = _selMag ?? 'Base de vie';
+      final magasinFinal = _selMag;
+      if (magasinFinal == null || !magasinsForSite(_siteId).contains(magasinFinal)) {
+        throw Exception('Magasin invalide pour le site ${SiteId.labelFr(_siteId)}');
+      }
       final catFinal = _newCatMode ? _newCatCtrl.text.trim() : (_selCat ?? '');
       if (catFinal.isEmpty) throw Exception('Catégorie manquante');
       if (_newCatMode) await widget.magasin.addCategorie(catFinal);
@@ -3883,7 +4124,7 @@ class _MouvFormState extends State<_MouvForm> {
           final qte = prod.aVariantes ? 0 : (int.tryParse(item.qteCtrl.text) ?? 0);
           final mvt = Mouvement(
             id: '', type: 'sortie', produitId: prod.id, nomProduit: prod.nom,
-            reference: prod.reference, categorie: catFinal, magasin: prod.magasin.isNotEmpty ? prod.magasin : magasinFinal,
+            reference: prod.reference, categorie: catFinal, magasin: magasinFinal,
             aVariantes: prod.aVariantes, groupeUniteLabel: prod.aVariantes ? prod.groupeUniteLabel : null,
             quantite: qte, lignes: lignes, date: _mvtDate,
             preneurNom: _preneurC.text.trim().isNotEmpty ? _preneurC.text.trim() : null,
@@ -3912,36 +4153,58 @@ class _MouvFormState extends State<_MouvForm> {
         final nom = _newNomCtrl.text.trim();
         final ref = _newRefCtrl.text.trim();
         if (nom.isEmpty || ref.isEmpty) throw Exception('Nom ou référence manquant');
-        final newProd = Produit(
-          id: '', nom: nom, reference: ref, categorie: catFinal,
-          magasin: magasinFinal, aVariantes: _newHasVar,
-          groupeUniteLabel: _newHasVar ? _newGroupeLabel : null,
-          quantiteStock: 0, variantes: [],
-          siteId: _siteId,
-          fournisseurId: fouId,
-        );
-        final newId = await widget.magasin.addProduit(newProd);
-        if (newId.isEmpty) throw Exception('Erreur création produit');
-        for (int i = 0; i < 40; i++) {
-          if (widget.magasin.produits.any((p) => p.id == newId)) break;
-          await Future.delayed(const Duration(milliseconds: 100));
+        // Une même référence dans le même site + magasin = le même stock :
+        // l'entrée alimente le produit existant au lieu de le dupliquer.
+        final refKey = ref.toLowerCase();
+        final dejaLa = widget.magasin.produits.where((p) =>
+            p.siteId == _siteId &&
+            p.magasin == magasinFinal &&
+            p.reference.trim().toLowerCase() == refKey).toList();
+        if (dejaLa.isNotEmpty) {
+          if (dejaLa.first.aVariantes != _newHasVar) {
+            throw Exception('La référence « $ref » existe déjà dans ce magasin avec une autre structure');
+          }
+          prod = dejaLa.first;
+        } else {
+          final newProd = Produit(
+            id: '', nom: nom, reference: ref, categorie: catFinal,
+            magasin: magasinFinal, aVariantes: _newHasVar,
+            groupeUniteLabel: _newHasVar ? _newGroupeLabel : null,
+            quantiteStock: 0, variantes: [],
+            siteId: _siteId,
+            fournisseurId: fouId,
+          );
+          final newId = await widget.magasin.addProduit(newProd);
+          if (newId.isEmpty) throw Exception('Erreur création produit');
+          for (int i = 0; i < 40; i++) {
+            if (widget.magasin.produits.any((p) => p.id == newId)) break;
+            await Future.delayed(const Duration(milliseconds: 100));
+          }
+          prod = newProd.copyWith(id: newId);
         }
-        prod = newProd.copyWith(id: newId);
       } else {
         if (_selProd == null) throw Exception('Aucun produit sélectionné');
         prod = _selProd!;
-        // Met à jour le fournisseurId et le magasin du produit si entrée
-        if (!_isSortie) {
-          final needUpdate = (fouId != null && prod.fournisseurId != fouId)
-              || prod.magasin != magasinFinal;
-          if (needUpdate) {
-            prod = prod.copyWith(
-              fournisseurId: fouId ?? prod.fournisseurId,
-              magasin: magasinFinal,
-            );
-            await widget.magasin.updateProduit(prod);
-          }
+      }
+
+      // Le produit doit vivre dans le site + magasin du mouvement.
+      if (prod.siteId != _siteId) {
+        throw Exception('Produit du site ${SiteId.labelFr(prod.siteId)} — impossible sur ${SiteId.labelFr(_siteId)}');
+      }
+      if (!_isSortie) {
+        // Entrée : rattache le produit au magasin saisi (cas des anciens
+        // produits sans magasin) et met à jour son fournisseur.
+        final needUpdate = (fouId != null && prod.fournisseurId != fouId)
+            || prod.magasin != magasinFinal;
+        if (needUpdate) {
+          prod = prod.copyWith(
+            fournisseurId: fouId ?? prod.fournisseurId,
+            magasin: magasinFinal,
+          );
+          await widget.magasin.updateProduit(prod);
         }
+      } else if (prod.magasin != magasinFinal) {
+        throw Exception('Produit du magasin « ${prod.magasin} » — sortie demandée sur « $magasinFinal »');
       }
 
       final lignes = _hasVar
@@ -3958,7 +4221,7 @@ class _MouvFormState extends State<_MouvForm> {
         nomProduit: (_isEditing && !_newProdMode) ? (_mvtNomCtrl.text.trim().isNotEmpty ? _mvtNomCtrl.text.trim() : prod.nom) : prod.nom,
         reference: (_isEditing && !_newProdMode) ? (_mvtRefCtrl.text.trim().isNotEmpty ? _mvtRefCtrl.text.trim() : prod.reference) : prod.reference,
         categorie: catFinal,
-        magasin: (_isSortie && prod.magasin.isNotEmpty) ? prod.magasin : magasinFinal,
+        magasin: magasinFinal,
         aVariantes: _hasVar,
         groupeUniteLabel: _hasVar ? (prod.groupeUniteLabel ?? _newGroupeLabel) : null,
         quantite: quantite,
@@ -4083,8 +4346,42 @@ class _MouvFormState extends State<_MouvForm> {
       saving: _saving,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-        // ── 1. Date manuelle ─────────────────────────────────────────────
+        // ── Site du mouvement ────────────────────────────────────────────
         const SizedBox(height: 8),
+        if (_siteChoisissable) ...[
+          _SectionHdr('Site *', Icons.location_on_outlined, kTeal),
+          const SizedBox(height: 10),
+          _StyledDrop<String>(
+            value: _siteId,
+            hint: 'Sélectionner un site',
+            items: SiteId.values.map((s) => DropdownMenuItem(
+              value: s,
+              child: Row(children: [
+                const Icon(Icons.location_on_outlined, size: 14, color: kTeal),
+                const SizedBox(width: 8),
+                Flexible(child: Text(SiteId.labelFr(s), overflow: TextOverflow.ellipsis)),
+              ]),
+            )).toList(),
+            onChanged: _onSiteChanged,
+          ),
+        ] else
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: kTealLt,
+              borderRadius: BorderRadius.circular(kR),
+              border: Border.all(color: kTeal.withValues(alpha: 0.25)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.location_on_outlined, size: 14, color: kTeal),
+              const SizedBox(width: 6),
+              Text('Site : ${SiteId.labelFr(_siteId)}',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kTeal)),
+            ]),
+          ),
+        const SizedBox(height: 20),
+
+        // ── 1. Date manuelle ─────────────────────────────────────────────
         _SectionHdr('1. Date de l\'opération', Icons.calendar_today_rounded, _col),
         const SizedBox(height: 10),
         _StyledTF(
@@ -4128,24 +4425,7 @@ class _MouvFormState extends State<_MouvForm> {
           // ── 3. Magasin de stock ──────────────────────────────────────
           _SectionHdr('3. Magasin de stock *', Icons.warehouse_rounded, _col),
           const SizedBox(height: 10),
-          _StyledDrop<String>(
-            value: _selMag,
-            hint: 'Sélectionner un magasin',
-            items: magasinsForSite(_siteId).map((m) => DropdownMenuItem(
-              value: m,
-              child: Row(children: [
-                const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
-                const SizedBox(width: 8),
-                Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
-              ]),
-            )).toList(),
-            onChanged: (v) => setState(() {
-              _selMag = v;
-              if (!_newProdMode && _selProd != null && _selProd!.magasin != v) {
-                _selProd = null; _prodSearchC.clear(); _selVar.clear(); _varCtrl.clear();
-              }
-            }),
-          ),
+          _magasinField(),
           const SizedBox(height: 20),
 
           // ── 4. Catégorie ──────────────────────────────────────────────
@@ -4154,32 +4434,7 @@ class _MouvFormState extends State<_MouvForm> {
           // Pour sortie : magasin puis catégorie (le site suit le filtre de la barre latérale)
           _SectionHdr('2. Magasin de stock *', Icons.warehouse_rounded, _col),
           const SizedBox(height: 10),
-          _StyledDrop<String>(
-            value: _selMag,
-            hint: 'Sélectionner un magasin',
-            items: magasinsForSite(_siteId).map((m) => DropdownMenuItem(
-              value: m,
-              child: Row(children: [
-                const Icon(Icons.warehouse_outlined, size: 14, color: kBlue),
-                const SizedBox(width: 8),
-                Flexible(child: Text(m, overflow: TextOverflow.ellipsis)),
-              ]),
-            )).toList(),
-            onChanged: (v) => setState(() {
-              _selMag = v;
-              if (_selProd != null && _selProd!.magasin != v) {
-                _selProd = null; _prodSearchC.clear(); _selVar.clear(); _varCtrl.clear();
-              }
-              for (final item in _epiItems) item.dispose();
-              _epiItems.clear(); _epiSearchCtrl.clear();
-              if (_selCat == 'EPI') {
-                final epiProds = widget.magasin.produits.where((p) =>
-                    p.categorie == 'EPI' && p.siteId == _siteId
-                ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
-                _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
-              }
-            }),
-          ),
+          _magasinField(),
           const SizedBox(height: 20),
           _SectionHdr('3. Catégorie', Icons.category_outlined, _col),
         ],
@@ -4195,14 +4450,8 @@ class _MouvFormState extends State<_MouvForm> {
             items: cats.map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis))).toList(),
             onChanged: (v) => setState(() {
               _selCat = v; _selProd = null; _selVar.clear(); _varCtrl.clear(); _prodSearchC.clear();
-              for (final item in _epiItems) item.dispose();
-              _epiItems.clear(); _epiSearchCtrl.clear();
-              if (v == 'EPI' && _isSortie && !_isEditing) {
-                final epiProds = widget.magasin.produits.where((p) =>
-                    p.categorie == 'EPI' && p.siteId == _siteId
-                ).toList()..sort((a, b) => a.nom.compareTo(b.nom));
-                _epiItems.addAll(epiProds.map((p) => _EpiItem(p)));
-              }
+              _stockError = null; _varStockErrors = {};
+              _rebuildEpiItems();
             }),
           );
 
@@ -4389,7 +4638,7 @@ class _MouvFormState extends State<_MouvForm> {
           ] else ...[
             // ── Mode standard : sélection d'un seul produit ───────────
             Builder(builder: (ctx) {
-              final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '6' : '5');
+              final secNum = _isSortie ? '4' : '5';
               return _SectionHdr('$secNum. Produit', Icons.inventory_2_outlined, _col);
             }),
             const SizedBox(height: 10),
@@ -4491,7 +4740,7 @@ class _MouvFormState extends State<_MouvForm> {
 
             if (_selProd != null || _newProdMode) ...[
               Builder(builder: (ctx) {
-                final secNum = _isSortie ? '4' : (_selMag == 'Base de vie' ? '6' : '5');
+                final secNum = _isSortie ? '5' : '6';
                 return _SectionHdr('$secNum. Quantité', _hasVar ? Icons.grid_view_rounded : Icons.tag_rounded, _col);
               }),
               const SizedBox(height: 10),
@@ -4545,8 +4794,7 @@ class _MouvFormState extends State<_MouvForm> {
 
             if (!_isSortie && (_selProd != null || _newProdMode)) ...[
               Builder(builder: (ctx) {
-                final secNum = _selMag == 'Base de vie' ? '7' : '6';
-                return _SectionHdr('$secNum. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
+                return _SectionHdr('7. Prix Unitaire (P.U)', Icons.price_change_outlined, kGreen);
               }),
               const SizedBox(height: 6),
               Container(
@@ -4585,7 +4833,7 @@ class _MouvFormState extends State<_MouvForm> {
             ],
 
             if (_isSortie && (_selProd != null || _newProdMode)) ...[
-              _SectionHdr('5. Prélevé par', Icons.person_outline_rounded, _col),
+              _SectionHdr('6. Prélevé par', Icons.person_outline_rounded, _col),
               const SizedBox(height: 10),
               _StyledTF(ctrl: _preneurC, hint: '', prefix: const Icon(Icons.person_outline_rounded, size: 18, color: kMuted), readOnly: true, onTap: () => _showPreneurDialog(context)),
             ],
@@ -4776,6 +5024,12 @@ class _AjustementStockDialogState extends State<_AjustementStockDialog> {
   }
 
   Future<void> _save() async {
+    final ok = await confirmUpdate(
+      context,
+      message: 'Ajuster manuellement le stock de « ${widget.produit.nom} » ?',
+      details: 'Les quantités enregistrées seront remplacées par les valeurs saisies.',
+    );
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
     try {
       final p = widget.produit;
@@ -4901,7 +5155,8 @@ class _DetailsDialog extends StatelessWidget {
         Wrap(spacing: 8, runSpacing: 8, children: [
           _DetCard(Icons.qr_code_rounded, '🏷️ Référence', p.reference),
           _DetCard(Icons.category_outlined, '📂 Catégorie', p.categorie),
-          _DetCard(Icons.warehouse_rounded, '🏪 Magasin', 'Magasin ${p.magasin}'),
+          _DetCard(Icons.location_on_outlined, '📍 Site', SiteId.labelFr(p.siteId)),
+          _DetCard(Icons.warehouse_rounded, '🏪 Magasin', p.magasin.isNotEmpty ? 'Magasin ${p.magasin}' : '—'),
           if (g != null) _DetCard(Icons.widgets_rounded, '${g.emoji} Mesures', g.label),
         ]),
         const SizedBox(height: 14),

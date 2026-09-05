@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/smart_avatar.dart';
 import '../models/employe_model.dart';
@@ -116,6 +117,11 @@ class _SoldeCongeDialogState extends State<SoldeCongeDialog> {
       if (mounted) Navigator.pop(context);
       return;
     }
+    if (!await confirmUpdate(context,
+        message: 'Enregistrer ${toUpdate.length} solde(s) de congé modifié(s) ?')) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     try {
       for (var i = 0; i < toUpdate.length; i += 500) {

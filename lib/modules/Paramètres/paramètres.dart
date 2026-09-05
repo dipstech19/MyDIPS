@@ -2,6 +2,7 @@
 import 'dart:math';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -1003,6 +1004,7 @@ class _AdminsSectionState extends State<_AdminsSection> {
         existing: existing,
         onSave: (admin) async {
           if (existing != null) {
+            if (!await confirmUpdate(context, itemLabel: '${admin.prenom} ${admin.nom}'.trim())) return;
             await prov.updateAdmin(admin);
           } else {
             await prov.addAdmin(admin);
@@ -1183,6 +1185,14 @@ class _AdminsSectionState extends State<_AdminsSection> {
                           onEdit: () => _openAdminDrawer(context, prov, admin),
                           onDelete: () => _confirmDelete(context, prov, admin),
                           onToggle: () async {
+                            if (!await confirmUpdate(
+                              context,
+                              message: admin.actif
+                                  ? 'Désactiver le compte « ${admin.prenom} ${admin.nom} » ?'
+                                  : 'Activer le compte « ${admin.prenom} ${admin.nom} » ?',
+                            )) {
+                              return;
+                            }
                             admin.actif = !admin.actif;
                             await prov.updateAdmin(admin);
                           },
@@ -1215,6 +1225,14 @@ class _AdminsSectionState extends State<_AdminsSection> {
                             onEdit: () => _openAdminDrawer(context, prov, admin),
                             onDelete: () => _confirmDelete(context, prov, admin),
                             onToggle: () async {
+                              if (!await confirmUpdate(
+                                context,
+                                message: admin.actif
+                                    ? 'Désactiver le compte « ${admin.prenom} ${admin.nom} » ?'
+                                    : 'Activer le compte « ${admin.prenom} ${admin.nom} » ?',
+                              )) {
+                                return;
+                              }
                               admin.actif = !admin.actif;
                               await prov.updateAdmin(admin);
                             },
@@ -2644,6 +2662,7 @@ class _ChefsEquipeSectionState extends State<_ChefsEquipeSection> {
                   pointageEndHour: useCustomHours ? endHour : null,
                   pointageEndMinute: useCustomHours ? endMinute : null,
                 );
+                if (!await confirmUpdate(ctx, itemLabel: updated.nom)) return;
                 await prov.updateEquipe(updated);
                 if (ctx.mounted) Navigator.pop(ctx);
               },
@@ -3687,6 +3706,7 @@ class _ChefComptesSectionState extends State<_ChefComptesSection> {
                   );
 
                   if (isEdit) {
+                    if (!await confirmUpdate(ctx, itemLabel: compte.nom)) return;
                     await prov.updateChefCompte(compte);
                   } else {
                     await prov.addChefCompte(compte);
@@ -3903,6 +3923,7 @@ class _GroupesSectionState extends State<_GroupesSection> {
                   if (existing == null) {
                     await prov.addGroupe(g);
                   } else {
+                    if (!await confirmUpdate(ctx, itemLabel: g.nom)) return;
                     await prov.updateGroupe(g);
                   }
                   if (ctx.mounted) Navigator.pop(ctx);
@@ -3982,7 +4003,10 @@ class _GroupesSectionState extends State<_GroupesSection> {
                       IconButton(icon: const Icon(Icons.edit), onPressed: () => _showGroupeDialog(context, prov, emps, g)),
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () async => prov.deleteGroupe(g.id),
+                        onPressed: () async {
+                          if (!await confirmDelete(context, itemLabel: g.nom)) return;
+                          await prov.deleteGroupe(g.id);
+                        },
                       ),
                     ],
                   ),
@@ -4069,6 +4093,7 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
                   if (existing == null) {
                     await prov.addCompte(c);
                   } else {
+                    if (!await confirmUpdate(ctx, itemLabel: c.nom)) return;
                     await prov.updateCompte(c);
                   }
                   if (ctx.mounted) Navigator.pop(ctx);
@@ -4151,7 +4176,13 @@ class _GroupeComptesSectionState extends State<_GroupeComptesSection> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(icon: const Icon(Icons.edit), onPressed: () => _showCompteDialog(context, prov, groupesProv, c)),
-                      IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteCompte(c.id)),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () async {
+                          if (!await confirmDelete(context, itemLabel: c.nom)) return;
+                          await prov.deleteCompte(c.id);
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -4219,6 +4250,10 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
             onPressed: () async {
               final nom = ctrl.text.trim();
               if (nom.isEmpty) return;
+              if (!await confirmUpdate(ctx,
+                  message: 'Renommer le groupe « ${g.nom} » en « $nom » ?')) {
+                return;
+              }
               await prov.updateGroup(DistributionGroup(id: g.id, nom: nom, membreIds: g.membreIds));
               if (ctx.mounted) Navigator.pop(ctx);
             },
@@ -4230,7 +4265,13 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
   }
 
   // ── Retirer un membre ───────────────────────────────────────────────────
-  Future<void> _removeMember(DistributionGroup g, String memberId, DistributionGroupsProvider prov) async {
+  Future<void> _removeMember(BuildContext context, DistributionGroup g, String memberId,
+      DistributionGroupsProvider prov, String memberName) async {
+    if (!await confirmDelete(context,
+        message: 'Retirer « $memberName » du groupe « ${g.nom} » ?',
+        details: null)) {
+      return;
+    }
     await prov.updateGroup(DistributionGroup(
       id: g.id,
       nom: g.nom,
@@ -4313,6 +4354,11 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
                 onPressed: selectedIds.isEmpty
                     ? null
                     : () async {
+                        if (!await confirmUpdate(ctx,
+                            message:
+                                'Ajouter ${selectedIds.length} membre(s) au groupe « ${g.nom} » ?')) {
+                          return;
+                        }
                         await prov.updateGroup(DistributionGroup(
                           id: g.id,
                           nom: g.nom,
@@ -4421,6 +4467,11 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
                             .where((id) => id != targetMemberId)
                             .toList()
                           ..add(member.id);
+                        if (!await confirmUpdate(ctx,
+                            message:
+                                'Échanger « ${member.nom} » avec le membre sélectionné de « ${targetGroup!.nom} » ?')) {
+                          return;
+                        }
                         await prov.updateGroup(DistributionGroup(
                             id: currentGroup.id, nom: currentGroup.nom, membreIds: newCurrentIds));
                         await prov.updateGroup(DistributionGroup(
@@ -4537,7 +4588,10 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
                                 icon: const Icon(Icons.delete_outline,
                                     color: Colors.red, size: 19),
                                 tooltip: 'Supprimer le groupe',
-                                onPressed: () => prov.deleteGroup(g.id),
+                                onPressed: () async {
+                                  if (!await confirmDelete(context, itemLabel: g.nom)) return;
+                                  await prov.deleteGroup(g.id);
+                                },
                                 padding: EdgeInsets.zero,
                                 constraints:
                                     const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -4593,8 +4647,8 @@ class _DistributionGroupsSectionState extends State<_DistributionGroupsSection> 
                                           Icons.remove_circle_outline,
                                           color: Colors.red, size: 18),
                                       tooltip: 'Retirer du groupe',
-                                      onPressed: () =>
-                                          _removeMember(g, m.id, prov),
+                                      onPressed: () => _removeMember(
+                                          context, g, m.id, prov, m.nom),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(
                                           minWidth: 32, minHeight: 32),
@@ -4824,6 +4878,7 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
                 if (existing == null) {
                   await prov.addCompte(c);
                 } else {
+                  if (!await confirmUpdate(ctx, itemLabel: c.nom)) return;
                   await prov.updateCompte(c);
                 }
                 if (ctx.mounted) Navigator.pop(ctx);
@@ -4891,7 +4946,13 @@ class _DistributionComptesSectionState extends State<_DistributionComptesSection
                   subtitle: Text('${c.email}  •  Groupes: $names  •  ${c.actif ? 'Actif' : 'Inactif'}'),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     IconButton(icon: const Icon(Icons.edit), onPressed: () => _showDialogCompte(context, prov, groupsProv, empsProv, c)),
-                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => prov.deleteCompte(c.id)),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () async {
+                        if (!await confirmDelete(context, itemLabel: c.nom)) return;
+                        await prov.deleteCompte(c.id);
+                      },
+                    ),
                   ]),
                 ),
               );
@@ -5279,6 +5340,7 @@ class _ChauffeursSectionState extends State<_ChauffeursSection> {
                   );
 
                   if (isEdit) {
+                    if (!await confirmUpdate(ctx, itemLabel: chauffeur.nom)) return;
                     await prov.updateChauffeur(chauffeur);
                   } else {
                     await prov.addChauffeur(chauffeur);
@@ -5468,6 +5530,7 @@ void _showPosteDialog(BuildContext context, PostesProvider prov, Poste? existing
               if (existing == null) {
                 await prov.addPoste(Poste(id: '', nom: nom, siteId: siteId));
               } else {
+                if (!await confirmUpdate(dialogContext, itemLabel: existing.nom)) return;
                 await prov.updatePoste(Poste(id: existing.id, nom: nom, ordre: existing.ordre, siteId: siteId));
               }
               if (dialogContext.mounted) navigator.pop();
@@ -5755,6 +5818,7 @@ void _showDepartementDialog(BuildContext context, DepartementsProvider prov, Dep
               if (existing == null) {
                 await prov.addDepartement(Departement(id: '', nom: nom));
               } else {
+                if (!await confirmUpdate(dialogContext, itemLabel: existing.nom)) return;
                 await prov.updateDepartement(Departement(id: existing.id, nom: nom, ordre: existing.ordre));
               }
               if (dialogContext.mounted) navigator.pop();
@@ -5853,6 +5917,7 @@ void _showAbsenceReasonDialog(BuildContext context, AbsenceReasonsProvider prov,
                     order: prov.reasons.length,
                   ));
                 } else {
+                  if (!await confirmUpdate(dialogContext, itemLabel: existing.label)) return;
                   await prov.update(existing.copyWith(label: label, deductFromSalary: deductFromSalary));
                 }
                 if (dialogContext.mounted) navigator.pop();

@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -227,6 +228,13 @@ class _FormationPageState extends State<FormationPage> {
 
   Future<void> _save() async {
     if (_selectedEmployeIds.isEmpty) return;
+    if (!await confirmUpdate(context,
+        message:
+            'Planifier la formation pour ${_selectedEmployeIds.length} collaborateur(s) ?',
+        details: 'Le pointage des journées concernées sera remplacé par « Formation ».')) {
+      return;
+    }
+    if (!mounted) return;
     final pointage = context.read<PointageProvider>();
     final allTeams = _buildAllTeams(context);
     setState(() => _saving = true);
@@ -350,6 +358,13 @@ class _FormationPageState extends State<FormationPage> {
       ),
     );
     if (picked == null) return;
+    if (!mounted) return;
+    if (!await confirmUpdate(context,
+        message: 'Modifier la période de formation de « ${employe.nom} » ?',
+        details: 'Le pointage des anciennes journées de formation sera réinitialisé.')) {
+      return;
+    }
+    if (!mounted) return;
 
     final oldStart = initialStart;
     final oldEnd = initialEnd;

@@ -946,6 +946,10 @@ class _FicheTabState extends State<_FicheTab> {
         child: _VehiculeForm(
           editing: widget.vehicule,
           onSaved: (v) async {
+            final ok = await _confirmDlg(context,
+                title: 'Confirmer la modification',
+                msg: 'Enregistrer les modifications du véhicule « ${v.matricule} » ?');
+            if (ok != true) return;
             try {
               await _svc.updateVehicule(v);
               setState(() => _editing = false);
@@ -1093,6 +1097,10 @@ class _VidangeTabState extends State<_VidangeTab> {
   Future<void> _save(Vidange v) async {
     try {
       if (_editing?.id != null) {
+        final ok = await _confirmDlg(context,
+            title: 'Confirmer la modification',
+            msg: 'Enregistrer les modifications de cette vidange ?');
+        if (ok != true) return;
         await _svc.updateVidange(widget.vehiculeId, v.copyWith(id: _editing!.id));
         _showToast(context, '✓  Vidange modifiée');
       } else {
@@ -1179,6 +1187,10 @@ class _GasoilTabState extends State<_GasoilTab> {
   Future<void> _save(PleinGasoil p) async {
     try {
       if (_editing?.id != null) {
+        final ok = await _confirmDlg(context,
+            title: 'Confirmer la modification',
+            msg: 'Enregistrer les modifications de ce plein ?');
+        if (ok != true) return;
         await _svc.updatePlein(widget.vehiculeId, p.copyWith(id: _editing!.id));
         _showToast(context, '✓  Plein modifié');
       } else {
@@ -1292,6 +1304,10 @@ class _AutresTabState extends State<_AutresTab> {
   Future<void> _save(Reparation r) async {
     try {
       if (_editing?.id != null) {
+        final ok = await _confirmDlg(context,
+            title: 'Confirmer la modification',
+            msg: 'Enregistrer les modifications de cette réparation ?');
+        if (ok != true) return;
         await _svc.updateReparation(widget.vehiculeId, r.copyWith(id: _editing!.id));
         _showToast(context, '✓  Réparation modifiée');
       } else {

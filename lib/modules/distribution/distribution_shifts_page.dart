@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_provider.dart';
@@ -788,8 +789,20 @@ class _DistributionPlanningSection extends StatelessWidget {
                               ),
                             );
                             if (action == 'remove') {
+                              if (!context.mounted) return;
+                              if (!await confirmDelete(context,
+                                  message:
+                                      'Retirer le jour ×2 du ${picked.day}/${picked.month}/${picked.year} ?')) {
+                                return;
+                              }
                               await onRemoveDoubleDay(DateTime(picked.year, picked.month, picked.day));
                             } else if (action == 'save') {
+                              if (!context.mounted) return;
+                              if (!await confirmUpdate(context,
+                                  message:
+                                      'Enregistrer le jour ×2 du ${picked.day}/${picked.month}/${picked.year} ?')) {
+                                return;
+                              }
                               await onAddDoubleDay(DateTime(picked.year, picked.month, picked.day), label: labelCtrl.text.trim());
                             }
                           },
@@ -971,6 +984,12 @@ class _DistributionPlanningSection extends StatelessWidget {
                           ),
                         );
                         if (chosen == null) return;
+                        if (!context.mounted) return;
+                        if (!await confirmUpdate(context,
+                            message:
+                                'Remplacer le poste du ${d.day}/${d.month}/${d.year} par « ${shiftLabel(chosen)} » ?')) {
+                          return;
+                        }
                         await onEditShift(d, id, chosen);
                       },
                     );

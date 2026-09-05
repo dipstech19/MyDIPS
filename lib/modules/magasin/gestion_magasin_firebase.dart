@@ -7,6 +7,7 @@
 // =============================================================================
 
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
@@ -1870,6 +1871,11 @@ class _FournisseurFormState extends State<_FournisseurForm> {
 
   Future<void> _save() async {
     if (!mounted) return;
+    if (_isEditing &&
+        !await confirmUpdate(context, itemLabel: _nomCtrl.text.trim())) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     final dialogCtx = context;
     final scaffoldCtx = widget.scaffoldContext;
@@ -2131,6 +2137,17 @@ class _MouvFormState extends State<_MouvForm> {
   }
 
   Future<void> _save() async {
+    if (!mounted) return;
+    if (_isEditing) {
+      final ok = await confirmUpdate(
+        context,
+        message: _isSortie
+            ? 'Enregistrer les modifications de cette sortie ?'
+            : "Enregistrer les modifications de cette entrée ?",
+        details: 'Le stock du produit sera recalculé en conséquence.',
+      );
+      if (!ok) return;
+    }
     if (!mounted) return;
     setState(() => _saving = true);
     final dialogCtx = context;

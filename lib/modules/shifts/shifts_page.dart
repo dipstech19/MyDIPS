@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
@@ -197,22 +198,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
                             icon: const Icon(Icons.refresh, size: 20),
                             label: Text(tr(context, 'shifts_reset_config')),
                             onPressed: () async {
-                              final ok = await showDialog<bool>(
+                              final choice = await showDialog<({DateTime date, int journee})>(
                                 context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: Text(tr(ctx, 'shifts_reset_config')),
-                                  content: Text(tr(ctx, 'shifts_reset_confirm')),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel)),
-                                    FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr(ctx, 'shifts_reset_confirm_btn'))),
-                                  ],
-                                ),
+                                builder: (ctx) => const _ResetRotationDialog(),
                               );
-                              if (ok == true && context.mounted) {
-                                final now = DateTime.now();
+                              if (choice != null && context.mounted) {
                                 await context.read<ShiftsProvider>().setConfig(RotationConfig(
-                                  startDate: DateTime(now.year, now.month, now.day),
+                                  startDate: choice.date,
                                   equipeIds: ['', '', '', ''],
+                                  startJournee: choice.journee,
                                 ));
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
@@ -358,15 +352,16 @@ class _ShiftsPageState extends State<ShiftsPage> {
 Future<void> _showShiftsExportDialog(BuildContext context, ShiftsProvider shifts, List<Equipe> equipes) async {
   final config = shifts.config;
   if (config == null) return;
-  final equipeNames = config.equipeIds.map((id) {
+  final rawEquipeNames = config.equipeIds.map((id) {
     final eq = equipes.where((e) => e.id == id).toList();
     return eq.isEmpty ? id : eq.first.nom;
   }).toList();
+  // Colonnes exportées dans le même ordre que le planning : EQUIPE 1 → EQUIPE 4.
+  final columnOrder = ShiftRotationLogic.equipeDisplayOrder(rawEquipeNames);
+  final equipeNames = [for (final pos in columnOrder) rawEquipeNames[pos]];
+  final equipeWord = trOf(context, 'shifts_equipe_column');
   final positionHeaders = [
-    trOf(context, 'shifts_table_p1'),
-    trOf(context, 'shifts_table_p2'),
-    trOf(context, 'shifts_table_p3'),
-    trOf(context, 'shifts_table_rh'),
+    for (var k = 0; k < columnOrder.length; k++) '$equipeWord ${k + 1}',
   ];
   if (!context.mounted) return;
 
@@ -393,7 +388,17 @@ Future<void> _showShiftsExportDialog(BuildContext context, ShiftsProvider shifts
     }
     return;
   }
-  final schedule = shifts.getScheduleForDays(start, dayCount);
+  final rawSchedule = shifts.getScheduleForDays(start, dayCount);
+  final schedule = [
+    for (final s in rawSchedule)
+      (
+        date: s.date,
+        perEquipe: [
+          for (final pos in columnOrder)
+            if (pos < s.perEquipe.length) s.perEquipe[pos],
+        ],
+      ),
+  ];
   if (schedule.isEmpty) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -467,12 +472,18 @@ class _TodaySummary extends StatelessWidget {
     final today = DateTime.now();
     final day = DateTime(today.year, today.month, today.day);
 
+    final equipeNames = config.equipeIds.map((id) {
+      final eqList = equipes.where((e) => e.id == id).toList();
+      return eqList.isEmpty ? id : eqList.first.nom;
+    }).toList();
+    // Même ordre que le planning : EQUIPE 1, EQUIPE 2, EQUIPE 3, EQUIPE 4.
+    final order = ShiftRotationLogic.equipeDisplayOrder(equipeNames);
+
     final items = <Widget>[];
-    for (var i = 0; i < config.equipeIds.length; i++) {
+    for (final i in order) {
       final eid = config.equipeIds[i];
       if (eid.isEmpty) continue;
-      final eqList = equipes.where((e) => e.id == eid).toList();
-      final name = eqList.isEmpty ? eid : eqList.first.nom;
+      final name = equipeNames[i];
       final shift = ShiftRotationLogic.shiftForPosition(i, shifts.dayInCycle(day));
       final color = _shiftColor(shift);
       items.add(
@@ -576,7 +587,15 @@ class _ScheduleTableState extends State<_ScheduleTable> {
     }).toList();
 
     final monthsToShow = _monthsToShow();
-    final positionHeaders = [tr(context, 'shifts_table_p1'), tr(context, 'shifts_table_p2'), tr(context, 'shifts_table_p3'), tr(context, 'shifts_table_rh')];
+    // Colonnes : les équipes se suivent (EQUIPE 1 → EQUIPE 4) au lieu des postes P1…P4.
+    final columnOrder = ShiftRotationLogic.equipeDisplayOrder(equipeNames);
+    final equipeWord = tr(context, 'shifts_equipe_column');
+    final columnLabels = [
+      for (var k = 0; k < columnOrder.length; k++)
+        equipeNames[columnOrder[k]].trim().isNotEmpty
+            ? equipeNames[columnOrder[k]].trim()
+            : '$equipeWord ${k + 1}',
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -624,12 +643,12 @@ class _ScheduleTableState extends State<_ScheduleTable> {
                     headingRowColor: WidgetStateProperty.all(Colors.grey.shade100),
                     columns: [
                       DataColumn(label: Text(tr(context, 'shifts_table_date'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 11 : 12))),
-                      for (var pos = 0; pos < 4; pos++)
+                      for (final label in columnLabels)
                         DataColumn(
                           label: Text(
-                            '${positionHeaders[pos]}\n(${equipeNames.length > pos ? equipeNames[pos] : ''})',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 10 : 11),
-                            maxLines: 2,
+                            label,
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: mobile ? 11 : 12),
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -673,7 +692,7 @@ class _ScheduleTableState extends State<_ScheduleTable> {
                                   ],
                                 ),
                               ),
-                              for (var pos = 0; pos < 4; pos++)
+                              for (final pos in columnOrder)
                                 DataCell(_buildShiftCell(context, shifts, s, pos, config, mobile, isDouble: isDouble)),
                             ],
                           );
@@ -764,6 +783,12 @@ class _ScheduleTableState extends State<_ScheduleTable> {
       ),
     );
     if (chosen != null && chosen != current && context.mounted) {
+      if (!await confirmUpdate(context,
+          message:
+              'Remplacer le poste du ${date.day}/${date.month}/${date.year} par « ${_shiftLabel(context, chosen)} » ?')) {
+        return;
+      }
+      if (!context.mounted) return;
       await shifts.setShiftOverride(date, equipeId, chosen);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -965,6 +990,86 @@ class _ShiftsExportRangeDialogState extends State<_ShiftsExportRangeDialog> {
   }
 }
 
+/// Réinitialisation du tableau de roulement : date de redémarrage + journée
+/// du poste (1 ou 2), car chaque poste dure deux jours de suite.
+class _ResetRotationDialog extends StatefulWidget {
+  const _ResetRotationDialog();
+
+  @override
+  State<_ResetRotationDialog> createState() => _ResetRotationDialogState();
+}
+
+class _ResetRotationDialogState extends State<_ResetRotationDialog> {
+  late DateTime _date;
+  int _journee = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _date = DateTime(now.year, now.month, now.day);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(tr(context, 'shifts_reset_config')),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(tr(context, 'shifts_reset_confirm')),
+            const SizedBox(height: 16),
+            Text(tr(context, 'shifts_config_start'), style: const TextStyle(fontWeight: FontWeight.w600)),
+            TextButton.icon(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _date,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2030),
+                );
+                if (picked != null) {
+                  setState(() => _date = DateTime(picked.year, picked.month, picked.day));
+                }
+              },
+              icon: const Icon(Icons.calendar_today),
+              label: Text('${_date.day}/${_date.month}/${_date.year}'),
+            ),
+            const SizedBox(height: 8),
+            Text(tr(context, 'shifts_journee_question'), style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SegmentedButton<int>(
+              segments: [
+                ButtonSegment<int>(value: 1, label: Text(tr(context, 'shifts_journee_1'))),
+                ButtonSegment<int>(value: 2, label: Text(tr(context, 'shifts_journee_2'))),
+              ],
+              selected: {_journee},
+              onSelectionChanged: (v) => setState(() => _journee = v.first),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              tr(context, 'shifts_journee_hint'),
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, (date: _date, journee: _journee)),
+          child: Text(tr(context, 'shifts_reset_confirm_btn')),
+        ),
+      ],
+    );
+  }
+}
+
 class _ConfigSection extends StatefulWidget {
   final List<Equipe> equipes;
 
@@ -976,6 +1081,8 @@ class _ConfigSection extends StatefulWidget {
 
 class _ConfigSectionState extends State<_ConfigSection> {
   late DateTime _startDate;
+  /// Journée du poste à la date de début : 1 = 1re journée, 2 = 2e journée.
+  int _startJournee = 1;
   late List<String?> _selectedIds;
   late ShiftsProvider _shifts;
   /// True si l’utilisateur a modifié le formulaire localement — on n’écrase pas avec le provider.
@@ -1013,6 +1120,7 @@ class _ConfigSectionState extends State<_ConfigSection> {
     final config = _shifts.config;
     if (config == null) return;
     _startDate = config.startDay;
+    _startJournee = config.startJournee;
     if (!config.equipeIds.any((id) => id.isNotEmpty)) {
       _selectedIds = ['', '', '', ''];
       return;
@@ -1061,6 +1169,26 @@ class _ConfigSectionState extends State<_ConfigSection> {
               icon: Icon(Icons.calendar_today),
               label: Text('${_startDate.day}/${_startDate.month}/${_startDate.year}'),
             ),
+            SizedBox(height: 8),
+            Text(tr(context, 'shifts_journee_question')),
+            SizedBox(height: 8),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: SegmentedButton<int>(
+                segments: [
+                  ButtonSegment<int>(value: 1, label: Text(tr(context, 'shifts_journee_1'))),
+                  ButtonSegment<int>(value: 2, label: Text(tr(context, 'shifts_journee_2'))),
+                ],
+                selected: {_startJournee},
+                onSelectionChanged: (v) => setState(() {
+                  _dirty = true;
+                  _startJournee = v.first;
+                }),
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(tr(context, 'shifts_journee_hint'), style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+            SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(tr(context, 'shifts_config_position_legend'), style: TextStyle(fontSize: 13, color: Colors.grey[700])),
@@ -1110,7 +1238,11 @@ class _ConfigSectionState extends State<_ConfigSection> {
               onPressed: () async {
                 final ids = _selectedIds.map((v) => v ?? '').toList();
                 if (ids.length != 4) return;
-                await context.read<ShiftsProvider>().setConfig(RotationConfig(startDate: _startDate, equipeIds: ids));
+                await context.read<ShiftsProvider>().setConfig(RotationConfig(
+                      startDate: _startDate,
+                      equipeIds: ids,
+                      startJournee: _startJournee,
+                    ));
                 if (mounted) {
                   setState(() => _dirty = false);
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr(context, 'shifts_save')), backgroundColor: Colors.green));
@@ -1300,7 +1432,14 @@ class _DoubleDaysSectionState extends State<_DoubleDaysSection> {
             days: filtered,
             year: _filterYear,
             isAdmin: widget.isAdmin,
-            onRemove: (d) => shifts.removeDoubleDay(d.date),
+            onRemove: (d) async {
+              if (!await confirmDelete(context,
+                  message:
+                      'Retirer le jour ×2 du ${d.date.day}/${d.date.month}/${d.date.year} ?')) {
+                return;
+              }
+              await shifts.removeDoubleDay(d.date);
+            },
           ),
       ],
     );
@@ -1691,7 +1830,14 @@ class _PublicHolidaysSectionState extends State<_PublicHolidaysSection> {
             days: calendarDays,
             year: _filterYear,
             isAdmin: widget.isAdmin,
-            onRemove: (d) => shifts.removePublicHoliday(d.date),
+            onRemove: (d) async {
+              if (!await confirmDelete(context,
+                  message:
+                      'Retirer le jour férié du ${d.date.day}/${d.date.month}/${d.date.year} ?')) {
+                return;
+              }
+              await shifts.removePublicHoliday(d.date);
+            },
           ),
       ],
     );

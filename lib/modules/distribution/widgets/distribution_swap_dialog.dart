@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../employees/employees_provider.dart';
 import '../../employees/models/employe_model.dart';
@@ -415,6 +416,10 @@ class DistributionSwapDialogs {
                         final repo = swapsProv.repo;
                         final pRepo = pointageProv.repository;
                         if (repo == null || pRepo == null) return;
+                        if (!await confirmUpdate(ctx,
+                            message: "Enregistrer cette modification de l'échange ?")) {
+                          return;
+                        }
                         await repo.updateSwap(swap.id, {
                           'dateBInGroupA': DistributionSwap.dayOnly(dateB).toIso8601String(),
                           'status': DistributionSwapStatus.scheduled.name,

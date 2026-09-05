@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
@@ -745,6 +746,12 @@ class _PointagePageState extends State<PointagePage> {
             TextButton(
               onPressed: () async {
                 Navigator.pop(dialogCtx);
+                if (!context.mounted) return;
+                if (!await confirmUpdate(context,
+                    message:
+                        "Réinitialiser la sortie de « ${record.employeNom} » ?")) {
+                  return;
+                }
                 await pointageProvider.resetDepartureStatus(record);
               },
               child: const Text('Réinitialiser'),
@@ -1310,7 +1317,7 @@ class _PointagePageState extends State<PointagePage> {
                           // Confirmation disponible uniquement après la fin du poste.
                           final cfgEquipeMobile = equipes.where((e) => e.id == t.equipeId).toList();
                           final cfgEquipeObjM = cfgEquipeMobile.isNotEmpty ? cfgEquipeMobile.first : null;
-                          final shiftM = cfgEquipeObjM == null ? null : shiftsProvider.getShiftForEquipe(cfgEquipeObjM.id, logicalDay);
+                          final shiftM = cfgEquipeObjM == null ? null : shiftsProvider.getShiftForEquipeOrNull(cfgEquipeObjM.id, logicalDay);
                           final cfgM = getConfigForEquipeAndDate(cfgEquipeObjM, logicalDay, shiftM);
                           final confirmWindowOpen = !isViewingToday || isGroupScope || cfgM.canAdminConfirmAfterShiftEnd(now, logicalDay);
                           final confirmWindowHint = confirmWindowOpen ? null : 'Après ${cfgM.shiftEndFormattedOn(logicalDay)}';
@@ -1459,6 +1466,15 @@ class _PointagePageState extends State<PointagePage> {
                                   child: isConfirmed
                                       ? OutlinedButton.icon(
                                           onPressed: () async {
+                                            if (!await confirmDelete(context,
+                                                title: 'Annuler la confirmation',
+                                                message:
+                                                    "Annuler la confirmation du pointage de l'équipe « ${t.equipeName} » ?",
+                                                details:
+                                                    'La feuille enregistrée pour cette journée sera supprimée.')) {
+                                              return;
+                                            }
+                                            if (!context.mounted) return;
                                             try {
                                               await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
                                               await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
@@ -1761,7 +1777,9 @@ class _PointagePageState extends State<PointagePage> {
                                       final isNonWorking = nonWorkingIdsEffective.contains(t.equipeId);
                                       final shiftLabel = t.equipeId == 'hors_equipe'
                                           ? null
-                                          : shiftsProvider.getShiftForEquipe(t.equipeId, logicalDay).shortLabel;
+                                          : shiftsProvider
+                                              .getShiftForEquipeOrNull(t.equipeId, logicalDay)
+                                              ?.shortLabel;
                                       final isSelected = _selectedEquipeIdAdmin == t.equipeId;
                                       final isConfirmed = confirmedIds.contains(t.equipeId);
 
@@ -1802,7 +1820,7 @@ class _PointagePageState extends State<PointagePage> {
                                       // Confirmation disponible uniquement après la fin du poste.
                                       final cfgEquipeDesk = equipes.where((e) => e.id == t.equipeId).toList();
                                       final cfgEquipeObjD = cfgEquipeDesk.isNotEmpty ? cfgEquipeDesk.first : null;
-                                      final shiftD = cfgEquipeObjD == null ? null : shiftsProvider.getShiftForEquipe(cfgEquipeObjD.id, logicalDay);
+                                      final shiftD = cfgEquipeObjD == null ? null : shiftsProvider.getShiftForEquipeOrNull(cfgEquipeObjD.id, logicalDay);
                                       final cfgD = getConfigForEquipeAndDate(cfgEquipeObjD, logicalDay, shiftD);
                                       final confirmWindowOpen = !isViewingToday || isGroupScope || cfgD.canAdminConfirmAfterShiftEnd(now, logicalDay);
                                       final confirmWindowHint = confirmWindowOpen ? null : 'Confirmation disponible après la fin du poste (${cfgD.shiftEndFormattedOn(logicalDay)})';
@@ -1867,6 +1885,15 @@ class _PointagePageState extends State<PointagePage> {
                                                 child: isConfirmed
                                                     ? OutlinedButton.icon(
                                                         onPressed: () async {
+                                                          if (!await confirmDelete(context,
+                                                              title: 'Annuler la confirmation',
+                                                              message:
+                                                                  "Annuler la confirmation du pointage de l'équipe « ${t.equipeName} » ?",
+                                                              details:
+                                                                  'La feuille enregistrée pour cette journée sera supprimée.')) {
+                                                            return;
+                                                          }
+                                                          if (!context.mounted) return;
                                                           try {
                                                             await _confirmationRepo.unconfirmEquipe(t.equipeId, logicalDay);
                                                             await _snapshotRepo.deleteEquipeSnapshot(t.equipeId, logicalDay);
@@ -2304,7 +2331,7 @@ class _PointagePageState extends State<PointagePage> {
         ? (DateTime date, String equipeId) {
             // Groupes / Hors équipe: not part of shifts rotation, never treat as "repos".
             if (equipeId.startsWith('groupe:') || equipeId == 'hors_equipe') return false;
-            return shiftsProvider.getShiftForEquipe(equipeId, date) == ShiftType.rest;
+            return shiftsProvider.getShiftForEquipeOrNull(equipeId, date) == ShiftType.rest;
           }
         : null;
     // جلب overtime_assignments للنطاق الزمني
@@ -2539,8 +2566,9 @@ class _PointagePageState extends State<PointagePage> {
           ShiftType? originShift;
           DateTime? originShiftEnd;
           if (origin != null && shiftsProvider.hasConfig) {
-            originShift = shiftsProvider.getShiftForEquipe(origin!.id, today);
-            originShiftEnd = shiftEnd(originShift, today);
+            originShift = shiftsProvider.getShiftForEquipeOrNull(origin!.id, today);
+            originShiftEnd =
+                originShift == null ? null : shiftEnd(originShift, today);
           }
 
           final members = origin == null
@@ -2637,10 +2665,12 @@ class _PointagePageState extends State<PointagePage> {
                       ShiftType? targetShift;
                       String? disabledReason;
                       if (shiftsProvider.hasConfig) {
-                        targetShift = shiftsProvider.getShiftForEquipe(q.id, pickedDay);
+                        targetShift = shiftsProvider.getShiftForEquipeOrNull(q.id, pickedDay);
                         if (targetShift == ShiftType.rest) {
                           disabledReason = 'En repos ce jour-là';
-                        } else if (sameDay && originShiftEnd != null) {
+                        } else if (sameDay &&
+                            originShiftEnd != null &&
+                            targetShift != null) {
                           final targetStart = shiftStart(targetShift, pickedDay);
                           if (targetStart.isBefore(originShiftEnd)) {
                             disabledReason = 'Commence avant la fin du shift original';
@@ -2880,10 +2910,16 @@ class _PointagePageState extends State<PointagePage> {
                           children: [
                             InkWell(
                               onTap: () async {
+                                if (!await confirmUpdate(context,
+                                    message:
+                                        "Marquer « ${e.nom} » comme présent ? Le pointage enregistré sera modifié.")) {
+                                  return;
+                                }
+                                if (!context.mounted) return;
                                 final overrideDay = adminOverridePersistDate ?? DateTime.now();
                                 final overrideShift = context
                                     .read<ShiftsProvider>()
-                                    .getShiftForEquipe(team.equipeId, overrideDay);
+                                    .getShiftForEquipeOrNull(team.equipeId, overrideDay);
                                 if (record != null) {
                                   await pointageProvider.setAdminOverride(
                                     record.id,
@@ -2915,7 +2951,13 @@ class _PointagePageState extends State<PointagePage> {
                               InkWell(
                               onTap: () async {
                                 final reasonId = await _showAbsenceReasonDialog(context);
-                                if (reasonId == null || !mounted) return;
+                                if (reasonId == null || !context.mounted) return;
+                                if (!await confirmUpdate(context,
+                                    message:
+                                        "Marquer « ${e.nom} » comme absent ? Le pointage enregistré sera modifié.")) {
+                                  return;
+                                }
+                                if (!mounted) return;
                                 if (record != null) {
                                   await pointageProvider.setAdminOverride(record.id, AttendanceStatus.absent, absenceReason: reasonId);
                                 } else {
@@ -3155,9 +3197,15 @@ class _PointagePageState extends State<PointagePage> {
     required DateTime? adminOverridePersistDate,
   }) async {
     Future<void> apply(AttendanceStatus status, {String? absenceReason}) async {
+      if (!context.mounted) return;
+      if (!await confirmUpdate(context,
+          message: "Modifier le pointage de « ${employe.nom} » ?")) {
+        return;
+      }
+      if (!context.mounted) return;
       final overrideDay = adminOverridePersistDate ?? DateTime.now();
       final overrideShift =
-          context.read<ShiftsProvider>().getShiftForEquipe(equipeId, overrideDay);
+          context.read<ShiftsProvider>().getShiftForEquipeOrNull(equipeId, overrideDay);
       if (record != null) {
         await pointageProvider.setAdminOverride(
           record.id,
@@ -3238,18 +3286,30 @@ class _PointagePageState extends State<PointagePage> {
 
   // ── Feuille de pointage (PDF) : partage WhatsApp / téléchargement ───────
 
+  /// Remonte le chef d'équipe en tête de liste (première ligne de la feuille).
+  List<Employe> _chefFirst(List<Employe> workers, String? chefEmployeId) {
+    if (chefEmployeId == null || chefEmployeId.isEmpty) return workers;
+    final index = workers.indexWhere((w) => w.id == chefEmployeId);
+    if (index <= 0) return workers;
+    final ordered = List<Employe>.from(workers);
+    ordered.insert(0, ordered.removeAt(index));
+    return ordered;
+  }
+
   /// Lignes de la feuille de pointage à partir de ce que le chef voit à l'écran.
   /// [treatUnmarkedAsAbsent] : après confirmation les non-saisis sont enregistrés
   /// comme absents, la feuille doit donc les afficher ainsi.
+  /// [chefEmployeId] : sa ligne est remontée en première ligne du tableau.
   List<FeuillePointageLine> _buildFeuillePointageLines({
     required List<Employe> workers,
     required PointageProvider pointageProvider,
     required List<AbsenceReasonConfig> reasonConfigs,
     required AttendanceState Function(String employeId) getState,
     bool treatUnmarkedAsAbsent = false,
+    String? chefEmployeId,
   }) {
     final lines = <FeuillePointageLine>[];
-    for (final w in workers) {
+    for (final w in _chefFirst(workers, chefEmployeId)) {
       final record = pointageProvider.getRecordForEmployee(w.id);
       String statut = '';
       String commentaire = '';
@@ -3330,13 +3390,34 @@ class _PointagePageState extends State<PointagePage> {
     // La sortie est enregistrée automatiquement pour tous les présents à la confirmation.
     final chefToday = DateTime(now.year, now.month, now.day);
     final shiftForChefEarly = chefEquipe != null
-        ? shiftsProvider.getShiftForEquipe(chefEquipe.id, chefToday)
+        ? shiftsProvider.getShiftForEquipeOrNull(chefEquipe.id, chefToday)
         : null;
     // Poste imprimé sur la feuille de pointage (P1/P2/P3), vide si repos/inconnu.
     final posteLabelForExport =
         (shiftForChefEarly == null || shiftForChefEarly == ShiftType.rest)
             ? ''
             : shiftForChefEarly.shortLabel;
+    // Journée 1 ou 2 du poste en cours (chaque poste dure deux jours de suite).
+    final journeeLabelForExport = (chefEquipe == null ||
+            shiftForChefEarly == null ||
+            shiftForChefEarly == ShiftType.rest)
+        ? ''
+        : '${ShiftRotationLogic.journeeDansPoste(
+            today: shiftForChefEarly,
+            previousDay: shiftsProvider.getShiftForEquipe(
+              chefEquipe.id,
+              chefToday.subtract(const Duration(days: 1)),
+            ),
+          )}';
+    // Chef d'équipe : sa ligne passe en tête de la feuille et son nom complet
+    // est imprimé sous « SIGNATURE DU CHEF D'ÉQUIPE ».
+    final chefEmployeIdForExport = chefEquipe?.chefId ?? '';
+    final chefEmployeForExport = employes
+        .where((e) => e.id == chefEmployeIdForExport)
+        .toList();
+    final chefNameForExport = chefEmployeForExport.isNotEmpty
+        ? chefEmployeForExport.first.nom
+        : (auth.currentUser?.nom ?? '');
     // Bannière « pointage confirmé » à la place du bouton une fois le pointage envoyé.
     final allLocked = workersDisplay.isNotEmpty &&
         workersDisplay.every((w) => pointageProvider.isChefLockedForEmployee(w.id));
@@ -3386,7 +3467,7 @@ class _PointagePageState extends State<PointagePage> {
       final reportNow = DateTime.now();
       final reportToday = DateTime(reportNow.year, reportNow.month, reportNow.day);
       final shiftForEquipe = equipe.isNotEmpty
-          ? shiftsProvider.getShiftForEquipe(equipe.first.id, reportToday)
+          ? shiftsProvider.getShiftForEquipeOrNull(equipe.first.id, reportToday)
           : null;
       final pointageConfig = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, reportToday, shiftForEquipe);
 
@@ -3569,12 +3650,15 @@ class _PointagePageState extends State<PointagePage> {
             date: reportToday,
             equipeLabel: equipeName,
             posteLabel: posteLabelForExport,
+            journeeLabel: journeeLabelForExport,
+            chefName: chefNameForExport,
             lines: _buildFeuillePointageLines(
               workers: workersDisplay,
               pointageProvider: pointageProvider,
               reasonConfigs: absenceReasonConfigs,
               getState: getState,
               treatUnmarkedAsAbsent: true,
+              chefEmployeId: chefEmployeIdForExport,
             ),
           );
         } catch (e) {
@@ -3594,7 +3678,7 @@ class _PointagePageState extends State<PointagePage> {
     final padding = pagePadding(context);
     final today = DateTime(now.year, now.month, now.day);
     final shiftForChef = chefEquipe != null
-        ? shiftsProvider.getShiftForEquipe(chefEquipe.id, today)
+        ? shiftsProvider.getShiftForEquipeOrNull(chefEquipe.id, today)
         : null;
     final config = getConfigForEquipeAndDate(chefEquipe, today, shiftForChef);
     final hoursStatus =
@@ -3710,6 +3794,16 @@ class _PointagePageState extends State<PointagePage> {
         child: ChefStatusChips(
           current: getState(e.id),
           onSelect: canMarkArrival ? (s) async {
+            // Première saisie = simple pointage ; changer une valeur déjà
+            // enregistrée est une modification → confirmation obligatoire.
+            final previous = getState(e.id);
+            if (previous != AttendanceState.unmarked && previous != s) {
+              if (!await confirmUpdate(context,
+                  message: "Modifier le pointage de « ${e.nom} » ?")) {
+                return;
+              }
+              if (!context.mounted) return;
+            }
             String? absenceReason;
             if (s == AttendanceState.absent) {
               final reasonId = await _showAbsenceReasonDialog(context);
@@ -3829,12 +3923,15 @@ class _PointagePageState extends State<PointagePage> {
           date: today,
           equipeLabel: equipeNameForTitle,
           posteLabel: posteLabelForExport,
+          journeeLabel: journeeLabelForExport,
+          chefName: chefNameForExport,
           linesBuilder: () => _buildFeuillePointageLines(
             workers: workersDisplay,
             pointageProvider: pointageProvider,
             reasonConfigs: absenceReasonConfigs,
             getState: getState,
             treatUnmarkedAsAbsent: true,
+            chefEmployeId: chefEmployeIdForExport,
           ),
         );
 
@@ -3962,11 +4059,19 @@ class _PointagePageState extends State<PointagePage> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: (!allLocked && isWithinArrival) ? () async {
+                        if (!await confirmAction(context,
+                            message:
+                                'Marquer les $unmarkedCount collaborateur(s) non saisis comme présents ?',
+                            confirmLabel: 'Confirmer',
+                            icon: Icons.how_to_reg_outlined)) {
+                          return;
+                        }
+                        if (!context.mounted) return;
                         final equipeId = auth.equipeId ?? '';
                         final equipe = equipes.where((e) => e.id == equipeId).toList();
                         final equipeName = equipe.isNotEmpty ? equipe.first.nom : '';
                         final today = DateTime.now();
-                        final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipe(equipe.first.id, today) : null;
+                        final shiftForEquipe = equipe.isNotEmpty ? shiftsProvider.getShiftForEquipeOrNull(equipe.first.id, today) : null;
                         final cfg = getConfigForEquipeAndDate(equipe.isEmpty ? null : equipe.first, today, shiftForEquipe);
                         for (final w in workersDisplay) {
                           final isOvertimeW = overtimeWorkerIds.contains(w.id);
@@ -4283,6 +4388,10 @@ class _PointageHoursBanner extends StatelessWidget {
         msg = tr(this.context, 'pointage_arrival_window').replaceFirst('%s', config.arrivalWindowFormatted(now));
       }
       bg = Colors.green.shade50;
+    } else if (config.isRestDay) {
+      // Repos décidé par le planning : message explicite plutôt que « fermé à 00:00 ».
+      msg = tr(this.context, 'pointage_rest_day');
+      bg = Colors.blueGrey.shade50;
     } else if (status == PointageHoursStatus.notYetOpen) {
       msg = tr(this.context, 'pointage_hours_not_yet').replaceFirst('%s', config.startTimeFormatted());
       bg = Colors.orange.shade100;
@@ -4944,6 +5053,13 @@ class _FormationManagementPageState extends State<_FormationManagementPage> {
     if (_selectedEmployeIds.isEmpty) return;
     final team = widget.teams.where((t) => t.equipeId == _selectedEquipeId).toList();
     if (team.isEmpty) return;
+    if (!await confirmUpdate(context,
+        message:
+            'Planifier la formation pour ${_selectedEmployeIds.length} collaborateur(s) ?',
+        details: 'Le pointage des journées concernées sera remplacé par « Formation ».')) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     final t = team.first;
     final start = DateTime(_startDate.year, _startDate.month, _startDate.day);

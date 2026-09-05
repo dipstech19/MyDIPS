@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/locale/app_locale.dart';
@@ -10,6 +11,7 @@ import '../pointage/models/pointage_model.dart';
 import '../pointage/pointage_hours_config.dart';
 import '../pointage/pointage_provider.dart';
 import '../pointage/services/pointage_export_service.dart';
+import '../pointage/widgets/absence_reason_picker.dart';
 import '../pointage/widgets/feuille_pointage_share.dart';
 import 'groupes_provider.dart';
 
@@ -62,10 +64,19 @@ class GroupePointagePage extends StatelessWidget {
     final reportConfirmed = members.isNotEmpty &&
         members.every((e) => recordFor(e.id)?.submittedByChefAt != null);
 
+    // Le responsable du groupe signe la feuille : sa ligne passe en tête.
+    final chefEmployeId = auth.currentUser?.chefEmployeId ?? '';
+    final membersForFeuille = () {
+      final ordered = List<Employe>.from(members);
+      final index = ordered.indexWhere((e) => e.id == chefEmployeId);
+      if (index > 0) ordered.insert(0, ordered.removeAt(index));
+      return ordered;
+    }();
+
     /// Lignes de la feuille de pointage PDF (les non-saisis deviennent absents
     /// à la confirmation, la feuille les affiche donc ainsi).
     List<FeuillePointageLine> buildLines() => [
-          for (final e in members)
+          for (final e in membersForFeuille)
             () {
               final r = recordFor(e.id);
               final present = r?.chefStatus == ChefPointageStatus.present;
@@ -142,6 +153,7 @@ class GroupePointagePage extends StatelessWidget {
           date: pointageDate,
           equipeLabel: g.nom,
           posteLabel: '',
+          chefName: chefName,
           lines: buildLines(),
         );
       } catch (err) {
@@ -188,6 +200,13 @@ class GroupePointagePage extends StatelessWidget {
                   selected: present,
                   onSelected: canMark
                       ? (_) async {
+                          if (absent &&
+                              !await confirmUpdate(context,
+                                  message:
+                                      "Modifier le pointage de « ${e.nom} » en « présent » ?")) {
+                            return;
+                          }
+                          if (!context.mounted) return;
                           final ok = await pointageProv.markChefAttendance(
                             employeId: e.id,
                             employeNom: e.nom,
@@ -212,6 +231,20 @@ class GroupePointagePage extends StatelessWidget {
                   selected: absent,
                   onSelected: canMark
                       ? (_) async {
+                          // Toute absence doit porter une raison choisie par le responsable.
+                          final reasonId = await showAbsenceReasonPicker(
+                            context,
+                            reasons: reasonConfigs,
+                            currentReason: r?.absenceReason,
+                          );
+                          if (reasonId == null || !context.mounted) return;
+                          if (present &&
+                              !await confirmUpdate(context,
+                                  message:
+                                      "Modifier le pointage de « ${e.nom} » en « absent » ?")) {
+                            return;
+                          }
+                          if (!context.mounted) return;
                           final ok = await pointageProv.markChefAttendance(
                             employeId: e.id,
                             employeNom: e.nom,
@@ -221,6 +254,7 @@ class GroupePointagePage extends StatelessWidget {
                             chefName: chefName,
                             chefStatus: ChefPointageStatus.absent,
                             chefId: auth.currentUser?.id,
+                            absenceReason: reasonId,
                             configOverride: config,
                           );
                           if (!ok && context.mounted) {
@@ -326,6 +360,7 @@ class GroupePointagePage extends StatelessWidget {
                 date: pointageDate,
                 equipeLabel: g.nom,
                 posteLabel: '',
+                chefName: chefName,
                 linesBuilder: buildLines,
               ),
             ],

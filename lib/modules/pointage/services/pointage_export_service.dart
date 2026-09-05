@@ -677,14 +677,26 @@ class PointageExportService {
   static const String feuillePointageNb =
       'NB : En cas d\'absence ou autre, renseigner le motif dans la case « Commentaire »';
 
+  /// Libellé du bloc de signature imprimé en bas de la feuille.
+  static const String feuilleSignatureLabel = 'SIGNATURE DU CHEF D\'ÉQUIPE';
+
+  /// « 1 » / « 2 » → « Journée 1 » (vide si aucune journée connue).
+  static String feuilleJourneeTitle(String journeeLabel) {
+    final clean = journeeLabel.trim();
+    if (clean.isEmpty) return '';
+    return RegExp(r'^\d+$').hasMatch(clean) ? 'Journée $clean' : clean;
+  }
+
   /// Reproduit la feuille de pointage papier : logo + en-tête DIPS, DATE / EQUIPE /
-  /// POSTE, puis le tableau NOM | PRENOM | STATUT | COMMENTAIRE.
+  /// POSTE / JOURNEE, puis le tableau NOM | PRENOM | STATUT | COMMENTAIRE, et
+  /// enfin le bloc « SIGNATURE DU CHEF D'EQUIPE » avec son nom complet.
   /// [minRows] complète le tableau avec des lignes vides comme sur le modèle.
   static Future<Uint8List> buildFeuillePointagePdf({
     required DateTime date,
     required String equipeLabel,
     String posteLabel = '',
     String journeeLabel = '',
+    String chefName = '',
     required List<FeuillePointageLine> lines,
     int minRows = 14,
   }) async {
@@ -722,6 +734,8 @@ class PointageExportService {
             feuillePointageNb,
             style: pw.TextStyle(fontSize: 8.5, fontStyle: pw.FontStyle.italic),
           ),
+          pw.SizedBox(height: 22),
+          _buildFeuilleSignature(chefName),
         ],
       ),
     );
@@ -729,32 +743,36 @@ class PointageExportService {
     return pdf.save();
   }
 
-  /// Titre du rapport partagé par le chef : « date équipe poste »
-  /// (ex. « 07-08-2026 Equipe 2 Poste 2 »). Sert de nom de fichier PDF, c'est
-  /// donc ce que voient les destinataires sur WhatsApp.
+  /// Titre du rapport partagé par le chef : « date équipe poste journée »
+  /// (ex. « 07-08-2026 Equipe 2 Poste 2 Journee 1 »). Sert de nom de fichier PDF,
+  /// c'est donc ce que voient les destinataires sur WhatsApp.
   static String feuillePointageTitleFor({
     required DateTime date,
     required String equipeLabel,
     String posteLabel = '',
+    String journeeLabel = '',
   }) {
     final parts = [
       _dateFormat.format(date).replaceAll('/', '-'),
       _sanitizeFileNamePart(equipeLabel),
       _sanitizeFileNamePart(feuillePosteTitle(posteLabel)),
+      _sanitizeFileNamePart(feuilleJourneeTitle(journeeLabel)),
     ].where((p) => p.isNotEmpty);
     return parts.join(' ');
   }
 
-  /// Nom de fichier de la feuille de pointage (date + équipe + poste).
+  /// Nom de fichier de la feuille de pointage (date + équipe + poste + journée).
   static String feuillePointageFileName({
     required DateTime date,
     required String equipeLabel,
     String posteLabel = '',
+    String journeeLabel = '',
   }) {
     return '${feuillePointageTitleFor(
       date: date,
       equipeLabel: equipeLabel,
       posteLabel: posteLabel,
+      journeeLabel: journeeLabel,
     )}.pdf';
   }
 
@@ -844,10 +862,10 @@ class PointageExportService {
     );
   }
 
-  /// « POSTE : ....... / Journée : ....... » (les deux champs sur la même ligne).
+  /// « POSTE : ....... / JOURNEE : Journée 2 ....... » (même ligne, comme le modèle).
   static pw.Widget _feuillePosteField(String posteLabel, String journeeLabel) {
     final poste = posteLabel.trim();
-    final journee = journeeLabel.trim();
+    final journee = feuilleJourneeTitle(journeeLabel);
     return pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.end,
       children: [
@@ -861,11 +879,14 @@ class PointageExportService {
         ],
         pw.Expanded(flex: 2, child: _dottedFiller()),
         pw.Text(
-          ' / Journée : ',
+          ' / JOURNEE : ',
           style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
         ),
         if (journee.isNotEmpty) ...[
-          pw.Text(journee, style: const pw.TextStyle(fontSize: 10)),
+          pw.Text(
+            journee,
+            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          ),
           pw.SizedBox(width: 6),
         ],
         pw.Expanded(flex: 2, child: _dottedFiller()),
@@ -883,6 +904,43 @@ class PointageExportService {
           '.' * 220,
           style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
           maxLines: 1,
+        ),
+      ),
+    );
+  }
+
+  /// Bloc bas de page : « SIGNATURE DU CHEF D'ÉQUIPE », cadre à signer, puis le
+  /// nom complet du chef sous le cadre.
+  static pw.Widget _buildFeuilleSignature(String chefName) {
+    final nom = chefName.trim();
+    return pw.Align(
+      alignment: pw.Alignment.centerRight,
+      child: pw.Container(
+        width: 240,
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
+          children: [
+            pw.Text(
+              feuilleSignatureLabel,
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 6),
+            pw.Container(
+              height: 58,
+              width: double.infinity,
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8, color: PdfColors.black),
+              ),
+            ),
+            pw.SizedBox(height: 5),
+            // Nom complet du chef d'équipe, sous le cadre de signature.
+            pw.Text(
+              nom.toUpperCase(),
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+            ),
+          ],
         ),
       ),
     );

@@ -83,9 +83,28 @@ class RotationConfig {
   final DateTime startDate;
   final List<String> equipeIds;
 
-  RotationConfig({required this.startDate, required this.equipeIds});
+  /// Journée du poste au [startDate] : 1 = premier jour du poste, 2 = deuxième jour.
+  /// Chaque poste dure deux jours de suite : si la rotation démarre le 2e jour,
+  /// le cycle est décalé d'un jour.
+  final int startJournee;
+
+  RotationConfig({
+    required this.startDate,
+    required this.equipeIds,
+    int startJournee = 1,
+  }) : startJournee = startJournee == 2 ? 2 : 1;
 
   DateTime get startDay => DateTime(startDate.year, startDate.month, startDate.day);
+
+  /// Décalage à ajouter au nombre de jours écoulés depuis [startDay].
+  int get cycleOffset => startJournee == 2 ? 1 : 0;
+
+  RotationConfig copyWith({DateTime? startDate, List<String>? equipeIds, int? startJournee}) =>
+      RotationConfig(
+        startDate: startDate ?? this.startDate,
+        equipeIds: equipeIds ?? this.equipeIds,
+        startJournee: startJournee ?? this.startJournee,
+      );
 }
 
 class ShiftRotationLogic {
@@ -103,9 +122,44 @@ class ShiftRotationLogic {
     ShiftType.rest,
   ];
 
+  /// Ordre d'affichage des colonnes du planning : les équipes se suivent
+  /// (EQUIPE 1, EQUIPE 2, EQUIPE 3, EQUIPE 4) au lieu des postes P1…P4.
+  /// [equipeNames] est indexé par position de rotation ; le résultat contient
+  /// ces positions triées par numéro d'équipe. Les équipes sans numéro (ou non
+  /// renseignées) restent à la fin, dans l'ordre de la rotation.
+  static List<int> equipeDisplayOrder(List<String> equipeNames) {
+    final positions = List<int>.generate(equipeNames.length, (i) => i);
+    int? numberOf(int pos) {
+      final match = RegExp(r'\d+').firstMatch(equipeNames[pos]);
+      return match == null ? null : int.tryParse(match.group(0)!);
+    }
+
+    positions.sort((a, b) {
+      final na = numberOf(a);
+      final nb = numberOf(b);
+      if (na == null && nb == null) return a.compareTo(b);
+      if (na == null) return 1;
+      if (nb == null) return -1;
+      if (na != nb) return na.compareTo(nb);
+      return a.compareTo(b);
+    });
+    return positions;
+  }
+
   static ShiftType shiftForPosition(int position, int dayInCycle) {
     final d = dayInCycle % cycleDays;
     final idx = (d + position * 2) % cycleDays;
     return _baseOrder[idx];
+  }
+
+  /// Journée 1 ou 2 du poste en cours (chaque poste dure deux jours de suite).
+  /// Retourne 0 si repos / poste inconnu.
+  /// [previousDay] = shift de la veille pour la même équipe.
+  static int journeeDansPoste({
+    required ShiftType today,
+    required ShiftType previousDay,
+  }) {
+    if (today == ShiftType.rest) return 0;
+    return previousDay == today ? 2 : 1;
   }
 }

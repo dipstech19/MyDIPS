@@ -200,20 +200,14 @@ PointageHoursStatus getPointageHoursStatus(DateTime now, PointageHoursConfig con
   return PointageHoursStatus.closed;
 }
 
-/// يُرجع إعداد الساعات للفريق والتاريخ والوردية (إن وُجدت)
+/// Équipe inscrite au planning → ses horaires de pointage suivent le poste du
+/// jour (P1/P2/P3) et ses jours de repos. Les horaires personnalisés de l'équipe
+/// ne servent que pour les équipes hors planning (Management, Nettoyage…).
+///
+/// [shiftForEquipe] doit valoir `null` quand l'équipe ne figure pas dans le
+/// planning — utiliser `ShiftsProvider.getShiftForEquipeOrNull`. Passer
+/// `ShiftType.rest` pour une équipe hors planning la bloquerait à tort.
 PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, dynamic shiftForEquipe) {
-  if (equipe != null && equipe.pointageStartHour != null && equipe.pointageEndHour != null) {
-    return PointageHoursConfig(
-      startHour: equipe.pointageStartHour!,
-      startMinute: equipe.pointageStartMinute ?? 0,
-      endHour: equipe.pointageEndHour!,
-      endMinute: equipe.pointageEndMinute ?? 0,
-      departureEarliestHour: equipe.pointageEndHour!.clamp(0, 23),
-      departureEarliestMinute: equipe.pointageEndMinute ?? 0,
-      departureLatestHour: (equipe.pointageEndHour! + 2).clamp(0, 23),
-      departureLatestMinute: equipe.pointageEndMinute ?? 0,
-    );
-  }
   if (shiftForEquipe is ShiftType) {
     switch (shiftForEquipe) {
       case ShiftType.rest:
@@ -262,6 +256,18 @@ PointageHoursConfig getConfigForEquipeAndDate(Equipe? equipe, DateTime date, dyn
           departureLatestMinute: 0,
         );
     }
+  }
+  if (equipe != null && equipe.pointageStartHour != null && equipe.pointageEndHour != null) {
+    return PointageHoursConfig(
+      startHour: equipe.pointageStartHour!,
+      startMinute: equipe.pointageStartMinute ?? 0,
+      endHour: equipe.pointageEndHour!,
+      endMinute: equipe.pointageEndMinute ?? 0,
+      departureEarliestHour: equipe.pointageEndHour!.clamp(0, 23),
+      departureEarliestMinute: equipe.pointageEndMinute ?? 0,
+      departureLatestHour: (equipe.pointageEndHour! + 2).clamp(0, 23),
+      departureLatestMinute: equipe.pointageEndMinute ?? 0,
+    );
   }
   return const PointageHoursConfig();
 }

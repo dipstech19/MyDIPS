@@ -321,6 +321,9 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
       final logicalToday = DateTime(today.year, today.month, today.day);
       final logicalYesterday = logicalToday.subtract(const Duration(days: 1));
       teams = teams.where((t) {
+        // Équipe hors planning : elle garde ses propres horaires, on ne la
+        // masque pas en la considérant à tort en repos.
+        if (!shiftsProvider.isEquipeInRotation(t.equipeId)) return true;
         final shiftToday = shiftsProvider.getShiftForEquipe(t.equipeId, logicalToday);
         final shiftYesterday = shiftsProvider.getShiftForEquipe(t.equipeId, logicalYesterday);
         final useYesterdayNight = today.hour < 7 && shiftYesterday == ShiftType.night;
@@ -349,8 +352,8 @@ class _DriverPointagePageState extends State<DriverPointagePage> {
     final now = DateTime.now();
     final logicalToday = DateTime(today.year, today.month, today.day);
     final logicalYesterday = logicalToday.subtract(const Duration(days: 1));
-    final shiftToday = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, logicalToday) : null;
-    final shiftYesterday = selectedEquipe != null ? shiftsProvider.getShiftForEquipe(selectedEquipe.id, logicalYesterday) : null;
+    final shiftToday = selectedEquipe != null ? shiftsProvider.getShiftForEquipeOrNull(selectedEquipe.id, logicalToday) : null;
+    final shiftYesterday = selectedEquipe != null ? shiftsProvider.getShiftForEquipeOrNull(selectedEquipe.id, logicalYesterday) : null;
     final useYesterdayNight = now.hour < 7 && shiftYesterday == ShiftType.night;
     final shiftForEquipe = useYesterdayNight ? shiftYesterday : shiftToday;
     final configDay = useYesterdayNight ? logicalYesterday : logicalToday;

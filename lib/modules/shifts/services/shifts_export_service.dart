@@ -19,7 +19,7 @@ class ShiftsExportService {
     }
   }
 
-  /// بناء ملف Excel للجدول: صفوف = أيام، أعمدة = تاريخ + P1 + P2 + P3 + RH (أسماء الفرق).
+  /// بناء ملف Excel للجدول: صفوف = أيام، أعمدة = تاريخ + الفرق بالترتيب (EQUIPE 1 → EQUIPE 4).
   static Future<Uint8List> buildShiftsExcel({
     required DateTime startDate,
     required DateTime endDate,
@@ -111,10 +111,13 @@ class ShiftsExportService {
     );
     sheet.cell(dateHeaderIndex).cellStyle = headerStyle;
 
-    for (var i = 0; i < 4; i++) {
+    // Une colonne par équipe, dans l'ordre reçu (EQUIPE 1 → EQUIPE 4).
+    final columnCount =
+        equipeNames.isNotEmpty ? equipeNames.length : positionHeaders.length;
+    for (var i = 0; i < columnCount; i++) {
       final label = (equipeNames.length > i && equipeNames[i].trim().isNotEmpty)
           ? equipeNames[i]
-          : positionHeaders[i];
+          : (positionHeaders.length > i ? positionHeaders[i] : '');
       final idx =
           excel.CellIndex.indexByColumnRow(columnIndex: i + 1, rowIndex: headerRow);
       sheet.updateCell(idx, excel.TextCellValue(label));
@@ -155,7 +158,7 @@ class ShiftsExportService {
         excel.TextCellValue(_rowDateFormat.format(s.date)),
       );
       sheet.cell(dateIdx).cellStyle = dateCellStyle;
-      for (var pos = 0; pos < 4; pos++) {
+      for (var pos = 0; pos < columnCount; pos++) {
         final shift = s.perEquipe.length > pos ? s.perEquipe[pos].shift : ShiftType.rest;
         final idx =
             excel.CellIndex.indexByColumnRow(columnIndex: pos + 1, rowIndex: rowIndex);

@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/auth_provider.dart';
@@ -346,6 +347,15 @@ class _ChefOvertimeCard extends StatelessWidget {
                     width: double.infinity,
                     child: FilledButton.icon(
                       onPressed: () async {
+                        if (!await confirmAction(context,
+                            title: 'Fin du shift',
+                            message:
+                                "Confirmer la fin du shift de « ${ot.employeNom} » ? 8h seront enregistrées et envoyées.",
+                            details: 'Les heures seront verrouillées après envoi.',
+                            confirmLabel: 'Confirmer')) {
+                          return;
+                        }
+                        if (!context.mounted) return;
                         final chefId = auth.currentUser?.id ?? '';
                         await provider.confirmOvertimeDeparture(ot.id);
                         await provider.submitAndLock(ot.id, chefId);
@@ -375,6 +385,15 @@ class _ChefOvertimeCard extends StatelessWidget {
                   width: double.infinity,
                   child: FilledButton.icon(
                     onPressed: () async {
+                      if (!await confirmAction(context,
+                          title: 'Envoyer l’absence',
+                          message:
+                              "Envoyer l'absence de « ${ot.employeNom} » ?",
+                          details: 'Les heures seront verrouillées après envoi.',
+                          confirmLabel: 'Envoyer')) {
+                        return;
+                      }
+                      if (!context.mounted) return;
                       final chefId = auth.currentUser?.id ?? '';
                       await provider.submitAndLock(ot.id, chefId);
                       if (context.mounted) {
@@ -548,13 +567,29 @@ class _AdminOvertimeViewState extends State<_AdminOvertimeView> {
                     itemBuilder: (context, i) => _AdminAssignmentCard(
                       assignment: assignments[i],
                       mobile: widget.mobile,
-                      onDelete: () => context
-                          .read<OvertimeProvider>()
-                          .deleteAssignment(assignments[i].id),
+                      onDelete: () async {
+                        if (!await confirmDelete(context,
+                            message:
+                                'Supprimer les heures supplémentaires de « ${assignments[i].employeNom} » ?')) {
+                          return;
+                        }
+                        if (!context.mounted) return;
+                        await context
+                            .read<OvertimeProvider>()
+                            .deleteAssignment(assignments[i].id);
+                      },
                       onUnlock: auth.isDirecteur
-                          ? () => context
-                              .read<OvertimeProvider>()
-                              .adminUnlock(assignments[i].id)
+                          ? () async {
+                              if (!await confirmUpdate(context,
+                                  message:
+                                      'Déverrouiller ces heures supplémentaires pour permettre leur modification ?')) {
+                                return;
+                              }
+                              if (!context.mounted) return;
+                              await context
+                                  .read<OvertimeProvider>()
+                                  .adminUnlock(assignments[i].id);
+                            }
                           : null,
                     ),
                   ),

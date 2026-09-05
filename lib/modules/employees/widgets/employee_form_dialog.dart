@@ -1,6 +1,7 @@
 ﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -772,10 +773,16 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
           if (_photoBytes != null) ...[
             const SizedBox(height: 8),
             TextButton.icon(
-              onPressed: () => setState(() {
-                _photoBytes = null;
-                _photoPath = null;
-              }),
+              onPressed: () async {
+                if (!await confirmDelete(context,
+                    message: 'Supprimer la photo sélectionnée ?', details: null)) {
+                  return;
+                }
+                setState(() {
+                  _photoBytes = null;
+                  _photoPath = null;
+                });
+              },
               icon: const Icon(Icons.delete, size: 16, color: Colors.red),
               label: const Text('Supprimer', style: TextStyle(color: Colors.red, fontSize: 12)),
             ),
@@ -889,7 +896,13 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                      onPressed: () => setState(() => _tempDocuments.removeAt(index)),
+                      onPressed: () async {
+                        if (!await confirmDelete(context,
+                            message: 'Retirer ce document de la liste ?', details: null)) {
+                          return;
+                        }
+                        setState(() => _tempDocuments.removeAt(index));
+                      },
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     ),

@@ -814,6 +814,12 @@ class _AdminDemandeRowState extends State<_AdminDemandeRow>
   }
 
   Future<void> _approuverAvecPdf(BuildContext ctx) async {
+    final ok = await _showConfirmDialog(ctx,
+        title: 'Approuver la demande',
+        message:
+            'Approuver la demande de « ${widget.demande.employeNom} » et générer le document ?',
+        confirmLabel: 'Approuver');
+    if (ok != true || !ctx.mounted) return;
     _showToast(ctx, '⚙️  Génération du document en cours...');
     try {
       final d = widget.demande;
@@ -1108,7 +1114,15 @@ class _AdminDemandeRowState extends State<_AdminDemandeRow>
         label: 'Reconsidérer',
         icon: Icons.refresh_rounded,
         color: kWarning,
-        onTap: () => widget.onUpdateStatut(d, DemandeStatut.enAttente, comment: null),
+        onTap: () async {
+          final ok = await _showConfirmDialog(context,
+              title: 'Reconsidérer la demande',
+              message: 'Remettre cette demande en attente ?',
+              confirmLabel: 'Reconsidérer');
+          if (ok == true) {
+            widget.onUpdateStatut(d, DemandeStatut.enAttente, comment: null);
+          }
+        },
       );
       actions.add(isMobile ? btn : Padding(padding: const EdgeInsets.only(left: 8), child: btn));
     }

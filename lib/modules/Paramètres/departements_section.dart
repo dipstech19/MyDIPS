@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../core/utils/responsive.dart';
 import '../employees/departements_provider.dart';
@@ -191,6 +192,7 @@ void _showDepartementDialog(BuildContext context, DepartementsProvider prov, Dep
               if (existing == null) {
                 await prov.addDepartement(Departement(id: '', nom: nom));
               } else {
+                if (!await confirmUpdate(dialogContext, itemLabel: existing.nom)) return;
                 await prov.updateDepartement(Departement(id: existing.id, nom: nom));
               }
               if (dialogContext.mounted) navigator.pop();

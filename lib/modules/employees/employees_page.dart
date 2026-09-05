@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import '../../core/auth/app_permissions.dart';
@@ -692,6 +693,11 @@ class _EmployeesPageState extends State<EmployeesPage>
                       await prov.addEquipe(eq);
                     },
                     onDeleteEquipe: (eq) async {
+                      if (!await confirmDelete(context,
+                          itemLabel: eq.nom,
+                          details: 'Les membres ne seront pas supprimés.')) {
+                        return;
+                      }
                       await prov.deleteEquipe(eq.id);
                     },
                   ))
@@ -723,6 +729,11 @@ class _EmployeesPageState extends State<EmployeesPage>
                       await prov.addEquipe(eq);
                     },
                     onDeleteEquipe: (eq) async {
+                      if (!await confirmDelete(context,
+                          itemLabel: eq.nom,
+                          details: 'Les membres ne seront pas supprimés.')) {
+                        return;
+                      }
                       await prov.deleteEquipe(eq.id);
                     },
                   ),
@@ -908,7 +919,13 @@ class _EmployeesPageState extends State<EmployeesPage>
                       IconButton(icon: Icon(Icons.edit, size: 18, color: Colors.green[700]), tooltip: 'Modifier',
                         onPressed: () => showDialog(context: context, builder: (_) => EmployeeEditDialog(
                           employe: e, allEmployes: employes,
-                          onSave: (updated) async { await prov.updateEmploye(updated); })),
+                          onSave: (updated) async {
+                            if (!await confirmUpdate(context,
+                                itemLabel: updated.nom)) {
+                              return;
+                            }
+                            await prov.updateEmploye(updated);
+                          })),
                         padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                         style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap)),
                       IconButton(icon: Icon(Icons.swap_horiz, size: 18, color: AppColors.brand), tooltip: 'Changer statut',
@@ -1078,7 +1095,13 @@ class _EmployeesPageState extends State<EmployeesPage>
                         builder: (_) => EmployeeEditDialog(
                           employe: e,
                           allEmployes: employes,
-                          onSave: (updated) async => await prov.updateEmploye(updated),
+                          onSave: (updated) async {
+                            if (!await confirmUpdate(context,
+                                itemLabel: updated.nom)) {
+                              return;
+                            }
+                            await prov.updateEmploye(updated);
+                          },
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
@@ -1374,6 +1397,11 @@ class _EmployeesPageState extends State<EmployeesPage>
             ),
             ElevatedButton(
               onPressed: () async {
+                if (!await confirmUpdate(context,
+                    message:
+                        'Changer le statut de « ${employe.nom} » en « ${selected.label} » ?')) {
+                  return;
+                }
                 await prov.updateEmployeStatut(employe.id, selected);
                 if (context.mounted) Navigator.pop(context);
               },

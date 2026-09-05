@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import '../../../core/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/document_model.dart';
@@ -248,7 +249,10 @@ class _DocumentsTabState extends State<DocumentsTab> {
                       icon: const Icon(Icons.delete_outline, size: 18),
                       color: Colors.red,
                       tooltip: 'Supprimer',
-                      onPressed: () => setState(() => _docs.remove(doc)),
+                      onPressed: () async {
+                        if (!await confirmDelete(context, itemLabel: doc.nom)) return;
+                        setState(() => _docs.remove(doc));
+                      },
                     ),
                   ],
                 ),

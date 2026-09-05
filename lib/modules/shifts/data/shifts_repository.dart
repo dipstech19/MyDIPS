@@ -14,8 +14,22 @@ class ShiftsRepository {
   Future<RotationConfig?> getConfig() async {
     try {
       final doc = await _firestore.collection('app_config').doc(_configDoc).get();
-      if (doc.data() == null) return null;
-      final data = doc.data()!;
+      return _configFromData(doc.data());
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Flux temps réel de l'état du planning (rotation, équipes, journée de départ).
+  Stream<RotationConfig?> watchConfig() => _firestore
+      .collection('app_config')
+      .doc(_configDoc)
+      .snapshots()
+      .map((doc) => _configFromData(doc.data()));
+
+  RotationConfig? _configFromData(Map<String, dynamic>? data) {
+    try {
+      if (data == null) return null;
       final startStamp = data['startDate'];
       DateTime startDate = DateTime.now();
       if (startStamp != null) {
@@ -30,7 +44,15 @@ class ShiftsRepository {
       if (ids is List) {
         equipeIds = ids.map((e) => e?.toString() ?? '').toList();
       }
-      return RotationConfig(startDate: startDate, equipeIds: equipeIds);
+      final journeeRaw = data['startJournee'];
+      final startJournee = journeeRaw is num
+          ? journeeRaw.toInt()
+          : int.tryParse('${journeeRaw ?? 1}') ?? 1;
+      return RotationConfig(
+        startDate: startDate,
+        equipeIds: equipeIds,
+        startJournee: startJournee,
+      );
     } catch (e) {
       return null;
     }
@@ -41,32 +63,48 @@ class ShiftsRepository {
     await _firestore.collection('app_config').doc(_configDoc).set({
       'startDate': config.startDay.toIso8601String(),
       'equipeIds': config.equipeIds,
+      'startJournee': config.startJournee,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
   /// جلب كل التعديلات اليدوية (overrides) للورديات
   Future<Map<String, Map<String, ShiftType>>> getOverrides() async {
-    final result = <String, Map<String, ShiftType>>{};
     try {
       final snap = await _firestore.collection('app_config').doc(_configDoc).collection(_overridesCollection).get();
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        final dateKey = doc.id;
-        final perEquipe = data['overrides'] as Map<String, dynamic>?;
-        if (perEquipe != null) {
-          result[dateKey] = {};
-          perEquipe.forEach((equipeId, shiftName) {
-            if (shiftName is String) {
-              try {
-                final st = ShiftType.values.firstWhere((e) => e.name == shiftName);
-                result[dateKey]![equipeId] = st;
-              } catch (_) {}
-            }
-          });
-        }
+      return _overridesFromDocs(snap.docs);
+    } catch (_) {
+      return <String, Map<String, ShiftType>>{};
+    }
+  }
+
+  /// Flux temps réel des ajustements manuels du planning.
+  Stream<Map<String, Map<String, ShiftType>>> watchOverrides() => _firestore
+      .collection('app_config')
+      .doc(_configDoc)
+      .collection(_overridesCollection)
+      .snapshots()
+      .map((snap) => _overridesFromDocs(snap.docs));
+
+  Map<String, Map<String, ShiftType>> _overridesFromDocs(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final result = <String, Map<String, ShiftType>>{};
+    for (final doc in docs) {
+      final data = doc.data();
+      final dateKey = doc.id;
+      final perEquipe = data['overrides'] as Map<String, dynamic>?;
+      if (perEquipe != null) {
+        result[dateKey] = {};
+        perEquipe.forEach((equipeId, shiftName) {
+          if (shiftName is String) {
+            try {
+              final st = ShiftType.values.firstWhere((e) => e.name == shiftName);
+              result[dateKey]![equipeId] = st;
+            } catch (_) {}
+          }
+        });
       }
-    } catch (_) {}
+    }
     return result;
   }
 
@@ -102,6 +140,14 @@ class ShiftsRepository {
       return [];
     }
   }
+
+  /// Flux temps réel des jours ×2.
+  Stream<List<DoubleDay>> watchDoubleDays() => _firestore
+      .collection('app_config')
+      .doc(_configDoc)
+      .collection(_doubleDaysCollection)
+      .snapshots()
+      .map((snap) => snap.docs.map((d) => DoubleDay.fromMap(d.data())).toList());
 
   /// Ajouter ou mettre à jour un jour ×2.
   Future<void> setDoubleDay(DoubleDay day) async {
@@ -141,6 +187,14 @@ class ShiftsRepository {
       return [];
     }
   }
+
+  /// Flux temps réel des jours fériés.
+  Stream<List<PublicHoliday>> watchPublicHolidays() => _firestore
+      .collection('app_config')
+      .doc(_configDoc)
+      .collection(_publicHolidaysCollection)
+      .snapshots()
+      .map((snap) => snap.docs.map((d) => PublicHoliday.fromMap(d.data())).toList());
 
   Future<void> setPublicHoliday(PublicHoliday day) async {
     final ref = _firestore

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/site/site_model.dart';
@@ -157,14 +158,19 @@ class _EquipesTabState extends State<EquipesTab> {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF000966), foregroundColor: Colors.white),
-              onPressed: () {
+              onPressed: () async {
                 if (selectedIds.isEmpty) return;
                 final target = widget.equipes.where((e) => e.id == selectedEquipeId).toList();
                 if (target.isEmpty) return;
                 final eq = target.first;
+                if (!await confirmUpdate(ctx,
+                    message:
+                        "Affecter ${selectedIds.length} collaborateur(s) à l'équipe « ${eq.nom} » ?")) {
+                  return;
+                }
                 final merged = {...eq.membreIds, ...selectedIds}.toList();
                 widget.onAddEquipe(eq.copyWith(membreIds: merged));
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('Affecter'),
             ),
@@ -466,7 +472,13 @@ class _EquipesTabState extends State<EquipesTab> {
     );
   }
 
-  void _removeMembre(Equipe equipe, String employeId) {
+  Future<void> _removeMembre(
+      BuildContext context, Equipe equipe, String employeId, String nom) async {
+    if (!await confirmDelete(context,
+        message: "Retirer « $nom » de l'équipe « ${equipe.nom} » ?",
+        details: "Le collaborateur n'est pas supprimé, seulement retiré de l'équipe.")) {
+      return;
+    }
     final updated = equipe.copyWith(
       membreIds: equipe.membreIds.where((id) => id != employeId).toList(),
     );
@@ -527,7 +539,7 @@ class _EquipesTabState extends State<EquipesTab> {
             IconButton(
               tooltip: 'Retirer',
               icon: Icon(Icons.remove_circle_outline, color: Colors.red[400], size: 20),
-              onPressed: () => _removeMembre(equipe, employeId),
+              onPressed: () => _removeMembre(context, equipe, employeId, nom),
             ),
           if (isChef) ...[
             Container(
@@ -735,12 +747,17 @@ class _EquipesTabState extends State<EquipesTab> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final newName = ctrl.text.trim();
               if (newName.isNotEmpty && newName != eq.nom) {
+                if (!await confirmUpdate(context,
+                    message:
+                        "Renommer l'équipe « ${eq.nom} » en « $newName » ?")) {
+                  return;
+                }
                 widget.onAddEquipe(eq.copyWith(nom: newName));
               }
-              Navigator.pop(context);
+              if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF000966),
@@ -815,11 +832,15 @@ class _EquipesTabState extends State<EquipesTab> {
                 backgroundColor: const Color(0xFF000966),
                 foregroundColor: Colors.white,
               ),
-              onPressed: () {
+              onPressed: () async {
                 if (selectedChefId != eq.chefId) {
+                  if (!await confirmUpdate(ctx,
+                      message: "Changer le chef de l'équipe « ${eq.nom} » ?")) {
+                    return;
+                  }
                   widget.onAddEquipe(eq.copyWith(chefId: selectedChefId));
                 }
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('Confirmer'),
             ),
@@ -926,12 +947,16 @@ class _EquipesTabState extends State<EquipesTab> {
             ElevatedButton(
               onPressed: selectedId == null
                   ? null
-                  : () {
+                  : () async {
+                if (!await confirmUpdate(ctx,
+                    message: "Ajouter ce collaborateur à l'équipe « ${eq.nom} » ?")) {
+                  return;
+                }
                 final updated = eq.copyWith(
                   membreIds: [...eq.membreIds, selectedId!],
                 );
                 widget.onAddEquipe(updated);
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF000966),

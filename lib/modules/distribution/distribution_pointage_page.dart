@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import 'package:provider/provider.dart';
 import '../employees/employees_provider.dart';
 import '../employees/models/employe_model.dart';
@@ -206,6 +207,20 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
         ? distShiftsProv.getShiftForGroup(g.id, day)
         : ShiftType.rest;
     final shiftLabel = _shiftLabel(shift);
+    // Journée 1 ou 2 du poste en cours (chaque poste dure deux jours de suite).
+    final journeeLabelForExport =
+        (shift == ShiftType.rest || !distShiftsProv.hasRotationSlotForGroup(g.id))
+            ? ''
+            : '${ShiftRotationLogic.journeeDansPoste(
+                today: shift,
+                previousDay: distShiftsProv.getShiftForGroup(
+                  g.id,
+                  day.subtract(const Duration(days: 1)),
+                ),
+              )}';
+    // Responsable qui signe la feuille : sa ligne passe en tête du tableau.
+    final chefNameForExport = auth.currentUser?.nom ?? '';
+    final chefEmployeIdForExport = auth.currentUser?.chefEmployeId ?? '';
     final swapsProv = context.watch<DistributionSwapsProvider>();
     final canManageSwaps = DistributionSwapDialogs.canOpen(auth);
 
@@ -292,7 +307,21 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
         /// (les non-saisis sont enregistrés absents, la feuille les affiche ainsi).
         List<FeuillePointageLine> buildFeuilleLines() {
           final lines = <FeuillePointageLine>[];
-          for (final row in pointageMembers) {
+          // Le responsable qui signe la feuille apparaît en première ligne.
+          final feuilleRows = List<
+              ({
+                Employe employe,
+                PointageRecord? record,
+                bool isGuest,
+                bool isArrangement,
+                bool arrangementPending,
+                bool isAwayOnRenfort
+              })>.from(pointageMembers);
+          final chefIndex = chefEmployeIdForExport.isEmpty
+              ? -1
+              : feuilleRows.indexWhere((r) => r.employe.id == chefEmployeIdForExport);
+          if (chefIndex > 0) feuilleRows.insert(0, feuilleRows.removeAt(chefIndex));
+          for (final row in feuilleRows) {
             String statut;
             String commentaire;
             if (row.isAwayOnRenfort) {
@@ -583,6 +612,17 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                                   ? AttendanceState.absent
                                   : AttendanceState.unmarked,
                           onSelect: (s) async {
+                            // Corriger un statut déjà enregistré = modification.
+                            if ((present || absent) &&
+                                !(present && s == AttendanceState.present) &&
+                                !(absent && s == AttendanceState.absent)) {
+                              if (!await confirmUpdate(context,
+                                  message:
+                                      "Modifier le pointage de « ${e.nom} » ?")) {
+                                return;
+                              }
+                              if (!context.mounted) return;
+                            }
                             if (s == AttendanceState.present) {
                               if (r != null &&
                                   r.departureStatus != DepartureStatus.unset &&
@@ -1007,6 +1047,16 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                     );
                     return;
                   }
+                  if (!await confirmAction(context,
+                      title: 'Confirmer le pointage',
+                      message:
+                          "Confirmer et envoyer le pointage du groupe « ${g.nom} » ?",
+                      details:
+                          'Les membres non saisis seront marqués absents et le pointage sera verrouillé.',
+                      confirmLabel: 'Confirmer')) {
+                    return;
+                  }
+                  if (!context.mounted) return;
                   final reasonConfigsList = context.read<AbsenceReasonsProvider>().reasons;
                   final reasonConfigsForSnapshot =
                       reasonConfigsList.isEmpty ? null : reasonConfigsList;
@@ -1137,6 +1187,8 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                       date: day,
                       equipeLabel: g.nom,
                       posteLabel: shift == ShiftType.rest ? '' : shift.shortLabel,
+                      journeeLabel: journeeLabelForExport,
+                      chefName: chefNameForExport,
                       lines: buildFeuilleLines(),
                     );
                   } catch (e) {
@@ -1157,6 +1209,8 @@ class _DistributionPointagePageState extends State<DistributionPointagePage> {
                   date: day,
                   equipeLabel: g.nom,
                   posteLabel: shift == ShiftType.rest ? '' : shift.shortLabel,
+                  journeeLabel: journeeLabelForExport,
+                  chefName: chefNameForExport,
                   linesBuilder: buildFeuilleLines,
                 ),
               ],

@@ -312,7 +312,8 @@ class PointageNotificationsService {
     }
 
     final now = DateTime.now();
-    ShiftType shift = ShiftType.morning;
+    // `null` = équipe hors planning : on garde ses propres horaires.
+    ShiftType? shift;
     if (!equipeId.startsWith('distribution:')) {
       shift = await _shiftForEquipe(equipeId, now);
     } else {
@@ -329,11 +330,13 @@ class PointageNotificationsService {
     return getConfigForEquipeAndDate(equipe, logicalDay, shift);
   }
 
-  Future<ShiftType> _shiftForEquipe(String equipeId, DateTime date) async {
+  /// Poste du jour d'après le planning, ou `null` si l'équipe n'y figure pas
+  /// (équipes hors rotation : Management, Nettoyage…).
+  Future<ShiftType?> _shiftForEquipe(String equipeId, DateTime date) async {
     final config = await _shiftsRepo.getConfig();
-    if (config == null) return ShiftType.rest;
+    if (config == null) return null;
     final pos = config.equipeIds.indexOf(equipeId);
-    if (pos < 0) return ShiftType.rest;
+    if (pos < 0) return null;
     final overrides = await _shiftsRepo.getOverrides();
     final key = '${date.year}-${date.month}-${date.day}';
     final override = overrides[key]?[equipeId];
@@ -341,8 +344,11 @@ class PointageNotificationsService {
     final start = config.startDay;
     final d = DateTime(date.year, date.month, date.day);
     final diff = d.difference(start).inDays;
-    if (diff < 0) return ShiftType.rest;
-    return ShiftRotationLogic.shiftForPosition(pos, diff % ShiftRotationLogic.cycleDays);
+    // Journée 1 ou 2 au démarrage : même décalage que ShiftsProvider.dayInCycle.
+    final dayInCycle = diff < 0
+        ? config.cycleOffset % ShiftRotationLogic.cycleDays
+        : (diff + config.cycleOffset) % ShiftRotationLogic.cycleDays;
+    return ShiftRotationLogic.shiftForPosition(pos, dayInCycle);
   }
 
   Future<ShiftType> _shiftForDistributionGroup(String groupId, DateTime date) async {

@@ -17,6 +17,9 @@ class ShiftsProvider extends ChangeNotifier {
   Map<String, PublicHoliday> _publicHolidays = {};
   bool _loading = false;
   String? _error;
+  /// Abonnements temps réel au planning : le pointage (chef, admin, notifications)
+  /// doit suivre immédiatement toute modification faite par l'admin.
+  final List<StreamSubscription<dynamic>> _liveSubs = [];
 
   ShiftsProvider() {
     if (_firebaseAvailable) {
@@ -24,6 +27,48 @@ class ShiftsProvider extends ChangeNotifier {
     }
     // Load local cache first for instant UI, then sync with Firebase.
     unawaited(_hydrateFromCacheThenSync());
+  }
+
+  @override
+  void dispose() {
+    for (final sub in _liveSubs) {
+      unawaited(sub.cancel());
+    }
+    _liveSubs.clear();
+    super.dispose();
+  }
+
+  /// Abonnement temps réel : dès que l'admin change le planning (rotation,
+  /// journée 1/2, ajustement d'un poste, jour ×2 / férié), les équipes du
+  /// pointage sont actualisées sans avoir à relancer l'application.
+  void _attachLiveListeners() {
+    final repo = _repo;
+    if (repo == null || _liveSubs.isNotEmpty) return;
+    _liveSubs.add(repo.watchConfig().listen((cfg) {
+      if (cfg == null) return;
+      _config = cfg;
+      _error = null;
+      notifyListeners();
+      unawaited(_saveCacheToDisk());
+    }, onError: (Object e) => debugPrint('ShiftsProvider watchConfig: $e')));
+
+    _liveSubs.add(repo.watchOverrides().listen((ov) {
+      _overrides = ov;
+      notifyListeners();
+      unawaited(_saveCacheToDisk());
+    }, onError: (Object e) => debugPrint('ShiftsProvider watchOverrides: $e')));
+
+    _liveSubs.add(repo.watchDoubleDays().listen((days) {
+      _doubleDays = {for (final d in days) d.dateKey: d};
+      notifyListeners();
+      unawaited(_saveCacheToDisk());
+    }, onError: (Object e) => debugPrint('ShiftsProvider watchDoubleDays: $e')));
+
+    _liveSubs.add(repo.watchPublicHolidays().listen((days) {
+      _publicHolidays = {for (final d in days) d.dateKey: d};
+      notifyListeners();
+      unawaited(_saveCacheToDisk());
+    }, onError: (Object e) => debugPrint('ShiftsProvider watchPublicHolidays: $e')));
   }
 
   bool get loading => _loading;
@@ -104,6 +149,7 @@ class ShiftsProvider extends ChangeNotifier {
     final hadCache = await _restoreCacheFromDisk();
     if (_repo != null) {
       await _loadAll(showLoading: !hadCache);
+      _attachLiveListeners();
     }
   }
 
@@ -123,6 +169,7 @@ class ShiftsProvider extends ChangeNotifier {
           : <String, dynamic>{
               'startDate': _config!.startDay.toIso8601String(),
               'equipeIds': _config!.equipeIds,
+              'startJournee': _config!.startJournee,
             },
       'overrides': overrides,
       'doubleDays': _doubleDays.values.map((d) => d.toMap()).toList(),
@@ -152,8 +199,13 @@ class ShiftsProvider extends ChangeNotifier {
         final start = DateTime.tryParse('${cfg['startDate'] ?? ''}');
         final idsRaw = cfg['equipeIds'];
         final ids = idsRaw is List ? idsRaw.map((e) => '$e').toList() : const <String>[];
+        final journee = int.tryParse('${cfg['startJournee'] ?? 1}') ?? 1;
         if (start != null) {
-          _config = RotationConfig(startDate: DateTime(start.year, start.month, start.day), equipeIds: ids);
+          _config = RotationConfig(
+            startDate: DateTime(start.year, start.month, start.day),
+            equipeIds: ids,
+            startJournee: journee,
+          );
         }
       }
 
@@ -213,14 +265,30 @@ class ShiftsProvider extends ChangeNotifier {
     await _loadAll();
   }
 
-  /// يوم في الدورة (0–7) حسب تاريخ البداية — دورة 8 أيام (يومان راحة)
+  /// يوم في الدورة (0–7) حسب تاريخ البداية — دورة 8 أيام (يومان راحة).
+  /// [RotationConfig.cycleOffset] يزيح الدورة بيوم عندما تبدأ في اليوم 2 من الوردية.
   int dayInCycle(DateTime day) {
     if (_config == null) return 0;
     final start = _config!.startDay;
     final d = DateTime(day.year, day.month, day.day);
     final diff = d.difference(start).inDays;
-    return diff >= 0 ? diff % ShiftRotationLogic.cycleDays : 0;
+    if (diff < 0) return _config!.cycleOffset % ShiftRotationLogic.cycleDays;
+    return (diff + _config!.cycleOffset) % ShiftRotationLogic.cycleDays;
   }
+
+  /// true si l'équipe est inscrite dans le planning de rotation.
+  /// Les équipes hors planning (Management, Nettoyage…) gardent leurs propres
+  /// horaires : elles ne doivent jamais être considérées en repos par défaut.
+  bool isEquipeInRotation(String equipeId) =>
+      equipeId.isNotEmpty &&
+      _config != null &&
+      _config!.equipeIds.contains(equipeId);
+
+  /// Poste du jour d'après le planning, ou `null` si l'équipe n'y figure pas.
+  /// À utiliser pour déduire les horaires de pointage : `null` = pas de planning,
+  /// on retombe sur les horaires de l'équipe.
+  ShiftType? getShiftForEquipeOrNull(String equipeId, DateTime date) =>
+      isEquipeInRotation(equipeId) ? getShiftForEquipe(equipeId, date) : null;
 
   ShiftType getShiftForEquipe(String equipeId, DateTime date) {
     if (_config == null) return ShiftType.rest;

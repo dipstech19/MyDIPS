@@ -25,11 +25,15 @@ FeuillePointageLine feuillePointageLine({
 
 /// Génère la feuille de pointage puis ouvre le partage système (WhatsApp, …).
 /// Utilisé par les pointages Équipe, Groupe et Distribution.
+/// [journeeLabel] : « 1 » ou « 2 » (journée du poste en cours), vide si inconnu.
+/// [chefName] : nom complet imprimé sous la signature du chef d'équipe.
 Future<void> exportFeuillePointage(
   BuildContext context, {
   required DateTime date,
   required String equipeLabel,
   required String posteLabel,
+  String journeeLabel = '',
+  String chefName = '',
   required List<FeuillePointageLine> lines,
 }) async {
   final messenger = ScaffoldMessenger.of(context);
@@ -38,12 +42,15 @@ Future<void> exportFeuillePointage(
       date: date,
       equipeLabel: equipeLabel,
       posteLabel: posteLabel,
+      journeeLabel: journeeLabel,
+      chefName: chefName,
       lines: lines,
     );
     final fileName = PointageExportService.feuillePointageFileName(
       date: date,
       equipeLabel: equipeLabel,
       posteLabel: posteLabel,
+      journeeLabel: journeeLabel,
     );
     await Printing.sharePdf(bytes: bytes, filename: fileName);
   } catch (e) {
@@ -64,6 +71,8 @@ Future<void> showPointageConfirmedDialog(
   required DateTime date,
   required String equipeLabel,
   required String posteLabel,
+  String journeeLabel = '',
+  String chefName = '',
   required List<FeuillePointageLine> lines,
 }) {
   return showDialog<void>(
@@ -102,6 +111,8 @@ Future<void> showPointageConfirmedDialog(
                 date: date,
                 equipeLabel: equipeLabel,
                 posteLabel: posteLabel,
+                journeeLabel: journeeLabel,
+                chefName: chefName,
                 lines: lines,
               ),
               icon: const Icon(Icons.share, size: 18),
@@ -134,6 +145,10 @@ class FeuillePointageShareSection extends StatelessWidget {
   final DateTime date;
   final String equipeLabel;
   final String posteLabel;
+  /// « 1 » ou « 2 » : journée du poste en cours (vide si inconnue).
+  final String journeeLabel;
+  /// Nom complet du chef d'équipe imprimé sous la signature.
+  final String chefName;
   final List<FeuillePointageLine> Function() linesBuilder;
 
   const FeuillePointageShareSection({
@@ -141,6 +156,8 @@ class FeuillePointageShareSection extends StatelessWidget {
     required this.date,
     required this.equipeLabel,
     required this.posteLabel,
+    this.journeeLabel = '',
+    this.chefName = '',
     required this.linesBuilder,
   });
 
@@ -177,6 +194,8 @@ class FeuillePointageShareSection extends StatelessWidget {
                 date: date,
                 equipeLabel: equipeLabel,
                 posteLabel: posteLabel,
+                journeeLabel: journeeLabel,
+                chefName: chefName,
                 lines: linesBuilder(),
               ),
               icon: const Icon(Icons.share, size: 18),
